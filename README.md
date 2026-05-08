@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="logo/tep.png" alt="Tep — Spinal Tap of web frameworks" width="240">
+</p>
+
 # tep
 
 A Sinatra-flavoured web framework that compiles to a native binary
