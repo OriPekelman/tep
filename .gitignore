@@ -12,6 +12,11 @@ test/real_world/0[0-9]_*
 test/real_world/.*.tep.rb
 !test/real_world/0[0-9]_*.rb
 
+# Stray spinel-built binaries from running `spinel some.tep.rb`
+# directly (the default output strips `.rb`, leaving a `.tep`).
+*.tep
+.*.tep
+
 # tep's own gem artefacts.
 *.gem
 pkg/
