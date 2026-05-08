@@ -1,0 +1,13 @@
+FROM ruby:3.4-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    make \
+    git \
+    curl \
+    wrk \
+    && rm -rf /var/lib/apt/lists/*
+
+# tep's test harness uses minitest + Net::HTTP (stdlib). The translator
+# needs prism, which is now bundled with Ruby 3.4.
+WORKDIR /workspace

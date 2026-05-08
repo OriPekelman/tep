@@ -1,0 +1,24 @@
+# Build artefacts -- the C helper, compiled examples, and translator
+# scratch files all live alongside the sources but never want to be
+# checked in.
+lib/tep/*.o
+examples/hello
+examples/sinatra_style
+examples/.*.tep.rb
+bench/hello_bench
+bench/.*.tep.rb
+bench/Gemfile.lock
+test/real_world/0[0-9]_*
+test/real_world/.*.tep.rb
+!test/real_world/0[0-9]_*.rb
+
+# tep's own gem artefacts.
+*.gem
+pkg/
+.bundle/
+
+# Editor / OS noise.
+.DS_Store
+*.swp
+.idea/
+.vscode/

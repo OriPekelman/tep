@@ -1,0 +1,4 @@
+body { font-family: system-ui, sans-serif; margin: 2em; max-width: 50em; }
+h1 { color: #b00; border-bottom: 1px solid #ccc; }
+ul { line-height: 1.6; }
+code { background: #f0f0f0; padding: 0.1em 0.4em; border-radius: 3px; }

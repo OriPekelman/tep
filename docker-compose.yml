@@ -1,0 +1,22 @@
+# Optional: a Linux dev container for building tep + spinel on a
+# machine that doesn't have ruby and a working cc set up locally.
+#
+# Usage:
+#   docker compose run --rm dev make
+#   docker compose run --rm -p 4567:4567 dev ./examples/hello -p 4567
+#
+# Expects spinel checked out at ../spinel (sibling to this tree). The
+# container mounts both so the build sees `/spinel` and `/workspace`.
+# Adjust the bind mount if your spinel checkout lives elsewhere.
+
+services:
+  dev:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    working_dir: /workspace
+    volumes:
+      - .:/workspace
+      - ../spinel:/spinel
+    environment:
+      SPINEL: /spinel/spinel

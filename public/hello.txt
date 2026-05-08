@@ -1,0 +1,1 @@
+tep static file serving works.
