@@ -29,6 +29,36 @@ module Tep
       out
     end
 
+    # Percent-encode the bytes that are unsafe in cookie values, query
+    # strings, and similar contexts. RFC 3986 unreserved set:
+    # ALPHA / DIGIT / `-._~`. Everything else gets `%XX` (uppercase hex).
+    def self.escape(s)
+      out = ""
+      i = 0
+      while i < s.length
+        c = s[i]
+        if (c >= "a" && c <= "z") || (c >= "A" && c <= "Z") ||
+           (c >= "0" && c <= "9") || c == "-" || c == "." ||
+           c == "_" || c == "~"
+          out = out + c
+        else
+          b = c.bytes[0]
+          hi = b / 16
+          lo = b % 16
+          out = out + "%" + Url.hex_char(hi) + Url.hex_char(lo)
+        end
+        i += 1
+      end
+      out
+    end
+
+    def self.hex_char(n)
+      if n < 10
+        return ("0".bytes[0] + n).chr
+      end
+      ("A".bytes[0] + n - 10).chr
+    end
+
     def self.hex_nibble(c)
       if c >= "0" && c <= "9"
         return c.bytes[0] - "0".bytes[0]

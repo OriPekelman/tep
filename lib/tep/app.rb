@@ -9,15 +9,20 @@
 # the others.
 module Tep
   class App
-    attr_accessor :router, :static_root
+    attr_accessor :router, :static_root, :session_secret
     attr_accessor :before_filter, :after_filter, :nf_handler
 
     def initialize
-      @router        = Router.new
-      @static_root   = ""
-      @before_filter = Filter.new   # no-op default
-      @after_filter  = Filter.new
-      @nf_handler    = Handler.new
+      @router         = Router.new
+      @static_root    = ""
+      @session_secret = ""
+      @before_filter  = Filter.new   # no-op default
+      @after_filter   = Filter.new
+      @nf_handler     = Handler.new
+    end
+
+    def set_session_secret(s)
+      @session_secret = s
     end
 
     def add_route(verb, pattern, handler)
@@ -30,6 +35,15 @@ module Tep
     def set_not_found(h);      @nf_handler = h; end
 
     def dispatch(req, res)
+      # Pull a signed session cookie into req.session, when configured.
+      secret = Tep.session_secret
+      if secret.length > 0
+        cv = req.cookies[Tep::COOKIE_NAME]
+        if cv.length > 0
+          req.session.load_from(cv, secret)
+        end
+      end
+
       @before_filter.before(req, res)
       if !res.halted
         route = @router.match(req)
@@ -51,6 +65,18 @@ module Tep
         end
       end
       @after_filter.after(req, res)
+
+      # If the handler / filters mutated the session, sign + emit a
+      # Set-Cookie line. Path=/ so the cookie applies to the whole
+      # app; HttpOnly to keep it out of JS.
+      secret_w = Tep.session_secret
+      if secret_w.length > 0 && req.session.dirty
+        opts = Tep.str_hash
+        opts["Path"]      = "/"
+        opts["HttpOnly"]  = ""
+        opts["SameSite"]  = "Lax"
+        res.set_cookie(Tep::COOKIE_NAME, req.session.to_cookie_value(secret_w), opts)
+      end
     end
 
     def try_static(req, res)

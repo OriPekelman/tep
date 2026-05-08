@@ -2,7 +2,7 @@
 module Tep
   class Request
     attr_accessor :verb, :path, :raw_path, :http_version
-    attr_accessor :params, :query, :req_headers, :raw_body
+    attr_accessor :params, :query, :req_headers, :raw_body, :cookies, :session
     attr_accessor :remote_host
 
     def initialize
@@ -18,6 +18,8 @@ module Tep
                                      # mis-codegens polymorphic ivar
                                      # writes when two classes share an
                                      # ivar name).
+      @cookies      = Tep.str_hash   # parsed from Cookie: header
+      @session      = Session.new    # signed cookie store
       @raw_body     = ""             # same reasoning as req_headers
       @remote_host  = ""
     end

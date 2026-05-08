@@ -113,6 +113,24 @@ module Tep
     end
 
     def write_response(client, req, res, keep_alive)
+      if res.streaming
+        # Chunked-encoding stream. Send headers immediately, hand a
+        # Stream writer to the user's Streamer.pump, emit terminator.
+        # Connection is closed afterwards (keep-alive + chunked is
+        # technically legal but we keep things simple).
+        res.headers["Transfer-Encoding"] = "chunked"
+        res.headers["Connection"] = "close"
+        if !res.headers.key?("Content-Type")
+          res.headers["Content-Type"] = "text/event-stream"
+        end
+        head = build_head(req, res)
+        Sock.sphttp_write_str(client, head)
+        out = Stream.new(client)
+        res.streamer.pump(out)
+        Sock.sphttp_write_chunk_end(client)
+        return
+      end
+
       if res.file_path.length > 0
         # send_file path -- compute size, emit headers, then stream.
         sz = Sock.sphttp_filesize(res.file_path)
@@ -157,6 +175,12 @@ module Tep
       head = req.http_version + " " + res.status.to_s + " " + reason + "\r\n"
       res.headers.each do |k, v|
         head = head + k + ": " + v + "\r\n"
+      end
+      # Set-Cookie can repeat; emit each on its own line.
+      ci = 0
+      while ci < res.set_cookies.length
+        head = head + "Set-Cookie: " + res.set_cookies[ci] + "\r\n"
+        ci += 1
       end
       head + "\r\n"
     end

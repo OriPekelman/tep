@@ -56,8 +56,12 @@ def translate(input_path)
 
   # We only walk the top-level statements; handlers inside Sinatra's
   # `class App < Sinatra::Base` are not supported in v0.1.
-  passthrough = []
-  prog.statements.body.each do |node|
+  unwrapped_apps = []
+  passthrough    = []
+  # Scan ALL `erb :name` references up front; every referenced view
+  # gets compiled and emitted at the top of the synthesized output.
+  views_used = source.scan(/(?<![\w.])erb\s+:(\w+)/).flatten.uniq
+  process = lambda do |node|
     # Only bare top-level method calls (no receiver) are candidates
     # for DSL handling -- `get '/'`, `before do`, `set :public_dir`,
     # etc. A call with a receiver (`$arr.delete_at(0)`,
@@ -66,10 +70,35 @@ def translate(input_path)
     if call?(node) && node.receiver.nil?
       result = handle_top_call(node, routes, filters, not_founds, config, warnings)
       startup_block = result if result.is_a?(Hash) && result[:kind] == :startup
-      next
+      return
     end
+
+    # Modular Sinatra::Base: `class MyApp < Sinatra::Base; ...; end`.
+    # Unwrap the body so `get '/'`, `before do`, etc. inside register
+    # against the global Tep app -- v0.1 doesn't run multiple apps
+    # in parallel, but the source-level shape is preserved.
+    if node.is_a?(Prism::ClassNode) && sinatra_base_class?(node)
+      unwrapped_apps << node.constant_path.location.slice
+      stmts = node.body
+      if stmts.is_a?(Prism::StatementsNode)
+        stmts.body.each { |inner| process.call(inner) }
+      end
+      return
+    end
+
+    # Drop `MyApp.run!` (etc.) when MyApp was just unwrapped.
+    # Without this the passthrough emits `MyApp.run!` and spinel
+    # has no class by that name.
+    if call?(node) && node.receiver
+      recv_src = node.receiver.location.slice
+      if unwrapped_apps.include?(recv_src)
+        return
+      end
+    end
+
     passthrough << node.location.slice
   end
+  prog.statements.body.each { |n| process.call(n) }
 
   # Spinel's require_relative is finicky about long paths and absolute
   # paths -- both fail silently. So we inline the whole tep library
@@ -89,7 +118,31 @@ def translate(input_path)
     out << ""
   end
 
-  # Build Handler subclasses for routes.
+  # Build-time ERB compile. Each referenced view becomes a top-level
+  # method `tep_view_<name>(locals)` that returns the rendered string.
+  unless views_used.empty?
+    views_dir = config[:views] || File.join(File.dirname(input_path), "views")
+    views_used.each do |vn|
+      vp = File.join(views_dir, "#{vn}.erb")
+      unless File.exist?(vp)
+        warnings << "view :#{vn} -- file not found: #{vp}; emitting an empty stub"
+        out << "def tep_view_#{vn}(locals); \"\"; end"
+        next
+      end
+      tmpl = File.read(vp)
+      body = erb_to_ruby_body(tmpl)
+      out << "def tep_view_#{vn}(locals)"
+      out << "  " + body
+      out << "end"
+      out << ""
+    end
+  end
+
+  # Build Handler subclasses for routes. For regex routes we bake the
+  # regex literal directly into the same Handler subclass, exposing
+  # is_regex? / re_match? / re_capture for the router to use; this
+  # lets us keep a single routes table (one class type) and rely on
+  # spinel's cls_id virtual dispatch on the handler.
   routes.each_with_index do |r, i|
     cname = "TepRoute_#{i}"
     body  = rewrite_block(r[:block_src])
@@ -97,6 +150,15 @@ def translate(input_path)
     out << "  def handle(req, res)"
     out << indent(body, 4)
     out << "  end"
+    if r[:regex]
+      lit = "%r{#{r[:regex]}}"
+      out << "  def is_regex?; true; end"
+      out << "  def re_match?(path); !!(path =~ #{lit}); end"
+      out << "  def re_capture(path)"
+      out << "    path =~ #{lit}"
+      out << "    [$1.to_s, $2.to_s, $3.to_s, $4.to_s, $5.to_s, $6.to_s, $7.to_s, $8.to_s, $9.to_s]"
+      out << "  end"
+    end
     out << "end"
     out << ""
     r[:cls] = cname
@@ -134,7 +196,15 @@ def translate(input_path)
   filters["before"].each { |f| out << %(Tep.before #{f[:cls]}.new) }
   filters["after"].each  { |f| out << %(Tep.after  #{f[:cls]}.new) }
   not_founds.each        { |n| out << %(Tep.not_found #{n[:cls]}.new) }
-  routes.each            { |r| out << %(Tep.#{r[:verb].downcase} #{r[:path].inspect}, #{r[:cls]}.new) }
+  routes.each do |r|
+    if r[:regex]
+      # Regex routes go through the literal-route DSL with an unused
+      # `pattern` arg (the matcher uses re_match? on the handler).
+      out << %(Tep.#{r[:verb].downcase} "" , #{r[:cls]}.new)
+    else
+      out << %(Tep.#{r[:verb].downcase} #{r[:path].inspect}, #{r[:cls]}.new)
+    end
+  end
   out << ""
 
   # `on_start do ... end` body runs once before the accept loop.
@@ -193,14 +263,25 @@ def handle_top_call(node, routes, filters, not_founds, config, warnings)
   if DSL_VERBS.include?(name)
     args = node.arguments&.arguments || []
     block = node.block
-    return warnings << "skipped #{name} -- needs a string path arg" unless args.first.is_a?(Prism::StringNode)
+    first = args.first
     return warnings << "skipped #{name} -- needs a `do ... end` block" unless block.is_a?(Prism::BlockNode)
-    routes << {
-      verb:      name.upcase,
-      path:      args.first.unescaped,
-      block_src: block_source(block),
-    }
-    return
+    if first.is_a?(Prism::StringNode)
+      routes << {
+        verb:      name.upcase,
+        path:      first.unescaped,
+        block_src: block_source(block),
+      }
+      return
+    end
+    if first.is_a?(Prism::RegularExpressionNode)
+      routes << {
+        verb:      name.upcase,
+        regex:     first.unescaped,
+        block_src: block_source(block),
+      }
+      return
+    end
+    return warnings << "skipped #{name} -- first arg must be a string or regex literal"
   end
 
   if HOOK_NAMES.include?(name)
@@ -228,6 +309,17 @@ def handle_top_call(node, routes, filters, not_founds, config, warnings)
     return
   end
 
+  if name == "erb"
+    # Track which views are referenced; the translator compiles the
+    # corresponding .erb files into top-level Ruby methods. A bare
+    # top-level `erb :name` is unusual but harmless.
+    args = node.arguments&.arguments || []
+    if args.first.is_a?(Prism::SymbolNode)
+      # handled below in the rewrite_block textual pass; no-op here
+    end
+    return
+  end
+
   if name == "set"
     args = node.arguments&.arguments || []
     if args.length == 2 && args[0].is_a?(Prism::SymbolNode)
@@ -236,6 +328,8 @@ def handle_top_call(node, routes, filters, not_founds, config, warnings)
       case key
       when "public_dir", "public_folder", "public"
         config[:public_dir] = val if val
+      when "views"
+        config[:views] = val if val
       when "port"
         config[:port] = literal_int(args[1]) || config[:port]
       when "bind"
@@ -320,6 +414,49 @@ def rewrite_block(src, force_string: true)
   # `headers["X"] = "y"` -> `res.headers[...]` when not already qualified
   s = s.gsub(/(?<![\w.])headers\[/, "res.headers[")
 
+  # `cookies["k"]` -> `req.cookies["k"]` when not already qualified
+  s = s.gsub(/(?<![\w.])cookies\[/, "req.cookies[")
+
+  # `erb :name`              -> `tep_view_name(Tep.str_hash)`
+  # `erb :name, locals: {a: "b", c: "d"}` -> build a String=>String
+  # hash from the literal-only kwarg form, then call.
+  s = s.gsub(/(?<![\w.])erb\s+:(\w+)\s*,\s*locals:\s*\{([^}]*)\}/) do
+    view = $1
+    # Value runs up to the next comma or closing brace; quoted strings
+    # are handled separately so they can contain commas or spaces.
+    pairs = $2.scan(/(\w+):\s*("[^"]*"|'[^']*'|[^,}]+?)\s*(?=,|\z)/)
+    setters = pairs.map { |k, v| %{__l["#{k}"] = (#{v.strip}).to_s} }.join("; ")
+    "(__l = Tep.str_hash; #{setters}; tep_view_#{view}(__l))"
+  end
+  s = s.gsub(/(?<![\w.])erb\s+:(\w+)/, 'tep_view_\1(Tep.str_hash)')
+
+  # `stream X.new` -> `res.start_stream(X.new); return ""` -- ships the
+  # subclass-style streaming DSL. The Sinatra `stream do |out| ... end`
+  # block form isn't supported yet (closures aren't first-class in
+  # Spinel; you'd write a `class X < Tep::Streamer; def pump(out); ...`
+  # instead and pass `X.new` to `stream`).
+  s = s.gsub(/^(\s*)stream\s+(.+)$/) do
+    indent = $1
+    expr   = $2
+    "#{indent}res.start_stream(#{expr})\n#{indent}return \"\""
+  end
+
+  # `session[k] = v` and `session[k]` -> .set / .get on req.session.
+  # Spinel doesn't dispatch user-defined []= on user classes, and
+  # without the .set() form the dirty flag never trips.
+  s = s.gsub(/(?<![\w.])session\[:(\w+)\]\s*=\s*([^\n]+?)$/m,
+             'req.session.set("\1", \2)')
+  s = s.gsub(/(?<![\w.])session\[(['"])(\w+)\1\]\s*=\s*([^\n]+?)$/m,
+             'req.session.set("\2", \3)')
+  s = s.gsub(/(?<![\w.])session\[:(\w+)\]/,        'req.session.get("\1")')
+  s = s.gsub(/(?<![\w.])session\[(['"])(\w+)\1\]/, 'req.session.get("\2")')
+
+  # `set_cookie "name", "value"` -> `res.set_cookie("name", "value", {})`
+  # Two-arg form only; richer kwarg forms aren't translated.
+  s = s.gsub(/^(\s*)set_cookie\s+(['"][^'"]*['"])\s*,\s*(['"][^'"]*['"])/) do
+    "#{$1}res.set_cookie(#{$2}, #{$3}, Tep.str_hash)"
+  end
+
   # `params['x']` / `params["x"]` and bare `params`
   s = s.gsub(/(?<![\w.])params(?=[\[\.]|$|\s)/, "req.params")
 
@@ -376,6 +513,50 @@ def relative_path(from_dir, target)
     .relative_path_from(Pathname.new(File.expand_path(from_dir))).to_s
 end
 
+# Compile an ERB template to a Ruby method body. The method takes a
+# single `locals` argument (a String=>String Hash); inside the
+# template, `<%= locals["k"] %>` interpolates and `<% if/else/end %>`
+# embed control flow. Comments `<%# ... %>` are dropped.
+#
+# Spinel can't `eval`, so all ERB rendering is build-time AOT --
+# this is what makes `erb :name` work on a spinel-compiled binary.
+def erb_to_ruby_body(template)
+  parts = []
+  parts << 'out = ""'
+  i = 0
+  literal = String.new
+  flush = -> {
+    if !literal.empty?
+      parts << "out += #{literal.dump}"
+      literal = String.new
+    end
+  }
+  while i < template.length
+    open_at = template.index("<%", i)
+    if open_at.nil?
+      literal << template[i..-1]
+      break
+    end
+    literal << template[i...open_at]
+    close_at = template.index("%>", open_at + 2)
+    raise "unterminated <% in template" if close_at.nil?
+    flush.call
+    code = template[(open_at + 2)...close_at]
+    if code.start_with?("=")
+      expr = code[1..-1].strip
+      parts << "out += (#{expr}).to_s"
+    elsif code.start_with?("#")
+      # comment; ignore
+    else
+      parts << code.strip
+    end
+    i = close_at + 2
+  end
+  flush.call
+  parts << "out"
+  parts.join("\n  ")
+end
+
 # Read tep.rb plus everything it require_relatives, in order, with
 # the require lines stripped. Used to inline the framework into a
 # build-temp file so spinel doesn't have to resolve any requires.
@@ -402,6 +583,13 @@ def inlined_tep_library
   combined = loaded.map { |l| "# --- inlined: " + relative_to_lib(l[:path]) + " ---\n" + l[:body] }.join("\n")
   sphttp_o = ENV.fetch("TEP_SPHTTP_O", File.join(LIB_DIR, "tep", "sphttp.o"))
   combined.gsub("@TEP_SPHTTP_O@", sphttp_o)
+end
+
+def sinatra_base_class?(class_node)
+  sup = class_node.superclass
+  return false if sup.nil?
+  src = sup.location.slice
+  src == "Sinatra::Base" || src == "Sinatra::Application" || src == "::Sinatra::Base"
 end
 
 def relative_to_lib(abs_path)

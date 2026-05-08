@@ -1,6 +1,6 @@
 # Matches incoming requests against a static Route table built up
 # by the Tep.<verb> DSL. Path patterns: literal segments + ":name"
-# captures + "*" splat (last segment).
+# captures + "*" splat, OR a regex (via the handler's `is_regex?`).
 #
 # Spinel's type inference unifies parameters across classes that
 # share an ivar name. So Route uses `r_verb` / `r_pat` rather than
@@ -23,12 +23,14 @@ module Tep
       end
     end
 
-    # Sinatra-compat read accessor for the registered handler.
     def handler; @r_handler; end
 
     def matches?(req_verb, req_path)
       if req_verb != @r_verb
         return false
+      end
+      if @r_handler.is_regex?
+        return @r_handler.re_match?(req_path)
       end
       pat = @r_pat.split("/")
       req = req_path.split("/")
@@ -57,9 +59,16 @@ module Tep
       true
     end
 
-    # Fold path captures into req.params. Caller has already verified
-    # matches?(verb, path).
     def fold_captures(req)
+      if @r_handler.is_regex?
+        caps = @r_handler.re_capture(req.path)
+        i = 0
+        while i < caps.length
+          req.params[(i + 1).to_s] = caps[i]
+          i += 1
+        end
+        return
+      end
       pat = @r_pat.split("/")
       rp  = req.path.split("/")
       pi  = 0
@@ -80,10 +89,7 @@ module Tep
     attr_accessor :routes
 
     def initialize
-      @routes = [Route.new("", "", Handler.new)]   # type-seed; the
-                                                   # sentinel never
-                                                   # matches a real
-                                                   # request line.
+      @routes = [Route.new("", "", Handler.new)]   # type-seed sentinel
     end
 
     def add(verb, pattern, handler)

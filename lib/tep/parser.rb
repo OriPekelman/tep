@@ -54,6 +54,20 @@ module Tep
         req.params[k] = v
       end
 
+      # Parse Cookie header into req.cookies. Format: "k=v; k2=v2; ...".
+      # Whitespace around `;` is allowed and stripped.
+      cookie_blob = req.req_headers["cookie"]
+      if cookie_blob.length > 0
+        cookie_blob.split(";").each do |pair|
+          eq = pair.index("=")
+          if eq > 0
+            cname  = pair[0, eq].strip
+            cvalue = pair[eq + 1, pair.length - eq - 1].strip
+            req.cookies[cname] = Url.unescape(cvalue)
+          end
+        end
+      end
+
       # Carry over any body bytes already in the blob (the C helper
       # may have read more than just the headers in one recv()).
       body_start = end_of_headers + 4
