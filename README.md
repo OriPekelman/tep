@@ -21,13 +21,22 @@ via [Spinel][spinel].
 require 'sinatra'
 
 set :public_dir, './public'
+set :views,      './views'
+Tep.session_secret = ENV.fetch("TEP_SESSION_SECRET")
 
 get '/' do
-  "<h1>hello, world</h1>"
+  erb :index, locals: { name: cookies["who"] }
 end
 
 get '/hi/:name' do
+  set_cookie "who", params[:name]
+  session["last_seen"] = params[:name]
   "<p>hi, " + params[:name] + "!</p>"
+end
+
+# Regex routes work too:
+get %r{^/posts/(\d+)$} do
+  "post id=" + params["1"]
 end
 
 before do
@@ -70,29 +79,53 @@ come from Linux.
 
 ## What works (today)
 
-`get` / `post` / `put` / `patch` / `delete` routes; path captures
-(`:name`), splats (`*`), query string, form-urlencoded bodies;
-`status N`, `redirect 'x'`, `halt N, "msg"`, `content_type 'x'`,
-`headers["X"] = "y"`; `before` and `after` filters; custom
-`not_found`; static file serving via `set :public_dir, '...'`.
+**Routing**: `get` / `post` / `put` / `patch` / `delete`; path
+captures (`:name`), splats (`*`), regex (`get %r{^/posts/(\d+)$}`,
+captures bind to `params["1"]..["9"]`), query string,
+form-urlencoded bodies.
 
-`request.params`, `request.headers`, `request.path`, `request.verb`,
-`request.body` are all available inside a handler.
+**Response**: `status N`, `redirect 'x'`, `halt N, "msg"`,
+`content_type 'x'`, `headers["X"] = "y"`.
 
-42 of 42 documented Sinatra behaviours covered by `make test`.
+**State**: cookies (`cookies[k]` to read, `set_cookie "k", "v"` to
+write), sessions (`session[k] = v` — HMAC-SHA256-signed cookie
+store; tampered cookies are rejected; set
+`Tep.session_secret = "..."` to enable).
+
+**Templates**: ERB at build time. Each `views/<name>.erb` becomes a
+top-level method; `erb :name, locals: { x: ... }` calls it.
+`<%= %>`, `<% %>`, and `<%# %>` all work.
+
+**Streaming**: chunked Transfer-Encoding via subclass of
+`Tep::Streamer`, dispatched as `stream MyStreamer.new`.
+
+**Composition**: `Sinatra::Base` modular apps (the translator
+unwraps them; routes from multiple classes coexist). `before` /
+`after` filters, custom `not_found`, static-file serving via
+`set :public_dir, '...'`, `set :views, '...'`. `on_start do`.
+
+**Request inside handlers**: `request.params`, `request.headers`,
+`request.path`, `request.verb`, `request.body`, `request.cookies`,
+`session`, plus the `params` / `cookies` / `session` shorthands.
+
+68 documented Sinatra behaviours pass `make test` (9 still skip).
 5 of 8 small real-world Sinatra apps (Sinatra's own `examples/`
-plus a handful of fetched-from-GitHub apps) build and serve
-correctly through `tep build`. Full breakdown in
-[SINATRA_COMPAT.md](SINATRA_COMPAT.md).
+plus a few fetched-from-GitHub) build and serve correctly through
+`tep build`. Full breakdown in [SINATRA_COMPAT.md](SINATRA_COMPAT.md).
 
 ## What doesn't (yet)
 
-Templates (ERB / Haml), sessions, cookies, streaming responses,
-`Sinatra::Base` modular apps, `helpers do ... end`, regex routes,
-`pass`, ORM gems. See SINATRA_COMPAT.md for the full list and the
-priority order. Each gap that bites a real-world app gets logged
-as a backlog entry and either fixed in tep or, where the underlying
-constraint is in Spinel itself, filed as a Spinel issue / PR.
+`helpers do ... end` (closures aren't first-class in Spinel).
+`send_file 'path'` from inside a handler. Optional path segments
+(`get '/say(/:greeting)'` — Mustermann syntax). Multiple chained
+`before` / `after` filters. `pass`. Full `Rack::Request` methods
+(`.ip`, `.scheme`, `.ssl?`). `configure { ... }`. Sinatra's
+bare-`@ivar` ERB locals (use `locals: {...}` instead).
+`__END__` inline templates. Haml / Slim / etc. ORM gems.
+
+Each gap that bites a real-world app gets logged as a backlog
+entry and either fixed in tep or, where the underlying constraint
+is in Spinel itself, filed as a Spinel issue / PR.
 
 ## Install (from source)
 
@@ -156,10 +189,13 @@ spinel-compatible .rb                │
 native binary  ◄─────────────────────┘
 ```
 
-At runtime the binary is a single-process pre-fork HTTP server with
-its own request parser (no Rack), routing table, and response writer
+At runtime the binary is a pre-fork HTTP server (with optional
+`SO_REUSEPORT` workers) and its own request parser, router,
+chunked-encoding writer, signed-cookie store, and ERB renderer —
 all written in tep's Ruby and compiled to C. A small C helper
-(`lib/tep/sphttp.c`) wraps POSIX sockets via Spinel's FFI surface.
+(`lib/tep/sphttp.c`) wraps POSIX sockets and provides SHA-256 /
+HMAC primitives for the session store, all reached via Spinel's
+FFI surface. There's no Rack in the picture.
 
 ## Reporting bugs
 
