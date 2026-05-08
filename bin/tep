@@ -41,7 +41,13 @@ end
 
 # Build the translated Ruby source from a Sinatra-style file.
 def translate(input_path)
-  source = File.read(input_path)
+  raw_source = File.read(input_path)
+
+  # Split off `__END__` inline templates. Sinatra's convention is
+  # `@@ name\n<template body>` repeated. Pre-__END__ goes through
+  # Prism; post-__END__ is parsed by us into a name->body map.
+  source, inline_views = split_inline_views(raw_source)
+
   parsed = Prism.parse(source)
   fatal "parse errors in #{input_path}\n  #{parsed.errors.map(&:message).join("\n  ")}" unless parsed.success?
 
@@ -68,7 +74,7 @@ def translate(input_path)
     # `something.frob`) is just user code: pass it through verbatim
     # so spinel sees it at program load.
     if call?(node) && node.receiver.nil?
-      result = handle_top_call(node, routes, filters, not_founds, config, warnings)
+      result = handle_top_call(node, routes, filters, not_founds, config, warnings, passthrough)
       startup_block = result if result.is_a?(Hash) && result[:kind] == :startup
       return
     end
@@ -120,19 +126,25 @@ def translate(input_path)
 
   # Build-time ERB compile. Each referenced view becomes a top-level
   # method `tep_view_<name>(locals)` that returns the rendered string.
+  # Resolution order: file-based (views/<name>.erb) > inline (after
+  # `__END__`, `@@ name` blocks).
   unless views_used.empty?
     views_dir = config[:views] || File.join(File.dirname(input_path), "views")
     views_used.each do |vn|
       vp = File.join(views_dir, "#{vn}.erb")
-      unless File.exist?(vp)
-        warnings << "view :#{vn} -- file not found: #{vp}; emitting an empty stub"
+      tmpl = nil
+      if File.exist?(vp)
+        tmpl = File.read(vp)
+      elsif inline_views.key?(vn)
+        tmpl = inline_views[vn]
+      end
+      if tmpl.nil?
+        warnings << "view :#{vn} -- not found in #{vp} nor in inline `@@` templates; emitting empty stub"
         out << "def tep_view_#{vn}(locals); \"\"; end"
         next
       end
-      tmpl = File.read(vp)
-      body = erb_to_ruby_body(tmpl)
       out << "def tep_view_#{vn}(locals)"
-      out << "  " + body
+      out << "  " + erb_to_ruby_body(tmpl)
       out << "end"
       out << ""
     end
@@ -257,7 +269,7 @@ def call?(node)
   node.is_a?(Prism::CallNode)
 end
 
-def handle_top_call(node, routes, filters, not_founds, config, warnings)
+def handle_top_call(node, routes, filters, not_founds, config, warnings, passthrough)
   name = node.name.to_s
 
   if DSL_VERBS.include?(name)
@@ -306,6 +318,32 @@ def handle_top_call(node, routes, filters, not_founds, config, warnings)
     # until SIGINT/SIGTERM ends the process. Honour the spirit by
     # warning loudly; the block content is dropped.
     warnings << "on_stop -- tep has no graceful shutdown path; block ignored"
+    return
+  end
+
+  if name == "configure"
+    block = node.block
+    return warnings << "skipped configure -- needs a `do ... end` block" unless block.is_a?(Prism::BlockNode)
+    body  = block_source(block)
+    args  = node.arguments&.arguments || []
+    envs  = args.map { |a| a.is_a?(Prism::SymbolNode) ? a.unescaped : nil }.compact
+    if envs.empty?
+      passthrough << "# --- configure ---"
+      passthrough << body
+    else
+      # spinel doesn't have ENV.fetch with a default; ENV[k] returns
+      # nil for missing keys, but we'd then `.include?(nil)` which
+      # works (returns false). Default env "development" is matched
+      # only when TEP_ENV is unset; users who want dev-specific
+      # `configure :development` should set TEP_ENV explicitly.
+      env_lits = envs.map(&:inspect).join(", ")
+      passthrough << "# --- configure :#{envs.join(', :')} ---"
+      passthrough << "_tep_env = ENV[\"TEP_ENV\"]"
+      passthrough << "_tep_env = \"development\" if _tep_env.nil? || _tep_env.length == 0"
+      passthrough << "if [#{env_lits}].include?(_tep_env)"
+      passthrough << body
+      passthrough << "end"
+    end
     return
   end
 
@@ -429,6 +467,13 @@ def rewrite_block(src, force_string: true)
     "(__l = Tep.str_hash; #{setters}; tep_view_#{view}(__l))"
   end
   s = s.gsub(/(?<![\w.])erb\s+:(\w+)/, 'tep_view_\1(Tep.str_hash)')
+
+  # `send_file 'path'` -> `res.send_file 'path'`; reuses the static-dir
+  # write path. The framework streams the file's bytes after the
+  # headers go out, so the handler doesn't need to read it itself.
+  s = s.gsub(/^(\s*)send_file\s+(['"][^'"]*['"])/) do
+    "#{$1}res.send_file(#{$2})\n#{$1}return \"\""
+  end
 
   # `stream X.new` -> `res.start_stream(X.new); return ""` -- ships the
   # subclass-style streaming DSL. The Sinatra `stream do |out| ... end`
@@ -583,6 +628,32 @@ def inlined_tep_library
   combined = loaded.map { |l| "# --- inlined: " + relative_to_lib(l[:path]) + " ---\n" + l[:body] }.join("\n")
   sphttp_o = ENV.fetch("TEP_SPHTTP_O", File.join(LIB_DIR, "tep", "sphttp.o"))
   combined.gsub("@TEP_SPHTTP_O@", sphttp_o)
+end
+
+# Split a Sinatra-style source on `__END__` and parse the trailing
+# `@@ name` blocks into a {name => template_body} hash.
+def split_inline_views(raw)
+  if raw =~ /^__END__\s*\n/m
+    head = $`
+    tail = $'
+  else
+    return [raw, {}]
+  end
+  views = {}
+  current = nil
+  buf = String.new
+  tail.each_line do |line|
+    m = line.match(/^@@\s+(\S+)\s*$/)
+    if m
+      views[current] = buf if current
+      current = m[1]
+      buf = String.new
+    elsif current
+      buf << line
+    end
+  end
+  views[current] = buf if current
+  [head, views]
 end
 
 def sinatra_base_class?(class_node)

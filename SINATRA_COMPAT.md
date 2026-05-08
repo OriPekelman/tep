@@ -3,10 +3,12 @@
 Generated from the curated checklist suite under `test/` plus
 real-world apps under `test/real_world/`. Run `make test` to refresh.
 
-**Headline (v0.2)**: 68 checklist tests pass + 5 of 8 real-world apps
-build and serve correctly. 9 skips remain. Cookies, sessions,
-streaming, regex routes, modular `Sinatra::Base`, and ERB templates
-all landed in v0.2.
+**Headline**: 71 checklist tests pass + 5 of 8 real-world apps
+build and serve correctly. 9 skips remain. v0.2 added cookies,
+sessions, streaming, regex routes, modular `Sinatra::Base`, ERB.
+Three more landed since: `send_file 'path'` from inside a handler,
+`configure { ... }` (and `configure :env { ... }`), and Sinatra's
+`__END__` inline templates.
 
 ## Phase A — Curated checklist
 
@@ -45,6 +47,9 @@ all landed in v0.2.
 | **Regex routes**: `get %r{...}`      | ✅ 5    | Up to 9 captures bound to params["1"]..params["9"] |
 | **Modular**: `class A < Sinatra::Base` | ✅ 3 | Routes fold into the global app; multiple modular classes coexist |
 | **ERB**: `erb :name` + `locals: {}`  | ✅ 4    | Build-time compiled; `<%= %>`, `<% %>`, `<%# %>` |
+| **send_file `'path'`**               | ✅ 1    | Reuses Tep::Response#send_file streaming path |
+| **configure { ... }** / **:env**     | ✅ 1    | Body runs at module load; env-keyed form gates on `ENV["TEP_ENV"]` (default "development") |
+| **`__END__` inline templates**       | ✅ 1    | `@@ name` blocks compile through the same ERB pipeline as files; file-based views still win when both exist |
 
 ## Phase B — Real-world apps
 
@@ -78,14 +83,11 @@ all landed in v0.2.
 |------------------------|--------|---|
 | Haml / Slim / etc.     | n/a    | Out of scope -- those are CRuby gems |
 | `helpers do ... end`   | medium | Closures not first-class in spinel; would need translator-level "extract methods to Handler base" pass |
-| `send_file 'path'`     | small  | Generalize Tep's static-dir support to any path |
 | Optional path segments `(/:foo)` | medium | Mustermann subset; or use a regex route as a workaround |
 | Multiple before/after filters chained | small | Composite filter pattern; or accept perf cost of poly array |
 | `pass`                 | small  | Try-next-route mechanism in dispatcher |
 | Full Rack::Request methods | medium | `.ip`, `.scheme`, `.ssl?`, etc. |
-| `configure { ... }`    | small  | Environment switching not implemented |
-| ERB locals via `@ivar` | medium | v0.2 ERB only supports `locals: {...}` hash form, not Sinatra's bare-ivar style |
-| `__END__` inline templates | small | One-shot scan + emit them as `tep_view_<name>` methods alongside file-based views |
+| ERB locals via `@ivar` | medium | ERB only supports `locals: {...}` hash form, not Sinatra's bare-ivar style |
 
 ## Reading the matrix
 
