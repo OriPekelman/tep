@@ -53,6 +53,7 @@ Three more landed since: `send_file 'path'` from inside a handler,
 | **`pass`** / **`pass if cond`**       | ✅ 3    | `req.passed` flag; dispatcher walks to next matching route or 404s |
 | **Multiple `before` / `after`**       | ✅ 2    | Translator merges N blocks into one composite Filter subclass |
 | **Optional path segments `(/:foo)`**  | ✅ 5    | Translator expands to the Cartesian product of include/skip; up to N optionals |
+| **Rack::Request-style methods**       | ✅ 6    | `.host`, `.user_agent`, `.referer`/`.referrer`, `.accept`, `.content_type`, `.scheme`/`.ssl?` (via `X-Forwarded-Proto`) |
 
 ## Phase B — Real-world apps
 
@@ -86,7 +87,7 @@ Three more landed since: `send_file 'path'` from inside a handler,
 |------------------------|--------|---|
 | Haml / Slim / etc.     | n/a    | Out of scope -- those are CRuby gems |
 | `helpers do ... end`   | medium | Closures not first-class in spinel; would need translator-level "extract methods to Handler base" pass |
-| Full Rack::Request methods | medium | `.ip`, `.scheme`, `.ssl?`, etc. |
+| `request.ip` / `request.remote_ip` | medium | Needs an sphttp_accept variant that returns the peer addr from the kernel; the rest of Rack::Request lands without C changes |
 | ERB locals via `@ivar` | medium | ERB only supports `locals: {...}` hash form, not Sinatra's bare-ivar style |
 
 ## Reading the matrix

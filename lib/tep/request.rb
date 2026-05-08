@@ -57,5 +57,33 @@ module Tep
     def form?
       @req_headers["content-type"].downcase.start_with?("application/x-www-form-urlencoded")
     end
+
+    # ---- Rack::Request-style accessors (reads only, no .ip yet) ----
+    # These are convenience getters over headers we already parse;
+    # `.ip` would need a sphttp_accept_with_peer C helper before it
+    # can land cleanly, so it's deferred.
+
+    def host;          @req_headers["host"];        end
+    def user_agent;    @req_headers["user-agent"];  end
+    def referer;       @req_headers["referer"];     end
+    def referrer;      @req_headers["referer"];     end   # spelling alias
+    def accept;        @req_headers["accept"];      end
+    def content_type;  @req_headers["content-type"]; end
+
+    # tep doesn't terminate TLS itself; both flags reflect "is this
+    # connection encrypted from the client's view?" via the
+    # `X-Forwarded-Proto: https` header that any reasonable reverse
+    # proxy sets.
+    def scheme
+      proto = @req_headers["x-forwarded-proto"]
+      if proto.length > 0
+        return proto.downcase
+      end
+      "http"
+    end
+
+    def ssl?
+      scheme == "https"
+    end
   end
 end
