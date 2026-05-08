@@ -176,19 +176,26 @@ def translate(input_path)
     r[:cls] = cname
   end
 
+  # Multiple `before do` / `after do` blocks fold into a single
+  # composite Filter subclass per kind -- spinel's PtrArray of
+  # mixed Filter subclasses can't dispatch virtually, and the App
+  # holds a single before/after slot.
+  filter_classes = {}
   filters.each do |kind, fs|
+    next if fs.empty?
+    cname = "TepFilters_#{kind}"
+    out << "class #{cname} < Tep::Filter"
+    out << "  def #{kind}(req, res)"
     fs.each_with_index do |f, i|
-      cname = "TepFilter_#{kind}_#{i}"
-      body  = rewrite_block(f[:block_src], force_string: false)
-      out << "class #{cname} < Tep::Filter"
-      out << "  def #{kind}(req, res)"
+      body = rewrite_block(f[:block_src], force_string: false)
+      out << "    # filter #{kind} ##{i}"
       out << indent(body, 4)
-      out << "    0"
-      out << "  end"
-      out << "end"
-      out << ""
-      f[:cls] = cname
     end
+    out << "    0"
+    out << "  end"
+    out << "end"
+    out << ""
+    filter_classes[kind] = cname
   end
 
   not_founds.each_with_index do |n, i|
@@ -205,8 +212,8 @@ def translate(input_path)
 
   # Registrations.
   out << Tep_public_dir(config[:public_dir]) if config[:public_dir]
-  filters["before"].each { |f| out << %(Tep.before #{f[:cls]}.new) }
-  filters["after"].each  { |f| out << %(Tep.after  #{f[:cls]}.new) }
+  out << %(Tep.before #{filter_classes["before"]}.new) if filter_classes["before"]
+  out << %(Tep.after  #{filter_classes["after"]}.new)  if filter_classes["after"]
   not_founds.each        { |n| out << %(Tep.not_found #{n[:cls]}.new) }
   routes.each do |r|
     if r[:regex]
@@ -214,7 +221,15 @@ def translate(input_path)
       # `pattern` arg (the matcher uses re_match? on the handler).
       out << %(Tep.#{r[:verb].downcase} "" , #{r[:cls]}.new)
     else
-      out << %(Tep.#{r[:verb].downcase} #{r[:path].inspect}, #{r[:cls]}.new)
+      # Optional segments `(/:foo)`: expand to the cartesian product
+      # of "include each optional or not", registering one route per
+      # combination with the same handler class. Bodies share state
+      # via the single class; missing optional captures show up as
+      # empty strings in `params[...]`.
+      paths = expand_optional_segments(r[:path])
+      paths.each do |p|
+        out << %(Tep.#{r[:verb].downcase} #{p.inspect}, #{r[:cls]}.new)
+      end
     end
   end
   out << ""
@@ -664,6 +679,33 @@ def split_inline_views(raw)
   end
   views[current] = buf if current
   [head, views]
+end
+
+# Expand a Sinatra-style path with optional `(...)` segments into the
+# Cartesian product of include/skip choices. `/say(/:greeting)` ->
+# ["/say", "/say/:greeting"]. Two optionals -> four paths, etc.
+def expand_optional_segments(path)
+  return [path] unless path.include?("(")
+  results = [""]
+  i = 0
+  while i < path.length
+    c = path[i]
+    if c == "("
+      close = path.index(")", i + 1)
+      raise "unmatched '(' in path: #{path}" unless close
+      inside = path[(i + 1)...close]
+      # Include first, skip second: when a request matches multiple
+      # optional-arrangements (e.g. `/items/42` matches both
+      # `/items/:id` and `/items/:section`), the earlier-named
+      # capture fills first -- matches Sinatra's intuition.
+      results = results.flat_map { |r| [r + inside, r] }
+      i = close + 1
+    else
+      results = results.map { |r| r + c }
+      i += 1
+    end
+  end
+  results.uniq
 end
 
 def sinatra_base_class?(class_node)

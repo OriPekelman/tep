@@ -23,14 +23,6 @@ class TestUnsupported < TepTest
     skip "`send_file 'path'` from inside a handler not yet wired (Tep does static-dir serving, not arbitrary send_file)"
   end
 
-  def test_optional_segments
-    skip "Optional path segments (`get '/say(/:greeting)'`) -- Mustermann syntax not implemented (regex routes work as a workaround)"
-  end
-
-  def test_multiple_filters
-    skip "Multiple before/after filters chained -- Tep has single-slot filters; user composes by subclassing"
-  end
-
   def test_request_object_methods
     skip "Full Sinatra request object (Rack::Request methods like .ip, .scheme, .ssl?) -- Tep::Request is a thin subset"
   end
