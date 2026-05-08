@@ -50,6 +50,7 @@ Three more landed since: `send_file 'path'` from inside a handler,
 | **send_file `'path'`**               | ✅ 1    | Reuses Tep::Response#send_file streaming path |
 | **configure { ... }** / **:env**     | ✅ 1    | Body runs at module load; env-keyed form gates on `ENV["TEP_ENV"]` (default "development") |
 | **`__END__` inline templates**       | ✅ 1    | `@@ name` blocks compile through the same ERB pipeline as files; file-based views still win when both exist |
+| **`pass`** / **`pass if cond`**       | ✅ 3    | `req.passed` flag; dispatcher walks to next matching route or 404s |
 
 ## Phase B — Real-world apps
 
@@ -85,7 +86,6 @@ Three more landed since: `send_file 'path'` from inside a handler,
 | `helpers do ... end`   | medium | Closures not first-class in spinel; would need translator-level "extract methods to Handler base" pass |
 | Optional path segments `(/:foo)` | medium | Mustermann subset; or use a regex route as a workaround |
 | Multiple before/after filters chained | small | Composite filter pattern; or accept perf cost of poly array |
-| `pass`                 | small  | Try-next-route mechanism in dispatcher |
 | Full Rack::Request methods | medium | `.ip`, `.scheme`, `.ssl?`, etc. |
 | ERB locals via `@ivar` | medium | ERB only supports `locals: {...}` hash form, not Sinatra's bare-ivar style |
 

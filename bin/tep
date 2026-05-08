@@ -468,6 +468,16 @@ def rewrite_block(src, force_string: true)
   end
   s = s.gsub(/(?<![\w.])erb\s+:(\w+)/, 'tep_view_\1(Tep.str_hash)')
 
+  # `pass` -> request a skip to the next matching route. The
+  # framework's dispatch loop watches `req.passed`. Both the bare
+  # form and `pass if cond` (modifier-if) are translated.
+  s = s.gsub(/^(\s*)pass\s+if\s+(.+)$/) do
+    "#{$1}if (#{$2})\n#{$1}  req.set_passed\n#{$1}  return \"\"\n#{$1}end"
+  end
+  s = s.gsub(/^(\s*)pass\s*$/) do
+    "#{$1}req.set_passed\n#{$1}return \"\""
+  end
+
   # `send_file 'path'` -> `res.send_file 'path'`; reuses the static-dir
   # write path. The framework streams the file's bytes after the
   # headers go out, so the handler doesn't need to read it itself.

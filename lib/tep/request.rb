@@ -22,7 +22,11 @@ module Tep
       @session      = Session.new    # signed cookie store
       @raw_body     = ""             # same reasoning as req_headers
       @remote_host  = ""
+      @passed       = false          # `pass` flag: skip to the next matching route
     end
+
+    attr_accessor :passed
+    def set_passed; @passed = true; end
 
     # Sinatra-compat read aliases. Writers stay on the renamed slots
     # (req_headers, raw_body) -- a `req.headers["X"] = v` from user

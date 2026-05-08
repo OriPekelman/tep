@@ -107,5 +107,31 @@ module Tep
       end
       nil
     end
+
+    # Find the next matching route after `start_idx` (1-based; the
+    # seed at 0 is skipped). Used by `pass` to step to the next
+    # candidate. Returns the Route + its index, or nil + -1.
+    def match_after(req, start_idx)
+      i = start_idx + 1
+      while i < @routes.length
+        r = @routes[i]
+        if r.matches?(req.verb, req.path)
+          return r
+        end
+        i += 1
+      end
+      nil
+    end
+
+    def index_of(route)
+      i = 0
+      while i < @routes.length
+        if @routes[i] == route
+          return i
+        end
+        i += 1
+      end
+      -1
+    end
   end
 end

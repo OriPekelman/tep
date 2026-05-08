@@ -31,10 +31,6 @@ class TestUnsupported < TepTest
     skip "Multiple before/after filters chained -- Tep has single-slot filters; user composes by subclassing"
   end
 
-  def test_pass_to_next_route
-    skip "`pass` -- skipping to next matching route not implemented"
-  end
-
   def test_request_object_methods
     skip "Full Sinatra request object (Rack::Request methods like .ip, .scheme, .ssl?) -- Tep::Request is a thin subset"
   end

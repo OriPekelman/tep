@@ -47,11 +47,23 @@ module Tep
       @before_filter.before(req, res)
       if !res.halted
         route = @router.match(req)
-        if route != nil
+        # `pass` loop: a handler can signal skip-to-next-route by
+        # setting req.passed. Iterate until a handler doesn't pass,
+        # or we run out of matching routes.
+        served = false
+        while route != nil && !served
           route.fold_captures(req)
+          req.passed = false
           out = route.handler.handle(req, res)
-          res.set_body_if_empty(out)
-        else
+          if req.passed
+            idx   = @router.index_of(route)
+            route = @router.match_after(req, idx)
+          else
+            res.set_body_if_empty(out)
+            served = true
+          end
+        end
+        if !served
           if !try_static(req, res)
             out = @nf_handler.handle(req, res)
             res.set_status(404)
