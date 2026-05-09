@@ -30,6 +30,7 @@ require_relative "tep/router"
 require_relative "tep/app"
 require_relative "tep/server"
 require_relative "tep/sqlite"
+require_relative "tep/json"
 
 module Tep
   # Helper: spinel won't infer types on an empty `{}`, so we seed
@@ -137,6 +138,24 @@ module Tep
     _tep_seed_db.first_int("SELECT v FROM _seed", "")
     _tep_seed_db.close
   end
+
+  # Tep::Json type-seeding. Pin every public method's parameter
+  # types so an app that uses one method but not another still
+  # compiles cleanly. Calls have no side effects beyond producing
+  # discardable strings.
+  Tep::Json.escape("")
+  Tep::Json.quote("")
+  Tep::Json.encode_pair_str("", "")
+  Tep::Json.encode_pair_int("", 0)
+  _tep_seed_str_arr = [""]
+  _tep_seed_str_arr.delete_at(0)
+  Tep::Json.from_str_array(_tep_seed_str_arr)
+  _tep_seed_int_arr = [0]
+  _tep_seed_int_arr.delete_at(0)
+  Tep::Json.from_int_array(_tep_seed_int_arr)
+  Tep::Json.get_str("{}", "")
+  Tep::Json.get_int("{}", "")
+  Tep::Json.has_key?("{}", "")
 
   # ---------------- DSL ----------------
   # Spinel emits every defined method whether called or not, and

@@ -50,6 +50,7 @@ Three more landed since: `send_file 'path'` from inside a handler,
 | **ERB ivar locals (`@name`)**        | ✅ 3    | Sinatra-style: `@x = v` in handler / `before` filter, `<%= @x %>` in template. Translator stores on a per-request `req.ivars` String=>String bag; templates take `(locals, ivars)`. Values are `(...).to_s`-coerced on write. |
 | **Mustache (subset)**                | ✅ 3    | Build-time compiled; `mustache :name` DSL parallel to `erb :name`. See "Mustache subset" below. |
 | **SQLite (libsqlite3 wrapper)**      | ✅ 5    | `Tep::SQLite` class wrapping libsqlite3 via a thin C shim (tep_sqlite.c). Same FFI pattern as sphttp.c -- spinel can't load gem-style native extensions, so we link a static .o instead. See "SQLite" below. |
+| **JSON (subset)**                    | ✅ 13   | Pure-Ruby `Tep::Json`: encode primitives + flat-key decoder. See "JSON subset" below. |
 | **send_file `'path'`**               | ✅ 1    | Reuses Tep::Response#send_file streaming path |
 | **configure { ... }** / **:env**     | ✅ 1    | Body runs at module load; env-keyed form gates on `ENV["TEP_ENV"]` (default "development") |
 | **`__END__` inline templates**       | ✅ 1    | `@@ name` blocks compile through the same ERB pipeline as files; file-based views still win when both exist |
@@ -199,6 +200,67 @@ Constraints:
     class. NULL is indistinguishable from empty-string.
   - **64 KiB cap on a single col_str result.** Bump
     `TEP_SQLITE_COL_BUFSIZE` for larger row fields.
+
+## JSON subset
+
+`Tep::Json` is a pure-Ruby JSON shim covering the encode + decode
+shapes that JSON-over-HTTP APIs use in practice. It deliberately
+trades full library breadth for spinel-friendly code paths.
+
+### Encode
+
+```ruby
+# Primitives.
+Tep::Json.escape(s)              # body of a JSON string literal (no quotes)
+Tep::Json.quote(s)               # "<escaped s>"
+
+# Object building blocks (fixed-arity; compose by concatenation).
+Tep::Json.encode_pair_str("k", v_string)   # "k":"v"
+Tep::Json.encode_pair_int("k", v_int)      # "k":N
+
+# Build a full object literal:
+"{" + Tep::Json.encode_pair_str("name", name) + "," +
+      Tep::Json.encode_pair_int("age", age) + "}"
+
+# Arrays.
+Tep::Json.from_str_array(["a", "b"])       # ["a","b"]
+Tep::Json.from_int_array([1, 2, 3])        # [1,2,3]
+```
+
+There's intentionally **no** `from_str_hash(h)` / `from_int_hash(h)`
+"give me a hash" convenience: a method that `each`-iterates a Hash
+parameter currently widens the param's inferred type to poly under
+conditions tep doesn't fully understand (the same shape on
+`set_cookie(opts)` in tep itself stays correctly typed). The
+fixed-arity `encode_pair_*` building blocks side-step the widening
+and keep the call shape type-clean. If a future spinel update
+fixes the inference, the convenience can land then.
+
+### Decode (flat-key, top-level only)
+
+```ruby
+Tep::Json.get_str(body, "name")  # value of top-level "name", or "" if absent / non-string
+Tep::Json.get_int(body, "age")   # 0 if absent / non-numeric
+Tep::Json.has_key?(body, "x")    # boolean
+```
+
+The hand-rolled state-machine parser walks one `{ "k": <value>, ... }`
+pair at a time and skips over values it doesn't need (including
+nested objects / arrays / strings with `"` and `{` / `}` inside
+them). Returns 0 / "" on parse failure rather than raising --
+suits API code that wants "no key" and "wrong type" to behave
+the same way.
+
+### Out of scope (deliberately)
+
+  - **Floats.** Numbers parse / emit as int (`.to_s`). For
+    fractional values, transport as strings.
+  - **Path traversal** in the decoder (`payload.user.email`-style).
+    Use a flatter API contract or do the nested decode manually.
+  - **`\uXXXX` decoding past 00XX.** ASCII round-trips; non-ASCII
+    bytes pass through verbatim in encode and on parse-time
+    \u escapes in input we keep the low byte only.
+  - **Streaming** parsers. Loads the whole string.
 
 ## Reading the matrix
 
