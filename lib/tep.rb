@@ -34,6 +34,7 @@ require_relative "tep/json"
 require_relative "tep/logger"
 require_relative "tep/jwt"
 require_relative "tep/password"
+require_relative "tep/security"
 
 module Tep
   # Helper: spinel won't infer types on an empty `{}`, so we seed
@@ -181,6 +182,15 @@ module Tep
   _tep_seed_pwd_hash = Tep::Password.create("seed")
   Tep::Password.verify("seed", _tep_seed_pwd_hash)
   Tep::Password.split4("a$b$c$d")
+
+  # Tep::Security seeding -- pin the filter classes' params.
+  _tep_seed_cors = Tep::Security::Cors.new
+  _tep_seed_cors.set_origin("")
+  _tep_seed_cors.set_allowed_verbs("")
+  _tep_seed_cors.set_allowed_headers("")
+  _tep_seed_cors.set_max_age(0)
+  _tep_seed_hdrs = Tep::Security::Headers.new
+  _tep_seed_hdrs.set_hsts(0)
   _tep_seed_str_arr = [""]
   _tep_seed_str_arr.delete_at(0)
   Tep::Json.from_str_array(_tep_seed_str_arr)

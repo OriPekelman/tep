@@ -136,12 +136,13 @@ class TepTest < Minitest::Test
   def req(method, path, body, headers)
     uri = URI("http://127.0.0.1:#{@port}#{path}")
     klass = {
-      get:    Net::HTTP::Get,
-      post:   Net::HTTP::Post,
-      put:    Net::HTTP::Put,
-      patch:  Net::HTTP::Patch,
-      delete: Net::HTTP::Delete,
-      head:   Net::HTTP::Head,
+      get:     Net::HTTP::Get,
+      post:    Net::HTTP::Post,
+      put:     Net::HTTP::Put,
+      patch:   Net::HTTP::Patch,
+      delete:  Net::HTTP::Delete,
+      head:    Net::HTTP::Head,
+      options: Net::HTTP::Options,
     }.fetch(method)
     Net::HTTP.start(uri.host, uri.port, read_timeout: 3) do |http|
       r = klass.new(uri)
