@@ -175,7 +175,6 @@ module Tep
   Tep::Jwt.decode_payload("")
   Tep::Jwt.verify_and_decode("", "")
   Tep::Jwt.timing_safe_eq("", "")
-  Tep::Jwt.find_dots("")
 
   # Tep::Password seed -- one cheap PBKDF2 round at startup, just
   # to pin every method's parameter types. iters=1 keeps the cost

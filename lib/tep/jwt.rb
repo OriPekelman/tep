@@ -62,10 +62,12 @@ module Tep
     # Verify the signature on a token. Returns true / false. Does
     # NOT check claim semantics (exp / nbf / iss / aud).
     def self.verify_hs256(token, secret)
-      dots = Jwt.find_dots(token)
-      d1 = dots[0]
-      d2 = dots[1]
-      if d1 < 0 || d2 < 0
+      d1 = token.index(".")
+      if d1 < 0
+        return false
+      end
+      d2 = token.index(".", d1 + 1)
+      if d2 < 0
         return false
       end
       signing_input = token[0, d2]
@@ -78,39 +80,16 @@ module Tep
     # signature verification -- call `verify_hs256` first if you
     # haven't, OR use the wrapped `verify_and_decode` form.
     def self.decode_payload(token)
-      dots = Jwt.find_dots(token)
-      d1 = dots[0]
-      d2 = dots[1]
-      if d1 < 0 || d2 < 0
+      d1 = token.index(".")
+      if d1 < 0
+        return ""
+      end
+      d2 = token.index(".", d1 + 1)
+      if d2 < 0
         return ""
       end
       payload_b64 = token[d1 + 1, d2 - d1 - 1]
       Sock.sphttp_b64url_decode(payload_b64)
-    end
-
-    # Find the two `.` separators in a JWT. Returns a 2-element
-    # int array; either entry is -1 if not found.
-    #
-    # Hand-rolled because spinel's `String#index(substr)` only
-    # supports the 1-arg form; the 2-arg `index(substr, start)`
-    # silently drops the offset and re-finds the first match.
-    def self.find_dots(token)
-      d1 = -1
-      d2 = -1
-      i = 0
-      n = token.length
-      while i < n
-        if token[i] == "."
-          if d1 < 0
-            d1 = i
-          else
-            d2 = i
-            return [d1, d2]
-          end
-        end
-        i += 1
-      end
-      [d1, d2]
     end
 
     # One-shot: verify, then decode. Returns the JSON payload on
