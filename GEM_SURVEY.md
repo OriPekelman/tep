@@ -123,18 +123,33 @@ a child process running a separate handler, since spinel exposes
 If we want a "batteries-included Sinatra-on-spinel" feel, in order
 of bang-for-buck:
 
-1. **`Tep::Json`** -- parse + generate. Highest-ROI single
-   addition (every API needs it).
-2. **`Tep::Logger`** -- structured stderr/file logging. Cheap,
-   nearly every app wants it.
-3. **`Tep::Auth::BCrypt`** + **`Tep::Auth::Jwt`** -- C-shim
-   bcrypt + pure-Ruby jwt sitting on top of the existing HMAC
-   helper. Unlocks "real auth" without a SaaS dependency.
-4. **`Tep::Http`** (libcurl C-shim) -- outbound HTTP. Necessary
-   for any app that talks to other services. Gives `Tep::Http.get`
-   / `.post` / etc. with simple kwargs.
-5. **`Tep::Cors`** + **`Tep::SecureHeaders`** -- common middleware
-   patterns reimplemented as before-filters.
+1. ~~**`Tep::Json`**~~ -- ✅ Shipped (lib/tep/json.rb). Fixed-arity
+   building blocks (`encode_pair_str` / `encode_pair_int` /
+   `from_str_array` / `from_int_array`) plus flat-key decoders
+   (`get_str` / `get_int` / `has_key?`). Hash-iterating
+   convenience deferred pending spinel issue #408.
+2. ~~**`Tep::Logger`**~~ -- ✅ Shipped (lib/tep/logger.rb).
+   debug/info/warn/error levels, stderr by default,
+   `to_file(path)` for append.
+3. ~~**`Tep::Jwt`**~~ -- ✅ Shipped (lib/tep/jwt.rb). HS256 with
+   `encode_hs256` / `verify_hs256` / `decode_payload` /
+   `verify_and_decode`. Interop-tested against the canonical
+   `jwt` Ruby gem.
+   ~~**`Tep::Auth::BCrypt`**~~ -- ✅ Shipped as
+   `Tep::Password.create / verify` (lib/tep/password.rb), backed
+   by PBKDF2-SHA256 instead of bcrypt -- avoids the libxcrypt
+   portability dance (macOS doesn't ship $2b$, Linux needs
+   libxcrypt). Self-describing storage format
+   (`pbkdf2-sha256$<iters>$<salt>$<derived>`) so a future scrypt /
+   argon2 / actual-bcrypt rotation can land alongside.
+4. **`Tep::Http`** (libcurl C-shim) -- still pending. Outbound
+   HTTP for service-to-service calls.
+5. ~~**`Tep::Cors`** + **`Tep::SecureHeaders`**~~ -- ✅ Shipped
+   as `Tep::Security::Cors` + `Tep::Security::Headers`
+   (lib/tep/security.rb). CORS preflight short-circuits with 204;
+   default-secure header bundle (nosniff, SAMEORIGIN, Referrer-
+   Policy, X-XSS-Protection, optional HSTS).
 
-The bcrypt + jwt + cors + secure_headers tier is what turns "tep
-hello world" into "tep production API."
+The `Tep::Http` outbound HTTP client is the last "essentials"
+gap. After that the framework sits comfortably in "production
+API" shape.
