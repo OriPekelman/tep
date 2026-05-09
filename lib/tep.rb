@@ -32,6 +32,7 @@ require_relative "tep/server"
 require_relative "tep/sqlite"
 require_relative "tep/json"
 require_relative "tep/logger"
+require_relative "tep/jwt"
 
 module Tep
   # Helper: spinel won't infer types on an empty `{}`, so we seed
@@ -162,6 +163,16 @@ module Tep
   _tep_seed_logger.warn("")
   _tep_seed_logger.error("")
   Tep::Logger.level_value("info")
+
+  # Tep::Jwt seed -- pin every method's :str arg types. The
+  # secret + payload are blank but the call shapes pin the FFI
+  # signature dispatch.
+  Tep::Jwt.encode_hs256("", "")
+  Tep::Jwt.verify_hs256("", "")
+  Tep::Jwt.decode_payload("")
+  Tep::Jwt.verify_and_decode("", "")
+  Tep::Jwt.timing_safe_eq("", "")
+  Tep::Jwt.find_dots("")
   _tep_seed_str_arr = [""]
   _tep_seed_str_arr.delete_at(0)
   Tep::Json.from_str_array(_tep_seed_str_arr)

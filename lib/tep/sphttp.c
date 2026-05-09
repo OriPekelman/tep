@@ -372,6 +372,151 @@ const char *sphttp_hmac_sha256_hex(const char *key, const char *msg) {
     return sphttp_hmac_hex_buf;
 }
 
+/* base64url alphabet (RFC 4648 §5): + and / replaced by - and _.
+ * No padding -- JWT and most modern callers strip '=' on emit and
+ * accept it missing on decode. */
+static const char B64U[64] =
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+
+/* HMAC-SHA256 over (key, msg) and base64url-encode the 32-byte
+ * digest into a 43-char buffer (no padding, no NUL surprises).
+ * Used by JWT signing -- JWT's JOSE encoding wants the binary HMAC
+ * result base64url'd directly, never hex. */
+static char sphttp_hmac_b64url_buf[44];
+
+const char *sphttp_hmac_sha256_b64url(const char *key, const char *msg) {
+    uint8_t out[32];
+    sphttp_hmac_sha256((const uint8_t *)key, strlen(key),
+                       (const uint8_t *)msg, strlen(msg),
+                       out);
+    /* 32 bytes -> 43 chars (no padding). Layout: 10 full
+     * 3-byte groups (30 bytes -> 40 chars) + 1 group of 2 bytes
+     * (-> 3 chars). */
+    int i, j = 0;
+    for (i = 0; i + 3 <= 32; i += 3) {
+        uint32_t v = ((uint32_t)out[i] << 16)
+                   | ((uint32_t)out[i+1] << 8)
+                   | (uint32_t)out[i+2];
+        sphttp_hmac_b64url_buf[j++] = B64U[(v >> 18) & 0x3f];
+        sphttp_hmac_b64url_buf[j++] = B64U[(v >> 12) & 0x3f];
+        sphttp_hmac_b64url_buf[j++] = B64U[(v >> 6)  & 0x3f];
+        sphttp_hmac_b64url_buf[j++] = B64U[v & 0x3f];
+    }
+    /* Tail: 32 % 3 == 2 bytes left -> 3 chars (no padding). */
+    if (i < 32) {
+        uint32_t v = ((uint32_t)out[i] << 16)
+                   | (i + 1 < 32 ? ((uint32_t)out[i+1] << 8) : 0);
+        sphttp_hmac_b64url_buf[j++] = B64U[(v >> 18) & 0x3f];
+        sphttp_hmac_b64url_buf[j++] = B64U[(v >> 12) & 0x3f];
+        if (i + 1 < 32) {
+            sphttp_hmac_b64url_buf[j++] = B64U[(v >> 6) & 0x3f];
+        }
+    }
+    sphttp_hmac_b64url_buf[j] = '\0';
+    return sphttp_hmac_b64url_buf;
+}
+
+/* base64url-encode an arbitrary NUL-terminated input string. The
+ * length cap below covers JWT-payload-sized inputs comfortably (a
+ * 4 KiB token's payload after JSON serialisation is well under
+ * 3 KiB). For larger payloads bump TEP_B64U_BUFSIZE. */
+#define TEP_B64U_BUFSIZE (16 * 1024)
+static char sphttp_b64url_buf[TEP_B64U_BUFSIZE];
+
+const char *sphttp_b64url_encode(const char *src) {
+    size_t n = strlen(src);
+    size_t i = 0, j = 0;
+    /* Worst case: 4*ceil(n/3) chars + NUL. */
+    if (4 * ((n + 2) / 3) + 1 > TEP_B64U_BUFSIZE) {
+        sphttp_b64url_buf[0] = '\0';
+        return sphttp_b64url_buf;
+    }
+    while (i + 3 <= n) {
+        uint32_t v = ((uint32_t)(uint8_t)src[i]   << 16)
+                   | ((uint32_t)(uint8_t)src[i+1] << 8)
+                   |  (uint32_t)(uint8_t)src[i+2];
+        sphttp_b64url_buf[j++] = B64U[(v >> 18) & 0x3f];
+        sphttp_b64url_buf[j++] = B64U[(v >> 12) & 0x3f];
+        sphttp_b64url_buf[j++] = B64U[(v >>  6) & 0x3f];
+        sphttp_b64url_buf[j++] = B64U[ v        & 0x3f];
+        i += 3;
+    }
+    size_t rem = n - i;
+    if (rem == 1) {
+        uint32_t v = (uint32_t)(uint8_t)src[i] << 16;
+        sphttp_b64url_buf[j++] = B64U[(v >> 18) & 0x3f];
+        sphttp_b64url_buf[j++] = B64U[(v >> 12) & 0x3f];
+    } else if (rem == 2) {
+        uint32_t v = ((uint32_t)(uint8_t)src[i]   << 16)
+                   | ((uint32_t)(uint8_t)src[i+1] << 8);
+        sphttp_b64url_buf[j++] = B64U[(v >> 18) & 0x3f];
+        sphttp_b64url_buf[j++] = B64U[(v >> 12) & 0x3f];
+        sphttp_b64url_buf[j++] = B64U[(v >>  6) & 0x3f];
+    }
+    sphttp_b64url_buf[j] = '\0';
+    return sphttp_b64url_buf;
+}
+
+/* base64url-decode. Returns the decoded payload as a NUL-terminated
+ * C string in a static buffer. NUL bytes inside the decoded payload
+ * truncate the C-string view -- not a concern for JWT (the JSON
+ * payload contains no NULs by construction). */
+static char sphttp_b64u_dec_buf[TEP_B64U_BUFSIZE];
+
+static int sphttp_b64u_val(char c) {
+    if (c >= 'A' && c <= 'Z') return c - 'A';
+    if (c >= 'a' && c <= 'z') return c - 'a' + 26;
+    if (c >= '0' && c <= '9') return c - '0' + 52;
+    if (c == '-') return 62;
+    if (c == '_') return 63;
+    return -1;
+}
+
+const char *sphttp_b64url_decode(const char *src) {
+    size_t n = strlen(src);
+    /* Strip optional padding so callers can pass either RFC-7515
+     * unpadded JWT segments or the rarer padded form. */
+    while (n > 0 && src[n - 1] == '=') n--;
+    size_t i = 0, j = 0;
+    if (n / 4 * 3 + 3 > TEP_B64U_BUFSIZE) {
+        sphttp_b64u_dec_buf[0] = '\0';
+        return sphttp_b64u_dec_buf;
+    }
+    while (i + 4 <= n) {
+        int a = sphttp_b64u_val(src[i]);
+        int b = sphttp_b64u_val(src[i+1]);
+        int c = sphttp_b64u_val(src[i+2]);
+        int d = sphttp_b64u_val(src[i+3]);
+        if (a < 0 || b < 0 || c < 0 || d < 0) {
+            sphttp_b64u_dec_buf[0] = '\0';
+            return sphttp_b64u_dec_buf;
+        }
+        uint32_t v = (uint32_t)a << 18 | (uint32_t)b << 12
+                   | (uint32_t)c <<  6 | (uint32_t)d;
+        sphttp_b64u_dec_buf[j++] = (v >> 16) & 0xff;
+        sphttp_b64u_dec_buf[j++] = (v >>  8) & 0xff;
+        sphttp_b64u_dec_buf[j++] =  v        & 0xff;
+        i += 4;
+    }
+    /* Tail: 2 chars -> 1 byte, 3 chars -> 2 bytes. */
+    size_t rem = n - i;
+    if (rem == 2) {
+        int a = sphttp_b64u_val(src[i]);
+        int b = sphttp_b64u_val(src[i+1]);
+        if (a < 0 || b < 0) { sphttp_b64u_dec_buf[0] = '\0'; return sphttp_b64u_dec_buf; }
+        sphttp_b64u_dec_buf[j++] = (a << 2) | (b >> 4);
+    } else if (rem == 3) {
+        int a = sphttp_b64u_val(src[i]);
+        int b = sphttp_b64u_val(src[i+1]);
+        int c = sphttp_b64u_val(src[i+2]);
+        if (a < 0 || b < 0 || c < 0) { sphttp_b64u_dec_buf[0] = '\0'; return sphttp_b64u_dec_buf; }
+        sphttp_b64u_dec_buf[j++] = (a << 2) | (b >> 4);
+        sphttp_b64u_dec_buf[j++] = ((b & 0xf) << 4) | (c >> 2);
+    }
+    sphttp_b64u_dec_buf[j] = '\0';
+    return sphttp_b64u_dec_buf;
+}
+
 /* Pre-fork support. Returns child pid in parent, 0 in child, -1 on fail. */
 int sphttp_fork(void) {
     return (int)fork();
