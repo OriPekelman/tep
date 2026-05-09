@@ -130,7 +130,7 @@ is in Spinel itself, filed as a Spinel issue / PR.
 ## Install (from source)
 
 ```sh
-git clone https://github.com/OriPekelman/spinel    # or your fork
+git clone https://github.com/matz/spinel
 cd spinel && make all
 export PATH="$PWD:$PATH"   # so `spinel` is on PATH
 
