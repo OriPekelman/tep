@@ -11,11 +11,19 @@ export TEP_SPHTTP_O := $(LIB_DIR)/sphttp.o
 export TEP_SQLITE_O := $(LIB_DIR)/tep_sqlite.o
 export SPINEL
 
-.PHONY: all clean helper hello sinatra_style bench bench-tep bench-sinatra demo test
+.PHONY: all clean helper hello sinatra_style bench bench-tep bench-sinatra demo test spinel-fresh
 
-all: helper hello sinatra_style bench
+# Always check that the local spinel checkout is on tip-of-master
+# before we build / test against it -- spinel moves quickly and a
+# stale binary is a fast way to chase ghost regressions. Skip with
+# `TEP_SKIP_SPINEL_FRESH=1`; override the spinel location with
+# `TEP_SPINEL_DIR`.
+spinel-fresh:
+	@$(TEP_ROOT)/tools/spinel-fresh.sh
 
-helper: $(LIB_DIR)/sphttp.o $(LIB_DIR)/tep_sqlite.o
+all: spinel-fresh helper hello sinatra_style bench
+
+helper: spinel-fresh $(LIB_DIR)/sphttp.o $(LIB_DIR)/tep_sqlite.o
 
 $(LIB_DIR)/sphttp.o: $(LIB_DIR)/sphttp.c
 	cc -O2 -c $< -o $@
