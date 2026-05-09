@@ -12,6 +12,14 @@ test/real_world/0[0-9]_*
 test/real_world/.*.tep.rb
 !test/real_world/0[0-9]_*.rb
 
+# `bin/tep run app.rb` drops a binary at the repo root.
+tep-run-bin
+
+# Built examples + scratch DBs from the blog showcase.
+examples/blog/.*.tep.rb
+examples/blog/*.db
+examples/blog/blog
+
 # Stray spinel-built binaries from running `spinel some.tep.rb`
 # directly (the default output strips `.rb`, leaving a `.tep`).
 *.tep
