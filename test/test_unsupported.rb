@@ -25,9 +25,7 @@ class TestUnsupported < TepTest
     skip "request.ip / request.remote_ip -- needs an sphttp_accept_with_peer C helper. Other Rack::Request methods (host, user_agent, scheme, ssl?, etc.) are supported -- see test_request_methods.rb."
   end
 
-  def test_per_request_locals_with_ivars
-    skip "ERB locals via `@ivar` style (Sinatra default) -- tep ERB only supports the explicit `locals: {...}` hash form"
-  end
+  # `@ivar` template locals are now supported -- see test_erb_ivars.rb.
 
   # send_file, configure, pass, multiple filters, optional segments
   # have all moved into supported and have their own test files.

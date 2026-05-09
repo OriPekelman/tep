@@ -47,6 +47,7 @@ Three more landed since: `send_file 'path'` from inside a handler,
 | **Regex routes**: `get %r{...}`      | ✅ 5    | Up to 9 captures bound to params["1"]..params["9"] |
 | **Modular**: `class A < Sinatra::Base` | ✅ 3 | Routes fold into the global app; multiple modular classes coexist |
 | **ERB**: `erb :name` + `locals: {}`  | ✅ 4    | Build-time compiled; `<%= %>`, `<% %>`, `<%# %>` |
+| **ERB ivar locals (`@name`)**        | ✅ 3    | Sinatra-style: `@x = v` in handler / `before` filter, `<%= @x %>` in template. Translator stores on a per-request `req.ivars` String=>String bag; templates take `(locals, ivars)`. Values are `(...).to_s`-coerced on write. |
 | **send_file `'path'`**               | ✅ 1    | Reuses Tep::Response#send_file streaming path |
 | **configure { ... }** / **:env**     | ✅ 1    | Body runs at module load; env-keyed form gates on `ENV["TEP_ENV"]` (default "development") |
 | **`__END__` inline templates**       | ✅ 1    | `@@ name` blocks compile through the same ERB pipeline as files; file-based views still win when both exist |
@@ -88,7 +89,6 @@ Three more landed since: `send_file 'path'` from inside a handler,
 | Haml / Slim / etc.     | n/a    | Out of scope -- those are CRuby gems |
 | `helpers do ... end`   | medium | Closures not first-class in spinel; would need translator-level "extract methods to Handler base" pass |
 | `request.ip` / `request.remote_ip` | medium | Needs an sphttp_accept variant that returns the peer addr from the kernel; the rest of Rack::Request lands without C changes |
-| ERB locals via `@ivar` | medium | ERB only supports `locals: {...}` hash form, not Sinatra's bare-ivar style |
 
 ## Reading the matrix
 

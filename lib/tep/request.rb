@@ -4,6 +4,7 @@ module Tep
     attr_accessor :verb, :path, :raw_path, :http_version
     attr_accessor :params, :query, :req_headers, :raw_body, :cookies, :session
     attr_accessor :remote_host
+    attr_accessor :ivars
 
     def initialize
       @verb         = ""
@@ -23,6 +24,13 @@ module Tep
       @raw_body     = ""             # same reasoning as req_headers
       @remote_host  = ""
       @passed       = false          # `pass` flag: skip to the next matching route
+      @ivars        = Tep.str_hash   # per-request bag for `@name = ...`
+                                     # set by handlers and `before` filters,
+                                     # read by templates as `ivars[k]`. The
+                                     # Sinatra-compat translator rewrites
+                                     # `@x = v` -> `req.ivars["x"] = (v).to_s`
+                                     # in handler bodies and `@x` -> `ivars["x"]`
+                                     # inside ERB chunks.
     end
 
     attr_accessor :passed

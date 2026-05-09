@@ -29,7 +29,20 @@ require "tmpdir"
 require "pathname"
 
 LIB_DIR = File.expand_path("../lib", __dir__)
-SPINEL  = ENV.fetch("SPINEL", "spinel")
+
+# Resolve spinel: explicit env var wins, then a sibling
+# `../spinel/spinel` checkout (matches the typical dev layout where
+# tep and spinel are checked out side by side), then plain `spinel`
+# on PATH. The Makefile exports SPINEL=spinel by default; treat the
+# literal placeholder as unset so the sibling fallback still fires.
+def self.locate_spinel
+  e = ENV["SPINEL"]
+  return e if e && !e.empty? && e != "spinel"
+  sibling = File.expand_path("../../../spinel/spinel", __dir__)
+  return sibling if File.executable?(sibling)
+  "spinel"
+end
+SPINEL = locate_spinel
 
 DSL_VERBS = %w[get post put patch delete options head]
 HOOK_NAMES = %w[before after not_found]
@@ -140,10 +153,10 @@ def translate(input_path)
       end
       if tmpl.nil?
         warnings << "view :#{vn} -- not found in #{vp} nor in inline `@@` templates; emitting empty stub"
-        out << "def tep_view_#{vn}(locals); \"\"; end"
+        out << "def tep_view_#{vn}(locals, ivars); \"\"; end"
         next
       end
-      out << "def tep_view_#{vn}(locals)"
+      out << "def tep_view_#{vn}(locals, ivars)"
       out << "  " + erb_to_ruby_body(tmpl)
       out << "end"
       out << ""
@@ -438,6 +451,27 @@ end
 def rewrite_block(src, force_string: true)
   s = src.dup
 
+  # `@name = expr` (Sinatra-style instance variables) -> store on the
+  # per-request ivars bag. The string-coerce wrap (`(...).to_s`) keeps
+  # the str_hash uniform-typed even when handlers stash an int / bool
+  # in `@count` / `@flag` for a template to render. Excluded: `==`,
+  # `=>` (which can't appear at this position anyway), `=~`. The
+  # write rewrite runs before the bare `@name` read rewrite so the
+  # LHS `@x` doesn't get caught by the read pass.
+  #
+  # Also: spinel doesn't support multi-statement single-line ivar
+  # assignments (`@a=1; @b=2`); the `(.+)$` capture is line-greedy.
+  # Users who need that should split across lines, which is the more
+  # idiomatic style anyway.
+  s = s.gsub(/^(\s*)@(\w+)\s*=(?![=~])\s*(.+)$/) do
+    %{#{$1}req.ivars["#{$2}"] = (#{$3}).to_s}
+  end
+
+  # Bare `@name` read (anywhere) -> `req.ivars["name"]`. Negative
+  # lookbehind avoids `@@x` (class var) and the suffix of identifier-
+  # like preceding text.
+  s = rewrite_ivar_reads(s, sink: "req.ivars")
+
   # `redirect 'url', code?` (line)
   s = s.gsub(/^(\s*)redirect\s+(['"][^'"]*['"])(?:\s*,\s*(\d+))?/) do
     indent = $1
@@ -470,18 +504,20 @@ def rewrite_block(src, force_string: true)
   # `cookies["k"]` -> `req.cookies["k"]` when not already qualified
   s = s.gsub(/(?<![\w.])cookies\[/, "req.cookies[")
 
-  # `erb :name`              -> `tep_view_name(Tep.str_hash)`
+  # `erb :name`              -> `tep_view_name(Tep.str_hash, req.ivars)`
   # `erb :name, locals: {a: "b", c: "d"}` -> build a String=>String
-  # hash from the literal-only kwarg form, then call.
+  # hash from the literal-only kwarg form, then call. The second
+  # arg threads the per-request ivars bag so templates can read
+  # `<%= @name %>` style references the handler set with `@name = v`.
   s = s.gsub(/(?<![\w.])erb\s+:(\w+)\s*,\s*locals:\s*\{([^}]*)\}/) do
     view = $1
     # Value runs up to the next comma or closing brace; quoted strings
     # are handled separately so they can contain commas or spaces.
     pairs = $2.scan(/(\w+):\s*("[^"]*"|'[^']*'|[^,}]+?)\s*(?=,|\z)/)
     setters = pairs.map { |k, v| %{__l["#{k}"] = (#{v.strip}).to_s} }.join("; ")
-    "(__l = Tep.str_hash; #{setters}; tep_view_#{view}(__l))"
+    "(__l = Tep.str_hash; #{setters}; tep_view_#{view}(__l, req.ivars))"
   end
-  s = s.gsub(/(?<![\w.])erb\s+:(\w+)/, 'tep_view_\1(Tep.str_hash)')
+  s = s.gsub(/(?<![\w.])erb\s+:(\w+)/, 'tep_view_\1(Tep.str_hash, req.ivars)')
 
   # `pass` -> request a skip to the next matching route. The
   # framework's dispatch loop watches `req.passed`. Both the bare
@@ -583,10 +619,16 @@ def relative_path(from_dir, target)
     .relative_path_from(Pathname.new(File.expand_path(from_dir))).to_s
 end
 
-# Compile an ERB template to a Ruby method body. The method takes a
-# single `locals` argument (a String=>String Hash); inside the
-# template, `<%= locals["k"] %>` interpolates and `<% if/else/end %>`
-# embed control flow. Comments `<%# ... %>` are dropped.
+# Compile an ERB template to a Ruby method body. The method takes
+# two String=>String Hash arguments: `locals` (passed by the
+# handler's explicit `erb :v, locals: {...}` form) and `ivars`
+# (the per-request bag carrying `@name = ...` Sinatra-style ivars
+# from handler / before-filter scope). Inside the template:
+#
+#   <%= locals["k"] %>     # explicit locals
+#   <%= @name %>           # rewrites to `ivars["name"]`
+#   <% if/else/end %>      # control flow, also gets ivar rewrite
+#   <%# ... %>             # comment, dropped
 #
 # Spinel can't `eval`, so all ERB rendering is build-time AOT --
 # this is what makes `erb :name` work on a spinel-compiled binary.
@@ -613,18 +655,33 @@ def erb_to_ruby_body(template)
     flush.call
     code = template[(open_at + 2)...close_at]
     if code.start_with?("=")
-      expr = code[1..-1].strip
+      expr = rewrite_ivar_reads(code[1..-1].strip)
       parts << "out += (#{expr}).to_s"
     elsif code.start_with?("#")
       # comment; ignore
     else
-      parts << code.strip
+      parts << rewrite_ivar_reads(code.strip)
     end
     i = close_at + 2
   end
   flush.call
   parts << "out"
   parts.join("\n  ")
+end
+
+# Replace `@name` references with `ivars["name"]`. Used inside ERB
+# template chunks (which receive `ivars` as a parameter) and as a
+# read-side helper for handler-body rewriting (where `@name` ->
+# `req.ivars["name"]`, see `rewrite_block`).
+#
+# The negative lookbehind `(?<![\w.@])` skips matches preceded by an
+# identifier character, a dot, or another `@` -- so `@@class_var`
+# isn't accidentally split into `@` + `@class_var` and a stray `@`
+# inside a string literal at the start of a line still gets caught
+# (callers mostly invoke this on small Ruby fragments where literal
+# strings containing `@x` are uncommon).
+def rewrite_ivar_reads(src, sink: 'ivars')
+  src.gsub(/(?<![\w.@])@(\w+)/) { %{#{sink}["#{$1}"]} }
 end
 
 # Read tep.rb plus everything it require_relatives, in order, with
