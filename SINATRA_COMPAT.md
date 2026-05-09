@@ -51,6 +51,7 @@ Three more landed since: `send_file 'path'` from inside a handler,
 | **Mustache (subset)**                | ✅ 3    | Build-time compiled; `mustache :name` DSL parallel to `erb :name`. See "Mustache subset" below. |
 | **SQLite (libsqlite3 wrapper)**      | ✅ 5    | `Tep::SQLite` class wrapping libsqlite3 via a thin C shim (tep_sqlite.c). Same FFI pattern as sphttp.c -- spinel can't load gem-style native extensions, so we link a static .o instead. See "SQLite" below. |
 | **JSON (subset)**                    | ✅ 13   | Pure-Ruby `Tep::Json`: encode primitives + flat-key decoder. See "JSON subset" below. |
+| **Logger**                           | ✅ 3    | `Tep::Logger` with debug/info/warn/error levels. stderr by default; `to_file(path)` appends. Format: `[<unix_seconds>] [<level>] <msg>`. |
 | **send_file `'path'`**               | ✅ 1    | Reuses Tep::Response#send_file streaming path |
 | **configure { ... }** / **:env**     | ✅ 1    | Body runs at module load; env-keyed form gates on `ENV["TEP_ENV"]` (default "development") |
 | **`__END__` inline templates**       | ✅ 1    | `@@ name` blocks compile through the same ERB pipeline as files; file-based views still win when both exist |

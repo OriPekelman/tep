@@ -31,6 +31,7 @@ require_relative "tep/app"
 require_relative "tep/server"
 require_relative "tep/sqlite"
 require_relative "tep/json"
+require_relative "tep/logger"
 
 module Tep
   # Helper: spinel won't infer types on an empty `{}`, so we seed
@@ -147,6 +148,20 @@ module Tep
   Tep::Json.quote("")
   Tep::Json.encode_pair_str("", "")
   Tep::Json.encode_pair_int("", 0)
+
+  # Tep::Logger seed -- pin parameter types for every method even
+  # when an app uses one but not another. The level-name string
+  # ("info") and the messages ("") pin the :str shape; the file-
+  # path setter pins to_file's :str arg.
+  _tep_seed_logger = Tep::Logger.new
+  _tep_seed_logger.set_level("info")
+  _tep_seed_logger.to_file("")
+  _tep_seed_logger.to_stderr
+  _tep_seed_logger.debug("")
+  _tep_seed_logger.info("")
+  _tep_seed_logger.warn("")
+  _tep_seed_logger.error("")
+  Tep::Logger.level_value("info")
   _tep_seed_str_arr = [""]
   _tep_seed_str_arr.delete_at(0)
   Tep::Json.from_str_array(_tep_seed_str_arr)
