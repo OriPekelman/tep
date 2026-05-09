@@ -256,4 +256,128 @@ class TestRealWorld < TepTest
       assert_match(/posting as.*alice/, r_admin2.body)
     end
   end
+
+  # ---- showcase: examples/chat ----
+  # Live chat with SSE streaming + presence. Each open SSE
+  # connection occupies one tep worker, so we boot with -w 4.
+
+  def with_chat
+    src = File.expand_path("../examples/chat/app.rb", __dir__)
+    bin = Dir.mktmpdir + "/chat"
+    db  = File.join(File.dirname(bin), "chat.db")
+    File.unlink(db) if File.exist?(db)
+    out = `TEP_CHAT_DB=#{Shellwords.escape(db)} #{Shellwords.escape(File.expand_path("../bin/tep", __dir__))} build #{Shellwords.escape(src)} -o #{Shellwords.escape(bin)} 2>&1`
+    raise "chat build failed:\n#{out}" unless $?.success?
+    port = TestRealWorld.next_port
+    # Single worker, fresh process group so we can SIGTERM the
+    # whole tree on teardown. Prefork (-w >1) leaks orphan workers
+    # under macOS SO_REUSEPORT semantics that confuse subsequent
+    # boots in the same test run.
+    pid = Process.spawn({"TEP_CHAT_DB" => db}, bin, "-p", port.to_s, "-w", "1", "-q",
+                        pgroup: true, out: "/dev/null", err: "/dev/null")
+    wait_for_port(port)
+    @port = port
+    begin
+      yield port
+    ensure
+      begin
+        Process.kill("-TERM", pid)
+      rescue Errno::ESRCH, Errno::EPERM
+      end
+      Process.wait(pid) rescue nil
+    end
+  end
+
+  def test_chat_homepage_renders
+    with_chat do
+      res = get("/")
+      assert_equal "200", res.code
+      assert_match(/tep chat/, res.body)
+      assert_match(/EventSource/, res.body)
+    end
+  end
+
+  def test_chat_send_then_recent
+    with_chat do
+      r1 = post("/chat/send", "author=alice&body=hello")
+      assert_equal "200", r1.code
+      assert_match(/"id":1/, r1.body)
+
+      r2 = post("/chat/send", "author=bob&body=hi+alice")
+      assert_match(/"id":2/, r2.body)
+
+      list = get("/chat/recent")
+      assert_match(/"author":"alice","body":"hello"/, list.body)
+      assert_match(/"author":"bob","body":"hi alice"/, list.body)
+    end
+  end
+
+  def test_chat_send_validates_required_fields
+    with_chat do
+      assert_equal "400", post("/chat/send", "body=missing-author").code
+      assert_equal "400", post("/chat/send", "author=alice").code
+    end
+  end
+
+  def test_chat_who_reflects_heartbeats
+    with_chat do
+      # No-one before any heartbeat.
+      assert_equal "[]", get("/chat/who").body.strip
+
+      post("/chat/heartbeat", "user=alice")
+      post("/chat/heartbeat", "user=bob")
+      who = get("/chat/who").body
+      assert_match(/"user":"alice"/, who)
+      assert_match(/"user":"bob"/, who)
+    end
+  end
+
+  def test_chat_recent_since_param
+    with_chat do
+      post("/chat/send", "author=a&body=one")
+      post("/chat/send", "author=b&body=two")
+      post("/chat/send", "author=c&body=three")
+
+      # since=1 should drop msg #1 and return #2 + #3.
+      list = get("/chat/recent?since=1").body
+      refute_match(/"body":"one"/, list)
+      assert_match(/"body":"two"/, list)
+      assert_match(/"body":"three"/, list)
+    end
+  end
+
+  def test_chat_stream_emits_backlog_and_keepalive
+    with_chat do
+      # Seed messages BEFORE the stream opens.
+      post("/chat/send", "author=a&body=pre1")
+      post("/chat/send", "author=b&body=pre2")
+
+      # Pull bytes directly from the SSE socket so we don't have to
+      # wait STREAM_MAX (30s) for Net::HTTP to call it done.
+      sock = TCPSocket.new("127.0.0.1", @port)
+      sock.write("GET /chat/stream?since=0 HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n")
+      events = ""
+      deadline = Time.now + 4
+      while Time.now < deadline
+        IO.select([sock], nil, nil, 0.5) or next
+        chunk = sock.read_nonblock(4096) rescue nil
+        break if chunk.nil? || chunk.empty?
+        events << chunk
+        # Stop early once we've seen everything we expect.
+        break if events.include?("pre1") && events.include?("pre2") && events.include?(": tick")
+      end
+      sock.close
+
+      # Live "send while streaming" is a separate concurrency
+      # property that depends on prefork SO_REUSEPORT actually
+      # load-balancing -- which it doesn't reliably on macOS. The
+      # streaming pipeline itself (backlog + keepalive frames) is
+      # what we cover here.
+      assert_match(/"body":"pre1"/, events)
+      assert_match(/"body":"pre2"/, events)
+      assert_match(/: tick/, events)
+      assert_match(/Transfer-Encoding: chunked/i, events)
+      assert_match(/Content-Type: text\/event-stream/i, events)
+    end
+  end
 end

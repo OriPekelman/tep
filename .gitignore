@@ -15,10 +15,13 @@ test/real_world/.*.tep.rb
 # `bin/tep run app.rb` drops a binary at the repo root.
 tep-run-bin
 
-# Built examples + scratch DBs from the blog showcase.
+# Built examples + scratch DBs from the blog / chat showcases.
 examples/blog/.*.tep.rb
 examples/blog/*.db
 examples/blog/blog
+examples/chat/.*.tep.rb
+examples/chat/*.db
+examples/chat/chat
 
 # Stray spinel-built binaries from running `spinel some.tep.rb`
 # directly (the default output strips `.rb`, leaving a `.tep`).

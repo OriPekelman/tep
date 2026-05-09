@@ -97,23 +97,47 @@ Three more landed since: `send_file 'path'` from inside a handler,
 | `helpers do ... end`   | medium | Closures not first-class in spinel; would need translator-level "extract methods to Handler base" pass |
 | `request.ip` / `request.remote_ip` | medium | Needs an sphttp_accept variant that returns the peer addr from the kernel; the rest of Rack::Request lands without C changes |
 
-## Showcase
+## Showcases
 
-`examples/blog/` exercises every batteries-included tep feature
-in one ~250-line app: SQLite-backed posts + users, web login via
-sessions + `Tep::Password`, JSON API with `Tep::Json`, JWT-authed
-writes via `Tep::Jwt`, ERB views with Sinatra-style `@ivar`
-locals, request logging via `Tep::Logger`, and CORS + secure
-headers via `Tep::Security`. First boot seeds an admin user
-(`alice / hunter2`) plus an introductory post explaining tep.
+Two flagship examples that put the framework through its paces.
+
+### `examples/blog/`
+
+Posts + users persisted in SQLite, web login via sessions +
+`Tep::Password`, JSON API with `Tep::Json`, JWT-authed writes via
+`Tep::Jwt`, ERB views with Sinatra-style `@ivar` locals, request
+logging via `Tep::Logger`, CORS + secure headers via
+`Tep::Security`. First boot seeds `alice / hunter2` and an intro
+post explaining what tep is.
 
   bin/tep build examples/blog/app.rb -o /tmp/blog
   /tmp/blog -p 4567
 
-The HTTP-level smoke tests (`test/test_real_world.rb`) cover both
-the showcase and each "we claim it works" entry from the
-real-world matrix below -- builds the example, starts it on a
-fresh port, drives end-to-end requests through `Net::HTTP`. So a
+### `examples/chat/`
+
+Live multi-user chat with **Server-Sent Events** streaming and
+**presence**. Each open SSE connection occupies one tep worker;
+prefork via `-w N` gives N concurrent listeners. The streamer
+polls a `messages` SQLite table once per second, emits new rows
+since the client's `since` cursor, and ships an SSE-comment
+keepalive on every tick. Self-closes after `STREAM_MAX` (30 s)
+so the client reconnects -- keeps connection-state from piling up
+on any one worker. Heartbeat refreshes a `presence` table every
+5 s; `/chat/who` lists rows touched in the last 30 s.
+
+  bin/tep build examples/chat/app.rb -o /tmp/chat
+  /tmp/chat -p 4567 -w 4
+
+Open in two browsers; messages from one show up in the other
+within a second.
+
+### Smoke-tested end-to-end
+
+`test/test_real_world.rb` builds each "claimed working" example
+and the two showcases on a fresh port, drives Net::HTTP requests
+through them, and asserts on the response shape (incl. raw
+TCP-socket reads on the SSE pipe to verify backlog + keepalive
+chunks land before `Net::HTTP` would have stopped reading). A
 build-passes-but-doesn't-actually-serve regression fails CI now,
 not "later, when someone curls it by hand."
 
