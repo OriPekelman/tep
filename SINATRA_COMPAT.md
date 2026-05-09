@@ -97,6 +97,26 @@ Three more landed since: `send_file 'path'` from inside a handler,
 | `helpers do ... end`   | medium | Closures not first-class in spinel; would need translator-level "extract methods to Handler base" pass |
 | `request.ip` / `request.remote_ip` | medium | Needs an sphttp_accept variant that returns the peer addr from the kernel; the rest of Rack::Request lands without C changes |
 
+## Showcase
+
+`examples/blog/` exercises every batteries-included tep feature
+in one ~250-line app: SQLite-backed posts + users, web login via
+sessions + `Tep::Password`, JSON API with `Tep::Json`, JWT-authed
+writes via `Tep::Jwt`, ERB views with Sinatra-style `@ivar`
+locals, request logging via `Tep::Logger`, and CORS + secure
+headers via `Tep::Security`. First boot seeds an admin user
+(`alice / hunter2`) plus an introductory post explaining tep.
+
+  bin/tep build examples/blog/app.rb -o /tmp/blog
+  /tmp/blog -p 4567
+
+The HTTP-level smoke tests (`test/test_real_world.rb`) cover both
+the showcase and each "we claim it works" entry from the
+real-world matrix below -- builds the example, starts it on a
+fresh port, drives end-to-end requests through `Net::HTTP`. So a
+build-passes-but-doesn't-actually-serve regression fails CI now,
+not "later, when someone curls it by hand."
+
 ## Mustache subset
 
 Tep ships a build-time Mustache compiler with a deliberately

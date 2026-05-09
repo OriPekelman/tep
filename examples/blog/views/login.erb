@@ -1,0 +1,28 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>tep blog -- log in</title>
+  <style>
+    body  { font: 16px/1.5 -apple-system, sans-serif; max-width: 360px; margin: 4em auto; padding: 0 1em; }
+    label { display: block; margin: 1em 0 .25em; }
+    input { width: 100%; padding: .5em; box-sizing: border-box; }
+    button { margin-top: 1em; padding: .6em 1em; }
+    .flash { color: #b00; }
+  </style>
+</head>
+<body>
+  <h1>log in</h1>
+  <% if @flash.length > 0 %>
+    <p class="flash"><%= @flash %></p>
+  <% end %>
+  <form method="post" action="/login">
+    <label>username</label>
+    <input name="user" autofocus>
+    <label>password</label>
+    <input name="password" type="password">
+    <button>log in</button>
+  </form>
+  <p style="margin-top:2em;color:#888">demo user: <code>alice / hunter2</code></p>
+</body>
+</html>

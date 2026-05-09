@@ -1,0 +1,16 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title><%= @title %></title>
+  <style>body { font: 16px/1.5 -apple-system, sans-serif; max-width: 720px; margin: 2em auto; padding: 0 1em; }</style>
+</head>
+<body>
+  <p><a href="/">&larr; all posts</a></p>
+  <article>
+    <h1><%= @title %></h1>
+    <p style="color:#888">by <%= @author %></p>
+    <div><%= @body %></div>
+  </article>
+</body>
+</html>

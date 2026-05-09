@@ -1,0 +1,25 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>tep blog -- new post</title>
+  <style>
+    body  { font: 16px/1.5 -apple-system, sans-serif; max-width: 720px; margin: 2em auto; padding: 0 1em; }
+    label { display: block; margin: 1em 0 .25em; }
+    input, textarea { width: 100%; padding: .5em; box-sizing: border-box; font: inherit; }
+    textarea { min-height: 200px; }
+  </style>
+</head>
+<body>
+  <p><a href="/">&larr; all posts</a></p>
+  <h1>new post</h1>
+  <p style="color:#888">posting as <strong><%= @user %></strong></p>
+  <form method="post" action="/admin/new">
+    <label>title</label>
+    <input name="title">
+    <label>body (HTML allowed)</label>
+    <textarea name="body"></textarea>
+    <button>publish</button>
+  </form>
+</body>
+</html>

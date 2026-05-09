@@ -43,16 +43,32 @@
 #include <string.h>
 #include <sqlite3.h>
 
-#define TEP_SQLITE_MAX_HANDLES 16
-#define TEP_SQLITE_COL_BUFSIZE 65536
+#define TEP_SQLITE_MAX_HANDLES   16
+#define TEP_SQLITE_COL_BUFSIZE   65536
+#define TEP_SQLITE_COL_BUF_SLOTS 16
 
 static sqlite3      *tep_sqlite_handles[TEP_SQLITE_MAX_HANDLES] = {0};
 static sqlite3_stmt *tep_sqlite_stmt = NULL;
-/* Static return buffer for col_str -- spinel's :str return type
- * wants a pointer that stays valid until the next call, so we copy
- * the column text in here. Single buffer = single live result at
- * a time, which matches the "one cursor per process" rule. */
-static char          tep_sqlite_col_buf[TEP_SQLITE_COL_BUFSIZE];
+/* Rotating return buffers for col_str. spinel's `:str` return type
+ * wants a pointer that stays valid until "the caller is done with
+ * it", but in practice callers stash multiple col_str results into
+ * variables / hashes / array entries before the buffer would
+ * otherwise rotate. A single static buf would alias all those
+ * entries to whatever the most recent call wrote.
+ *
+ * We rotate across SLOTS buffers; each call lands in the next
+ * slot. With 16 slots a typical handler doing
+ *
+ *     a = first_str(...); b = first_str(...); c = first_str(...)
+ *
+ * sees three independent strings.
+ *
+ * The aliasing window only collapses for callers who hold > 16
+ * live col_str references concurrently -- e.g. iterating a query
+ * and pushing every row into an array without copying. Document
+ * that lifetime in `Tep::SQLite#col_str`. */
+static char          tep_sqlite_col_buf[TEP_SQLITE_COL_BUF_SLOTS][TEP_SQLITE_COL_BUFSIZE];
+static int           tep_sqlite_col_slot = 0;
 
 int tep_sqlite_open(const char *path) {
     int i;
@@ -138,9 +154,11 @@ const char *tep_sqlite_col_str(int idx) {
     if (!t) return "";
     size_t n = strlen((const char *)t);
     if (n >= TEP_SQLITE_COL_BUFSIZE) n = TEP_SQLITE_COL_BUFSIZE - 1;
-    memcpy(tep_sqlite_col_buf, t, n);
-    tep_sqlite_col_buf[n] = '\0';
-    return tep_sqlite_col_buf;
+    char *buf = tep_sqlite_col_buf[tep_sqlite_col_slot];
+    tep_sqlite_col_slot = (tep_sqlite_col_slot + 1) % TEP_SQLITE_COL_BUF_SLOTS;
+    memcpy(buf, t, n);
+    buf[n] = '\0';
+    return buf;
 }
 
 int tep_sqlite_col_int(int idx) {

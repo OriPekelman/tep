@@ -1,0 +1,36 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>tep blog</title>
+  <style>
+    body { font: 16px/1.5 -apple-system, sans-serif; max-width: 720px; margin: 2em auto; padding: 0 1em; color: #222; }
+    nav  { display: flex; justify-content: space-between; padding-bottom: 1em; border-bottom: 1px solid #ddd; }
+    li   { margin: .5em 0; }
+    li span { color: #888; font-size: .9em; }
+  </style>
+</head>
+<body>
+  <nav>
+    <h1 style="margin:0">tep blog</h1>
+    <div>
+      <% if @logged_in == "1" %>
+        signed in as <strong><%= @user %></strong>
+        &middot; <a href="/admin/new">new post</a>
+        &middot; <form method="post" action="/logout" style="display:inline"><button>log out</button></form>
+      <% else %>
+        <a href="/login">log in</a>
+      <% end %>
+    </div>
+  </nav>
+
+  <h2>posts</h2>
+  <ul>
+    <%= @posts_html %>
+  </ul>
+
+  <% if @posts_html.length == 0 %>
+    <p>no posts yet. <a href="/login">log in</a> as <code>alice / hunter2</code> to write one.</p>
+  <% end %>
+</body>
+</html>
