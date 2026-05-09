@@ -33,6 +33,7 @@ require_relative "tep/sqlite"
 require_relative "tep/json"
 require_relative "tep/logger"
 require_relative "tep/jwt"
+require_relative "tep/password"
 
 module Tep
   # Helper: spinel won't infer types on an empty `{}`, so we seed
@@ -173,6 +174,13 @@ module Tep
   Tep::Jwt.verify_and_decode("", "")
   Tep::Jwt.timing_safe_eq("", "")
   Tep::Jwt.find_dots("")
+
+  # Tep::Password seed -- one cheap PBKDF2 round at startup, just
+  # to pin every method's parameter types. iters=1 keeps the cost
+  # negligible.
+  _tep_seed_pwd_hash = Tep::Password.create("seed")
+  Tep::Password.verify("seed", _tep_seed_pwd_hash)
+  Tep::Password.split4("a$b$c$d")
   _tep_seed_str_arr = [""]
   _tep_seed_str_arr.delete_at(0)
   Tep::Json.from_str_array(_tep_seed_str_arr)

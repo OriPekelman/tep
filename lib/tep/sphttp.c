@@ -517,6 +517,117 @@ const char *sphttp_b64url_decode(const char *src) {
     return sphttp_b64u_dec_buf;
 }
 
+/* PBKDF2-HMAC-SHA256 over (password, salt) with `iters` rounds.
+ * Derives 32 bytes (one SHA256 block) and base64url-encodes them
+ * into a 43-char unpadded string. dkLen > 32 isn't supported here
+ * (matches the Tep::Password format which always derives 32). */
+static char sphttp_pbkdf2_b64url_buf[44];
+
+const char *sphttp_pbkdf2_sha256_b64url(const char *password, const char *salt, int iters) {
+    if (iters < 1) iters = 1;
+    size_t plen = strlen(password);
+    size_t slen = strlen(salt);
+    /* salt || INT(1) -- single block. */
+    uint8_t salted[256];
+    if (slen + 4 > sizeof(salted)) {
+        sphttp_pbkdf2_b64url_buf[0] = '\0';
+        return sphttp_pbkdf2_b64url_buf;
+    }
+    memcpy(salted, salt, slen);
+    salted[slen+0] = 0;
+    salted[slen+1] = 0;
+    salted[slen+2] = 0;
+    salted[slen+3] = 1;
+    uint8_t U[32], T[32];
+    sphttp_hmac_sha256((const uint8_t *)password, plen, salted, slen + 4, U);
+    memcpy(T, U, 32);
+    int it;
+    for (it = 1; it < iters; it++) {
+        sphttp_hmac_sha256((const uint8_t *)password, plen, U, 32, U);
+        int b;
+        for (b = 0; b < 32; b++) T[b] ^= U[b];
+    }
+    /* base64url-encode T (32 bytes -> 43 chars). Reuse the same
+     * encoding shape as sphttp_hmac_sha256_b64url. */
+    int i, j = 0;
+    for (i = 0; i + 3 <= 32; i += 3) {
+        uint32_t v = ((uint32_t)T[i] << 16)
+                   | ((uint32_t)T[i+1] << 8)
+                   | (uint32_t)T[i+2];
+        sphttp_pbkdf2_b64url_buf[j++] = B64U[(v >> 18) & 0x3f];
+        sphttp_pbkdf2_b64url_buf[j++] = B64U[(v >> 12) & 0x3f];
+        sphttp_pbkdf2_b64url_buf[j++] = B64U[(v >> 6)  & 0x3f];
+        sphttp_pbkdf2_b64url_buf[j++] = B64U[v & 0x3f];
+    }
+    if (i < 32) {
+        uint32_t v = ((uint32_t)T[i] << 16)
+                   | (i + 1 < 32 ? ((uint32_t)T[i+1] << 8) : 0);
+        sphttp_pbkdf2_b64url_buf[j++] = B64U[(v >> 18) & 0x3f];
+        sphttp_pbkdf2_b64url_buf[j++] = B64U[(v >> 12) & 0x3f];
+        if (i + 1 < 32) {
+            sphttp_pbkdf2_b64url_buf[j++] = B64U[(v >> 6) & 0x3f];
+        }
+    }
+    sphttp_pbkdf2_b64url_buf[j] = '\0';
+    return sphttp_pbkdf2_b64url_buf;
+}
+
+/* CSPRNG-backed random bytes, base64url-encoded. Used for
+ * password salts and other unpredictable tokens. `nbytes` is
+ * clamped to 64 (88 chars b64url -- enough for a 512-bit
+ * random secret). */
+static char sphttp_random_b64url_buf[90];
+
+const char *sphttp_random_b64url(int nbytes) {
+    if (nbytes < 1) nbytes = 16;
+    if (nbytes > 64) nbytes = 64;
+    uint8_t r[64];
+    /* arc4random is the pragmatic CSPRNG on macOS / BSDs / glibc
+     * 2.36+. For older glibc fall back to /dev/urandom. */
+#if defined(__APPLE__) || defined(__FreeBSD__) || defined(__OpenBSD__) || defined(__NetBSD__)
+    arc4random_buf(r, nbytes);
+#else
+    /* getrandom() and /dev/urandom both work; the former needs
+     * <sys/random.h> on linux, the latter is universal. Keep the
+     * universal path so this builds without feature-test dance. */
+    FILE *f = fopen("/dev/urandom", "rb");
+    if (f) {
+        fread(r, 1, nbytes, f);
+        fclose(f);
+    } else {
+        /* Last-ditch: time-mixed -- not cryptographically secure
+         * but better than zeros. Callers shouldn't reach this on
+         * any modern system. */
+        time_t t = time(NULL);
+        for (int k = 0; k < nbytes; k++) r[k] = (uint8_t)(t >> (k * 7));
+    }
+#endif
+    int i, j = 0;
+    for (i = 0; i + 3 <= nbytes; i += 3) {
+        uint32_t v = ((uint32_t)r[i] << 16)
+                   | ((uint32_t)r[i+1] << 8)
+                   | (uint32_t)r[i+2];
+        sphttp_random_b64url_buf[j++] = B64U[(v >> 18) & 0x3f];
+        sphttp_random_b64url_buf[j++] = B64U[(v >> 12) & 0x3f];
+        sphttp_random_b64url_buf[j++] = B64U[(v >> 6)  & 0x3f];
+        sphttp_random_b64url_buf[j++] = B64U[v & 0x3f];
+    }
+    int rem = nbytes - i;
+    if (rem == 1) {
+        uint32_t v = (uint32_t)r[i] << 16;
+        sphttp_random_b64url_buf[j++] = B64U[(v >> 18) & 0x3f];
+        sphttp_random_b64url_buf[j++] = B64U[(v >> 12) & 0x3f];
+    } else if (rem == 2) {
+        uint32_t v = ((uint32_t)r[i] << 16)
+                   | ((uint32_t)r[i+1] << 8);
+        sphttp_random_b64url_buf[j++] = B64U[(v >> 18) & 0x3f];
+        sphttp_random_b64url_buf[j++] = B64U[(v >> 12) & 0x3f];
+        sphttp_random_b64url_buf[j++] = B64U[(v >> 6) & 0x3f];
+    }
+    sphttp_random_b64url_buf[j] = '\0';
+    return sphttp_random_b64url_buf;
+}
+
 /* Pre-fork support. Returns child pid in parent, 0 in child, -1 on fail. */
 int sphttp_fork(void) {
     return (int)fork();

@@ -26,6 +26,8 @@ module Sock
   ffi_func :sphttp_hmac_sha256_b64url, [:str, :str], :str
   ffi_func :sphttp_b64url_encode,      [:str],       :str
   ffi_func :sphttp_b64url_decode,      [:str],       :str
+  ffi_func :sphttp_pbkdf2_sha256_b64url, [:str, :str, :int], :str
+  ffi_func :sphttp_random_b64url,      [:int],       :str
   ffi_func :sphttp_write_chunk,   [:int, :str],     :int
   ffi_func :sphttp_write_chunk_end, [:int],         :int
 end
