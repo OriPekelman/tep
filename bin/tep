@@ -854,7 +854,10 @@ def inlined_tep_library
   visit.call(File.join(LIB_DIR, "tep.rb"))
   combined = loaded.map { |l| "# --- inlined: " + relative_to_lib(l[:path]) + " ---\n" + l[:body] }.join("\n")
   sphttp_o = ENV.fetch("TEP_SPHTTP_O", File.join(LIB_DIR, "tep", "sphttp.o"))
-  combined.gsub("@TEP_SPHTTP_O@", sphttp_o)
+  sqlite_o = ENV.fetch("TEP_SQLITE_O", File.join(LIB_DIR, "tep", "tep_sqlite.o"))
+  combined = combined.gsub("@TEP_SPHTTP_O@", sphttp_o)
+  combined = combined.gsub("@TEP_SQLITE_O@", sqlite_o)
+  combined
 end
 
 # Split a Sinatra-style source on `__END__` and parse the trailing

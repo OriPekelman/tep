@@ -49,6 +49,7 @@ Three more landed since: `send_file 'path'` from inside a handler,
 | **ERB**: `erb :name` + `locals: {}`  | ✅ 4    | Build-time compiled; `<%= %>`, `<% %>`, `<%# %>` |
 | **ERB ivar locals (`@name`)**        | ✅ 3    | Sinatra-style: `@x = v` in handler / `before` filter, `<%= @x %>` in template. Translator stores on a per-request `req.ivars` String=>String bag; templates take `(locals, ivars)`. Values are `(...).to_s`-coerced on write. |
 | **Mustache (subset)**                | ✅ 3    | Build-time compiled; `mustache :name` DSL parallel to `erb :name`. See "Mustache subset" below. |
+| **SQLite (libsqlite3 wrapper)**      | ✅ 5    | `Tep::SQLite` class wrapping libsqlite3 via a thin C shim (tep_sqlite.c). Same FFI pattern as sphttp.c -- spinel can't load gem-style native extensions, so we link a static .o instead. See "SQLite" below. |
 | **send_file `'path'`**               | ✅ 1    | Reuses Tep::Response#send_file streaming path |
 | **configure { ... }** / **:env**     | ✅ 1    | Body runs at module load; env-keyed form gates on `ENV["TEP_ENV"]` (default "development") |
 | **`__END__` inline templates**       | ✅ 1    | `@@ name` blocks compile through the same ERB pipeline as files; file-based views still win when both exist |
@@ -129,6 +130,75 @@ File resolution mirrors ERB: `views/<name>.mustache` first, then
 the inline `__END__ \n @@ name` block. Tep's compiler emits a
 distinct `tep_mustache_<name>(locals, ivars)` function, so a
 project can mix ERB and Mustache views without name collisions.
+
+## SQLite
+
+`Tep::SQLite` exposes libsqlite3 through a thin C shim (`lib/tep/tep_sqlite.c`).
+Spinel can't load CRuby's native-extension gems (the `sqlite3` gem
+ships an `.so`/`.bundle` against MRI's ABI), so the binding shape
+is "static link to a small C wrapper" rather than "load a gem at
+runtime". The Makefile builds `tep_sqlite.o` and `bin/tep`
+substitutes its absolute path into `sqlite.rb`'s `ffi_cflags`.
+`-lsqlite3` is added via `ffi_lib`.
+
+```ruby
+db = Tep::SQLite.new
+db.open("./app.db")
+db.exec("CREATE TABLE IF NOT EXISTS notes (id INTEGER PRIMARY KEY, body TEXT)")
+
+# Parameterised insert.
+db.prepare("INSERT INTO notes (body) VALUES (?)")
+db.bind_str(1, "hello")
+db.step
+db.finalize
+id = db.last_rowid
+
+# Single-row read with one bound param. The convenience first_str /
+# first_int wrap prepare + bind + step + col + finalize.
+body = db.first_str("SELECT body FROM notes WHERE id = ?", id.to_s)
+
+# Multi-row iteration.
+db.prepare("SELECT id, body FROM notes ORDER BY id")
+while db.step == 1
+  puts db.col_int(0).to_s + ": " + db.col_str(1)
+end
+db.finalize
+```
+
+API surface:
+
+| Method                | Returns | Notes |
+|-----------------------|---------|---|
+| `open(path)`          | bool    | `path` may be `:memory:` for an anonymous in-memory db. |
+| `close`               | int     | |
+| `exec(sql)`           | bool    | DDL / non-bound writes / `BEGIN`+`COMMIT`. |
+| `prepare(sql)`        | bool    | Opens the cursor; `?` markers bind 1-indexed. |
+| `bind_str(idx, v)`    | int     | |
+| `bind_int(idx, v)`    | int     | |
+| `step`                | int     | 1 -> row, 0 -> done, -1 -> error. |
+| `col_str(idx)`        | str     | NULL columns return `""`. |
+| `col_int(idx)`        | int     | |
+| `col_count`           | int     | |
+| `reset`               | int     | Re-step the same prepared statement (e.g. inside a binding loop). |
+| `finalize`            | int     | |
+| `last_rowid`          | int     | |
+| `first_str(sql, p1)`  | str     | Convenience for "single-row, single-column read with one param." Pass `""` for "no param". |
+| `first_int(sql, p1)`  | int     | Same. |
+
+Constraints:
+
+  - **One in-flight cursor per process.** `prepare` / `step` /
+    `finalize` share a single `sqlite3_stmt *`. Tep runs handlers
+    serially per worker so this is fine for "one DB call per
+    request"; nested queries (open one cursor, run another query
+    inside its `while step == 1` loop) would clobber the parent
+    cursor.
+  - **Up to 16 open DB handles per process** (a static slot table).
+    Increase `TEP_SQLITE_MAX_HANDLES` in `tep_sqlite.c` if needed.
+  - **String / int columns only.** Floats and blobs aren't first-
+    class. NULL is indistinguishable from empty-string.
+  - **64 KiB cap on a single col_str result.** Bump
+    `TEP_SQLITE_COL_BUFSIZE` for larger row fields.
 
 ## Reading the matrix
 

@@ -29,6 +29,7 @@ require_relative "tep/parser"
 require_relative "tep/router"
 require_relative "tep/app"
 require_relative "tep/server"
+require_relative "tep/sqlite"
 
 module Tep
   # Helper: spinel won't infer types on an empty `{}`, so we seed
@@ -109,6 +110,33 @@ module Tep
   _tep_seed_res.streamer.pump(_tep_seed_stream)
   _tep_seed_stream.write("")   # pin the parameter type to :str
   Tep.h("")                    # pin Tep.h(s)'s param to :str
+
+  # SQLite type-seeding. Each method below pins a parameter type
+  # (or pulls the FFI return into use) so spinel emits the correct
+  # signatures even for apps that include the require but don't hit
+  # every method. We open an anonymous in-memory database, run a
+  # tiny round-trip, then close -- the leak is one malloc'd handle
+  # per process at startup, which exits with the worker.
+  _tep_seed_db = Tep::SQLite.new
+  if _tep_seed_db.open(":memory:")
+    _tep_seed_db.exec("CREATE TABLE _seed (k TEXT, v INTEGER)")
+    _tep_seed_db.prepare("INSERT INTO _seed (k, v) VALUES (?, ?)")
+    _tep_seed_db.bind_str(1, "")
+    _tep_seed_db.bind_int(2, 0)
+    _tep_seed_db.step
+    _tep_seed_db.finalize
+    _tep_seed_db.last_rowid
+    _tep_seed_db.prepare("SELECT k, v FROM _seed")
+    _tep_seed_db.step
+    _tep_seed_db.col_str(0)
+    _tep_seed_db.col_int(1)
+    _tep_seed_db.col_count
+    _tep_seed_db.reset
+    _tep_seed_db.finalize
+    _tep_seed_db.first_str("SELECT k FROM _seed", "")
+    _tep_seed_db.first_int("SELECT v FROM _seed", "")
+    _tep_seed_db.close
+  end
 
   # ---------------- DSL ----------------
   # Spinel emits every defined method whether called or not, and
