@@ -35,6 +35,7 @@ require_relative "tep/logger"
 require_relative "tep/jwt"
 require_relative "tep/password"
 require_relative "tep/security"
+require_relative "tep/assets"
 
 module Tep
   # Helper: spinel won't infer types on an empty `{}`, so we seed
@@ -191,6 +192,15 @@ module Tep
   _tep_seed_cors.set_max_age(0)
   _tep_seed_hdrs = Tep::Security::Headers.new
   _tep_seed_hdrs.set_hsts(0)
+
+  # Tep::Assets seed -- pin the str args before any user-supplied
+  # _add calls land. The asset hash starts empty; user apps that
+  # have `<app>/assets/` get _add lines emitted by bin/tep at
+  # build time.
+  Tep::Assets._add("", "", "")
+  Tep::Assets.has?("")
+  _tep_seed_assets_res = Response.new
+  Tep::Assets.serve("", _tep_seed_assets_res)
   _tep_seed_str_arr = [""]
   _tep_seed_str_arr.delete_at(0)
   Tep::Json.from_str_array(_tep_seed_str_arr)

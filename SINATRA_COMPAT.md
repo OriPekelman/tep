@@ -115,21 +115,65 @@ post explaining what tep is.
 
 ### `examples/chat/`
 
-Live multi-user chat with **Server-Sent Events** streaming and
-**presence**. Each open SSE connection occupies one tep worker;
-prefork via `-w N` gives N concurrent listeners. The streamer
-polls a `messages` SQLite table once per second, emits new rows
-since the client's `since` cursor, and ships an SSE-comment
-keepalive on every tick. Self-closes after `STREAM_MAX` (30 s)
-so the client reconnects -- keeps connection-state from piling up
-on any one worker. Heartbeat refreshes a `presence` table every
-5 s; `/chat/who` lists rows touched in the last 30 s.
+Live multi-user chat with **presence** and **bundled assets**.
+The view ships an SVG logo + a polished CSS file from
+`examples/chat/assets/`; both are baked into the binary by
+`bin/tep` (see "Compile-time asset bundling" below) and served
+directly from memory.
+
+By default the JS client polls `GET /chat/recent?since=N` once
+per second. The Server-Sent Events transport (the
+`ChatStreamer` + `GET /chat/stream`) is also wired and ready to
+go on Linux -- flip `window.USE_SSE = true` in the page to
+switch. We default to polling because **macOS's SO_REUSEPORT
+doesn't load-balance new connections** across prefork workers,
+so one stuck SSE connection blocks every other request on the
+same listener until the stream self-closes (`STREAM_MAX`, 30 s).
+Linux 3.9+ behaves correctly; production deployment there can
+flip to SSE for sub-second latency.
+
+`set :workers, 4` is wired in the app source so prefork is the
+default. On macOS this still helps for short requests (load
+distributes across workers per the bench), it just doesn't
+unblock during a held SSE.
 
   bin/tep build examples/chat/app.rb -o /tmp/chat
-  /tmp/chat -p 4567 -w 4
+  /tmp/chat -p 4567
 
 Open in two browsers; messages from one show up in the other
 within a second.
+
+## Compile-time asset bundling
+
+Anything under `<app_dir>/assets/` is auto-discovered by
+`bin/tep` and emitted as `Tep::Assets._add` registrations in the
+generated source. The body bytes ride in the binary as Ruby
+string literals (which spinel passes through to the C compile as
+`const char *`); MIME is inferred from extension at build time.
+
+```
+examples/chat/
+  app.rb
+  assets/
+    style.css   ->  GET /style.css     (text/css)
+    logo.svg    ->  GET /logo.svg      (image/svg+xml)
+```
+
+The `Tep::Assets.serve(path, res)` check runs in `App#dispatch`
+before route matching, so a route at `/foo` and an asset at
+`/foo` -- the asset wins. Each response gets
+`Cache-Control: public, max-age=3600`.
+
+Limitations:
+
+  - Files containing NUL bytes are skipped (warned at build time).
+    Spinel's `:str` type doesn't track length alongside the
+    pointer, so a NUL truncates the served body. For binary
+    assets that need exact byte round-trip (PNG, fonts, ...),
+    use `Tep.public_dir` to serve from disk at runtime instead.
+  - No content-hash etag yet; the bytes are immutable for the
+    life of the binary, so a fingerprint-in-filename strategy
+    would be a clean follow-up.
 
 ### Smoke-tested end-to-end
 

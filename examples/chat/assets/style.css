@@ -1,0 +1,209 @@
+:root {
+  --bg-grad-from: #f5f7fb;
+  --bg-grad-to:   #e8ecf5;
+  --card-bg:      #ffffff;
+  --ink:          #1f2330;
+  --ink-soft:     #5b6479;
+  --ink-faint:    #9aa3b6;
+  --accent:       #4a5fde;
+  --accent-soft:  #e8ebff;
+  --me-bg:        #4a5fde;
+  --me-ink:       #ffffff;
+  --them-bg:      #f1f3f9;
+  --them-ink:     #1f2330;
+  --shadow:       0 8px 30px rgba(31, 35, 48, .06);
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  height: 100%;
+  margin: 0;
+  font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  color: var(--ink);
+  background: linear-gradient(135deg, var(--bg-grad-from), var(--bg-grad-to));
+}
+
+.shell {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 24px 16px 16px;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+
+nav {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid rgba(31, 35, 48, .08);
+}
+
+nav h1 {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 20px;
+  font-weight: 600;
+  margin: 0;
+  letter-spacing: -.01em;
+}
+
+nav h1 .logo {
+  width: 28px;
+  height: 28px;
+  display: block;
+}
+
+nav h1 .stripe {
+  font-weight: 500;
+  color: var(--ink-faint);
+  font-size: 13px;
+  margin-left: 8px;
+}
+
+#who {
+  flex: 1;
+  color: var(--ink-soft);
+  font-size: 13px;
+}
+
+#who .pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-weight: 500;
+  margin-right: 6px;
+  margin-bottom: 4px;
+}
+
+#who .pill::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #2bb673;
+  display: inline-block;
+}
+
+#me {
+  background: var(--card-bg);
+  border: 1px solid rgba(31, 35, 48, .12);
+  padding: 7px 12px;
+  border-radius: 8px;
+  font: inherit;
+  width: 160px;
+  outline: none;
+  transition: border-color .15s;
+}
+
+#me:focus {
+  border-color: var(--accent);
+}
+
+#log {
+  flex: 1;
+  overflow-y: auto;
+  margin: 16px 0;
+  padding: 16px;
+  background: var(--card-bg);
+  border-radius: 12px;
+  box-shadow: var(--shadow);
+}
+
+.msg {
+  display: flex;
+  flex-direction: column;
+  margin: 10px 0;
+  max-width: 78%;
+}
+
+.msg.me {
+  align-self: flex-end;
+  margin-left: auto;
+}
+
+.msg .meta {
+  font-size: 11px;
+  color: var(--ink-faint);
+  letter-spacing: .02em;
+  text-transform: uppercase;
+  margin-bottom: 3px;
+  padding: 0 4px;
+}
+
+.msg.me .meta { text-align: right; }
+
+.msg .body {
+  padding: 9px 14px;
+  border-radius: 14px;
+  background: var(--them-bg);
+  color: var(--them-ink);
+  white-space: pre-wrap;
+  word-wrap: break-word;
+}
+
+.msg.me .body {
+  background: var(--me-bg);
+  color: var(--me-ink);
+  border-bottom-right-radius: 4px;
+}
+
+.msg.them .body {
+  border-bottom-left-radius: 4px;
+}
+
+#log:empty::before {
+  content: "no messages yet -- pick a name and say hi";
+  color: var(--ink-faint);
+  font-style: italic;
+}
+
+.status {
+  color: var(--ink-faint);
+  font-size: 12px;
+  text-align: center;
+  margin: 6px 0 12px;
+}
+
+#f {
+  display: flex;
+  gap: 8px;
+  padding: 10px;
+  background: var(--card-bg);
+  border-radius: 12px;
+  box-shadow: var(--shadow);
+}
+
+#body {
+  flex: 1;
+  padding: 11px 14px;
+  border: none;
+  background: transparent;
+  font: inherit;
+  outline: none;
+  color: var(--ink);
+}
+
+#body::placeholder { color: var(--ink-faint); }
+
+button {
+  padding: 9px 18px;
+  border: none;
+  border-radius: 8px;
+  background: var(--accent);
+  color: white;
+  font: 500 14px/1 -apple-system, sans-serif;
+  cursor: pointer;
+  transition: opacity .12s;
+}
+
+button:hover { opacity: .9; }
+button:active { transform: translateY(1px); }
+button:disabled { opacity: .4; cursor: default; }

@@ -30,6 +30,23 @@
 
 require 'sinatra'
 
+# Concurrency model
+# -----------------
+# tep handlers are blocking inside their worker; a long-running
+# stream pins that worker until it returns. macOS's SO_REUSEPORT
+# does not load-balance new connections across listening
+# processes (only Linux 3.9+ does), so on macOS even with
+# `-w 4` a single SSE connection effectively blocks every other
+# request. Linux behaves correctly.
+#
+# To make this demo work across platforms we ship the polling
+# variant by default (each browser hits `GET /chat/recent` once
+# per second). The SSE streamer survives in the codebase as
+# `ChatStreamer` + `GET /chat/stream`; on Linux you can set
+# TEP_CHAT_USE_SSE=1 in the page's JS layer (see views/index.erb)
+# to switch back to the streaming path with sub-second latency.
+set :workers, 4
+
 DB_PATH      = ENV.fetch("TEP_CHAT_DB", "/tmp/tep_chat.db")
 PRESENCE_TTL = 30   # seconds; users not seen in this window drop
                     # out of /who

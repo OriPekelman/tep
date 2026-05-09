@@ -346,6 +346,25 @@ class TestRealWorld < TepTest
     end
   end
 
+  def test_chat_serves_bundled_assets
+    with_chat do
+      css = get("/style.css")
+      assert_equal "200", css.code
+      assert_match(/text\/css/, css["content-type"])
+      assert_match(/--accent/, css.body)        # spot-check our content
+      assert_match(/max-age=3600/, css["cache-control"])
+
+      svg = get("/logo.svg")
+      assert_equal "200", svg.code
+      assert_match(/image\/svg\+xml/, svg["content-type"])
+      assert_match(/<svg/, svg.body)
+
+      # An asset that isn't bundled falls through to 404 via the
+      # normal not-found path, not the asset layer.
+      assert_equal "404", get("/missing.css").code
+    end
+  end
+
   def test_chat_stream_emits_backlog_and_keepalive
     with_chat do
       # Seed messages BEFORE the stream opens.

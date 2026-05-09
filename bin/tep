@@ -132,6 +132,17 @@ def translate(input_path)
   out << inlined_tep_library
   out << ""
 
+  # Compile-time asset bundling: anything under `<app_dir>/assets/`
+  # is read into a Tep::Assets _add call. The bytes ride in the
+  # binary as Ruby string literals; mime is inferred by extension.
+  # See lib/tep/assets.rb for the runtime side.
+  asset_lines = embed_assets(input_path, warnings)
+  unless asset_lines.empty?
+    out << "# --- bundled assets ---"
+    out.concat(asset_lines)
+    out << ""
+  end
+
   # Top-level non-DSL statements (constants, classes, defs, ...).
   # Emitted verbatim before any DSL registrations so handler bodies
   # can refer to them.
@@ -429,6 +440,13 @@ def handle_top_call(node, routes, filters, not_founds, config, warnings, passthr
         config[:views] = val if val
       when "port"
         config[:port] = literal_int(args[1]) || config[:port]
+      when "workers"
+        # Default worker count; the runtime CLI's `-w N` still
+        # overrides. Useful for apps whose handlers can block --
+        # SSE streamers, long-poll endpoints -- to default to
+        # something more useful than 1 and keep the homepage
+        # responsive while one worker is held by a stream.
+        config[:workers] = literal_int(args[1]) || config[:workers]
       when "bind"
         # silently accept; tep always binds 0.0.0.0
       else
@@ -918,6 +936,65 @@ def sinatra_base_class?(class_node)
   return false if sup.nil?
   src = sup.location.slice
   src == "Sinatra::Base" || src == "Sinatra::Application" || src == "::Sinatra::Base"
+end
+
+# Walk `<input_dir>/assets/` recursively and return a list of
+# `Tep::Assets._add` lines, one per file. Inferred mime per
+# extension. Files containing NUL bytes get warned + skipped --
+# spinel's :str type doesn't track length alongside the pointer,
+# so a NUL truncates the served body. For binary assets that need
+# to round-trip exactly (PNGs with embedded NULs, fonts) the
+# right path is `Tep.public_dir` at runtime, not embed.
+ASSET_MIME_BY_EXT = {
+  ".css"   => "text/css; charset=utf-8",
+  ".js"    => "application/javascript; charset=utf-8",
+  ".json"  => "application/json",
+  ".html"  => "text/html; charset=utf-8",
+  ".htm"   => "text/html; charset=utf-8",
+  ".txt"   => "text/plain; charset=utf-8",
+  ".md"    => "text/markdown; charset=utf-8",
+  ".svg"   => "image/svg+xml",
+  ".xml"   => "application/xml",
+  ".ico"   => "image/x-icon",
+  ".png"   => "image/png",
+  ".jpg"   => "image/jpeg",
+  ".jpeg"  => "image/jpeg",
+  ".gif"   => "image/gif",
+  ".webp"  => "image/webp",
+  ".woff"  => "font/woff",
+  ".woff2" => "font/woff2",
+  ".ttf"   => "font/ttf",
+  ".otf"   => "font/otf",
+  ".pdf"   => "application/pdf",
+}.freeze
+
+def embed_assets(input_path, warnings)
+  assets_dir = File.join(File.dirname(input_path), "assets")
+  return [] unless File.directory?(assets_dir)
+  lines = []
+  count = 0
+  bytes = 0
+  Dir.glob(File.join(assets_dir, "**", "*")).sort.each do |abs|
+    next unless File.file?(abs)
+    rel = abs.sub(assets_dir, "")  # leading "/"
+    body = File.binread(abs)
+    if body.include?("\x00")
+      warnings << "asset #{rel}: contains NUL byte; skipped (use Tep.public_dir for binary assets)"
+      next
+    end
+    ext  = File.extname(abs).downcase
+    mime = ASSET_MIME_BY_EXT[ext] || "application/octet-stream"
+    # Ruby's `String#dump` produces a literal that re-parses to the
+    # exact same bytes (\xHH for non-printable, \uXXXX where
+    # applicable). Spinel reads it as a const char *.
+    lines << "Tep::Assets._add(#{rel.inspect}, #{body.dump}, #{mime.inspect})"
+    count += 1
+    bytes += body.bytesize
+  end
+  if count > 0
+    lines.unshift("# bundled #{count} asset(s), #{bytes} bytes total")
+  end
+  lines
 end
 
 def relative_to_lib(abs_path)

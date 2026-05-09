@@ -11,6 +11,7 @@ module Tep
   class App
     attr_accessor :router, :static_root, :session_secret
     attr_accessor :before_filter, :after_filter, :nf_handler
+    attr_accessor :asset_bodies, :asset_mimes
 
     def initialize
       @router         = Router.new
@@ -19,6 +20,14 @@ module Tep
       @before_filter  = Filter.new   # no-op default
       @after_filter   = Filter.new
       @nf_handler     = Handler.new
+      @asset_bodies   = Tep.str_hash # path -> bytes (filled at boot
+      @asset_mimes    = Tep.str_hash # by Tep::Assets._add lines
+                                     # the bin/tep translator emits)
+    end
+
+    def add_asset(path, body, mime)
+      @asset_bodies[path] = body
+      @asset_mimes[path]  = mime
     end
 
     def set_session_secret(s)
@@ -44,8 +53,19 @@ module Tep
         end
       end
 
+      asset_served = false
       @before_filter.before(req, res)
       if !res.halted
+        # Bundled assets (everything under <app>/assets/, baked into
+        # the binary by bin/tep) take precedence over the route
+        # table. Match by exact path; on hit we set the body + ct
+        # and skip route dispatch + 404 fallback. The after-filter
+        # and session cookie writing still run normally.
+        if Tep::Assets.serve(req.path, res)
+          asset_served = true
+        end
+      end
+      if !res.halted && !asset_served
         route = @router.match(req)
         # `pass` loop: a handler can signal skip-to-next-route by
         # setting req.passed. Iterate until a handler doesn't pass,

@@ -1,45 +1,36 @@
 <!doctype html>
-<html>
+<html lang="en">
 <head>
   <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>tep chat</title>
-  <style>
-    * { box-sizing: border-box; }
-    body { font: 15px/1.4 -apple-system, sans-serif; max-width: 720px; margin: 1em auto; padding: 0 1em; color: #222; }
-    nav  { display: flex; align-items: center; gap: 1em; padding-bottom: .5em; border-bottom: 1px solid #ddd; }
-    h1   { font-size: 1.3em; margin: 0; }
-    #who { color: #888; font-size: .9em; flex: 1; }
-    #me  { padding: .25em .5em; }
-    #log { height: 60vh; overflow-y: auto; border: 1px solid #ddd; padding: 1em; margin: 1em 0; background: #fafafa; border-radius: 4px; }
-    .msg { padding: 4px 0; }
-    .msg .a { color: #36c; font-weight: bold; }
-    .msg .t { color: #aaa; font-size: .8em; margin-left: .5em; }
-    form { display: flex; gap: .5em; }
-    #body { flex: 1; padding: .5em; }
-    button { padding: .5em 1em; }
-    .status { color: #888; font-size: .85em; margin: .5em 0; }
-  </style>
+  <link rel="icon" type="image/svg+xml" href="/logo.svg">
+  <link rel="stylesheet" href="/style.css">
 </head>
 <body>
-  <nav>
-    <h1>tep chat</h1>
-    <span id="who">connecting...</span>
-    <input id="me" placeholder="your name">
-  </nav>
+  <div class="shell">
+    <nav>
+      <h1>
+        <img src="/logo.svg" alt="" class="logo">
+        tep chat
+        <span class="stripe">single static binary</span>
+      </h1>
+      <span id="who">connecting...</span>
+      <input id="me" placeholder="your name" autocomplete="off">
+    </nav>
 
-  <div id="log"></div>
-  <p class="status" id="conn">stream: idle</p>
+    <div id="log" role="log" aria-live="polite"></div>
+    <p class="status" id="conn">starting...</p>
 
-  <form id="f">
-    <input id="body" placeholder="say something..." autocomplete="off">
-    <button>send</button>
-  </form>
+    <form id="f" autocomplete="off">
+      <input id="body" placeholder="say something..." autocomplete="off">
+      <button>send</button>
+    </form>
+  </div>
 
   <script>
-    // The framework hands us the highest message id at page-load
-    // time so we don't replay the entire history on first connect.
-    let sinceId  = <%= @last_id %>;
-    let me       = localStorage.getItem('tep_chat_user') || '';
+    let sinceId = <%= @last_id %>;
+    let me      = localStorage.getItem('tep_chat_user') || '';
     document.getElementById('me').value = me;
     document.getElementById('me').addEventListener('change', e => {
       me = e.target.value.trim();
@@ -47,36 +38,64 @@
       heartbeat();
     });
 
-    const log    = document.getElementById('log');
-    const conn   = document.getElementById('conn');
-    const who    = document.getElementById('who');
+    const log  = document.getElementById('log');
+    const conn = document.getElementById('conn');
+    const who  = document.getElementById('who');
 
-    function escape(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+    function escapeHtml(s) {
+      return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    }
 
     function append(m) {
+      if (m.id <= sinceId) return;
       const row = document.createElement('div');
-      row.className = 'msg';
-      row.innerHTML = '<span class="a">' + escape(m.author) + ':</span> ' + escape(m.body);
+      row.className = 'msg ' + (m.author === me ? 'me' : 'them');
+      row.innerHTML =
+        '<div class="meta">' + escapeHtml(m.author) + '</div>' +
+        '<div class="body">' + escapeHtml(m.body) + '</div>';
       log.appendChild(row);
       log.scrollTop = log.scrollHeight;
       sinceId = Math.max(sinceId, m.id);
     }
 
-    function connectStream() {
-      conn.textContent = 'stream: connecting (since=' + sinceId + ')';
+    // Two transports for the message stream:
+    //   * polling -- /chat/recent?since=N every 1s (default).
+    //     Works everywhere, including macOS where prefork
+    //     workers don't load-balance new connections under a
+    //     long-running SSE.
+    //   * SSE -- /chat/stream?since=N, sub-second latency.
+    //     Set window.USE_SSE = true (or have your deploy template
+    //     flip it) to switch back on Linux where SO_REUSEPORT
+    //     actually distributes accept calls across workers.
+    async function pollOnce() {
+      try {
+        const r = await fetch('/chat/recent?since=' + sinceId);
+        const list = await r.json();
+        list.forEach(append);
+        conn.textContent = 'live (polling, since=' + sinceId + ')';
+      } catch (e) {
+        conn.textContent = 'polling: error -- retrying';
+      }
+    }
+    function startPolling() {
+      pollOnce();
+      setInterval(pollOnce, 1000);
+    }
+    function startSse() {
+      conn.textContent = 'connecting (since=' + sinceId + ')';
       const es = new EventSource('/chat/stream?since=' + sinceId);
-      es.onopen = () => { conn.textContent = 'stream: live'; };
+      es.onopen = () => { conn.textContent = 'live (SSE)'; };
       es.onmessage = (e) => {
         try { append(JSON.parse(e.data)); } catch(_) {}
       };
       es.onerror = () => {
-        conn.textContent = 'stream: reconnecting...';
+        conn.textContent = 'reconnecting...';
         es.close();
-        // Server caps connections at STREAM_MAX -- the close is
-        // expected; reconnect with the latest sinceId so we don't
-        // miss anything that landed during the few-ms gap.
-        setTimeout(connectStream, 250);
+        setTimeout(startSse, 250);
       };
+    }
+    function connectStream() {
+      if (window.USE_SSE) startSse(); else startPolling();
     }
 
     async function heartbeat() {
@@ -91,16 +110,18 @@
         const r = await fetch('/chat/who');
         const list = await r.json();
         if (list.length === 0) {
-          who.textContent = 'no one online';
+          who.innerHTML = '<span style="opacity:.6">no one online</span>';
         } else {
-          who.textContent = list.length + ' online: ' + list.map(p => p.user).join(', ');
+          who.innerHTML = list.map(p =>
+            '<span class="pill">' + escapeHtml(p.user) + '</span>'
+          ).join('');
         }
       } catch(_) {}
     }
 
     document.getElementById('f').addEventListener('submit', async (e) => {
       e.preventDefault();
-      if (!me) { alert('set a name first'); return; }
+      if (!me) { document.getElementById('me').focus(); return; }
       const body = document.getElementById('body');
       const text = body.value.trim();
       if (!text) return;
@@ -114,7 +135,8 @@
     connectStream();
     setInterval(heartbeat, 5000);
     setInterval(refreshWho, 5000);
-    heartbeat(); refreshWho();
+    heartbeat();
+    refreshWho();
   </script>
 </body>
 </html>
