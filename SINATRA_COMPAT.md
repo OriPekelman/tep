@@ -48,6 +48,7 @@ Three more landed since: `send_file 'path'` from inside a handler,
 | **Modular**: `class A < Sinatra::Base` | ✅ 3 | Routes fold into the global app; multiple modular classes coexist |
 | **ERB**: `erb :name` + `locals: {}`  | ✅ 4    | Build-time compiled; `<%= %>`, `<% %>`, `<%# %>` |
 | **ERB ivar locals (`@name`)**        | ✅ 3    | Sinatra-style: `@x = v` in handler / `before` filter, `<%= @x %>` in template. Translator stores on a per-request `req.ivars` String=>String bag; templates take `(locals, ivars)`. Values are `(...).to_s`-coerced on write. |
+| **Mustache (subset)**                | ✅ 3    | Build-time compiled; `mustache :name` DSL parallel to `erb :name`. See "Mustache subset" below. |
 | **send_file `'path'`**               | ✅ 1    | Reuses Tep::Response#send_file streaming path |
 | **configure { ... }** / **:env**     | ✅ 1    | Body runs at module load; env-keyed form gates on `ENV["TEP_ENV"]` (default "development") |
 | **`__END__` inline templates**       | ✅ 1    | `@@ name` blocks compile through the same ERB pipeline as files; file-based views still win when both exist |
@@ -89,6 +90,45 @@ Three more landed since: `send_file 'path'` from inside a handler,
 | Haml / Slim / etc.     | n/a    | Out of scope -- those are CRuby gems |
 | `helpers do ... end`   | medium | Closures not first-class in spinel; would need translator-level "extract methods to Handler base" pass |
 | `request.ip` / `request.remote_ip` | medium | Needs an sphttp_accept variant that returns the peer addr from the kernel; the rest of Rack::Request lands without C changes |
+
+## Mustache subset
+
+Tep ships a build-time Mustache compiler with a deliberately
+narrow surface. The DSL mirrors ERB:
+
+```ruby
+get '/' do
+  mustache :hello, locals: { name: "alice", snippet: "<b>BOLD</b>" }
+end
+```
+
+Supported tags:
+
+| Tag             | Compiles to                          | Notes |
+|-----------------|--------------------------------------|---|
+| `{{name}}`      | `out += Tep.h(locals["name"])`       | Default. HTML-escaped. |
+| `{{{name}}}`    | `out += locals["name"]`              | Raw / unescaped. |
+| `{{& name}}`    | `out += locals["name"]`              | Spec alias for the triple-stache form. |
+| `{{@name}}`     | `out += Tep.h(ivars["name"])`        | Reads from the per-request ivars bag (same `@x = v` pattern as ERB). Escaped. |
+| `{{{@name}}}`   | `out += ivars["name"]`               | Raw ivar form. |
+| `{{! comment}}` | dropped at compile                   | |
+
+Out of scope (compiler raises with a `mustache ... unsupported`
+message if reached, so build fails fast instead of silently
+mis-rendering):
+
+  - `{{#section}}...{{/section}}` and inverted `{{^section}}` --
+    sections need iterable locals; tep's view args are
+    `String=>String` hashes.
+  - `{{>partial}}` -- call `mustache :partial` from the handler
+    instead, or compose at the handler level.
+  - `{{=<% %>=}}` delimiter swaps -- niche, no plan.
+  - Lambdas / Proc-valued locals -- spinel has no Proc.
+
+File resolution mirrors ERB: `views/<name>.mustache` first, then
+the inline `__END__ \n @@ name` block. Tep's compiler emits a
+distinct `tep_mustache_<name>(locals, ivars)` function, so a
+project can mix ERB and Mustache views without name collisions.
 
 ## Reading the matrix
 

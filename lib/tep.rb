@@ -41,6 +41,34 @@ module Tep
     h
   end
 
+  # HTML-escape: minimum safe set for attribute and PCDATA contexts.
+  # Used by the build-time Mustache compiler for the default
+  # `{{var}}` (escaped) form. Char-by-char to avoid `gsub` (spinel's
+  # gsub coverage on string-typed receivers is uneven).
+  def self.h(s)
+    out = ""
+    i = 0
+    n = s.length
+    while i < n
+      c = s[i]
+      if c == "&"
+        out = out + "&amp;"
+      elsif c == "<"
+        out = out + "&lt;"
+      elsif c == ">"
+        out = out + "&gt;"
+      elsif c == "\""
+        out = out + "&quot;"
+      elsif c == "'"
+        out = out + "&#39;"
+      else
+        out = out + c
+      end
+      i += 1
+    end
+    out
+  end
+
   # Session signing secret. Empty by default, which disables session
   # writes (the Set-Cookie path no-ops). Set at app load time:
   #
@@ -80,6 +108,7 @@ module Tep
   _tep_seed_stream = Stream.new(0)
   _tep_seed_res.streamer.pump(_tep_seed_stream)
   _tep_seed_stream.write("")   # pin the parameter type to :str
+  Tep.h("")                    # pin Tep.h(s)'s param to :str
 
   # ---------------- DSL ----------------
   # Spinel emits every defined method whether called or not, and

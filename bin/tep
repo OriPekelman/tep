@@ -77,9 +77,13 @@ def translate(input_path)
   # `class App < Sinatra::Base` are not supported in v0.1.
   unwrapped_apps = []
   passthrough    = []
-  # Scan ALL `erb :name` references up front; every referenced view
-  # gets compiled and emitted at the top of the synthesized output.
-  views_used = source.scan(/(?<![\w.])erb\s+:(\w+)/).flatten.uniq
+  # Scan ALL `erb :name` and `mustache :name` references up front;
+  # every referenced view gets compiled and emitted at the top of
+  # the synthesized output. ERB views compile to `tep_view_<name>`,
+  # mustache views to `tep_mustache_<name>` -- separate namespaces
+  # so a project can mix engines without name collisions.
+  views_used     = source.scan(/(?<![\w.])erb\s+:(\w+)/).flatten.uniq
+  mustaches_used = source.scan(/(?<![\w.])mustache\s+:(\w+)/).flatten.uniq
   process = lambda do |node|
     # Only bare top-level method calls (no receiver) are candidates
     # for DSL handling -- `get '/'`, `before do`, `set :public_dir`,
@@ -158,6 +162,33 @@ def translate(input_path)
       end
       out << "def tep_view_#{vn}(locals, ivars)"
       out << "  " + erb_to_ruby_body(tmpl)
+      out << "end"
+      out << ""
+    end
+  end
+
+  # Same loop for mustache views: file-based (.mustache) > inline
+  # (`@@ name` blocks). Documented subset only -- `{{var}}`,
+  # `{{{var}}}`, `{{!comment}}`, `{{@ivar}}`. Sections / partials /
+  # lambdas are deliberately not implemented (they'd need iterable
+  # locals, which clashes with tep's String=>String view-arg model).
+  unless mustaches_used.empty?
+    views_dir = config[:views] || File.join(File.dirname(input_path), "views")
+    mustaches_used.each do |vn|
+      vp = File.join(views_dir, "#{vn}.mustache")
+      tmpl = nil
+      if File.exist?(vp)
+        tmpl = File.read(vp)
+      elsif inline_views.key?(vn)
+        tmpl = inline_views[vn]
+      end
+      if tmpl.nil?
+        warnings << "mustache :#{vn} -- not found in #{vp} nor in inline `@@` templates; emitting empty stub"
+        out << "def tep_mustache_#{vn}(locals, ivars); \"\"; end"
+        next
+      end
+      out << "def tep_mustache_#{vn}(locals, ivars)"
+      out << "  " + mustache_to_ruby_body(tmpl)
       out << "end"
       out << ""
     end
@@ -519,6 +550,15 @@ def rewrite_block(src, force_string: true)
   end
   s = s.gsub(/(?<![\w.])erb\s+:(\w+)/, 'tep_view_\1(Tep.str_hash, req.ivars)')
 
+  # Same shape for `mustache :name` and `mustache :name, locals: {...}`.
+  s = s.gsub(/(?<![\w.])mustache\s+:(\w+)\s*,\s*locals:\s*\{([^}]*)\}/) do
+    view = $1
+    pairs = $2.scan(/(\w+):\s*("[^"]*"|'[^']*'|[^,}]+?)\s*(?=,|\z)/)
+    setters = pairs.map { |k, v| %{__l["#{k}"] = (#{v.strip}).to_s} }.join("; ")
+    "(__l = Tep.str_hash; #{setters}; tep_mustache_#{view}(__l, req.ivars))"
+  end
+  s = s.gsub(/(?<![\w.])mustache\s+:(\w+)/, 'tep_mustache_\1(Tep.str_hash, req.ivars)')
+
   # `pass` -> request a skip to the next matching route. The
   # framework's dispatch loop watches `req.passed`. Both the bare
   # form and `pass if cond` (modifier-if) are translated.
@@ -667,6 +707,111 @@ def erb_to_ruby_body(template)
   flush.call
   parts << "out"
   parts.join("\n  ")
+end
+
+# Compile a Mustache template (documented subset) to a Ruby method
+# body. Same `(locals, ivars)` signature as ERB views; the call site
+# rewrites are parallel.
+#
+# Supported tags
+# --------------
+#
+#   {{name}}      escaped string interpolation
+#                   -> out += Tep.h(locals["name"])
+#   {{{name}}}    raw / unescaped interpolation
+#                   -> out += locals["name"]
+#   {{& name}}    raw alias (Mustache spec)
+#                   -> same as {{{name}}}
+#   {{@name}}     ivar form, escaped
+#                   -> out += Tep.h(ivars["name"])
+#   {{{@name}}}   ivar form, raw
+#                   -> out += ivars["name"]
+#   {{! comment}} dropped at compile time
+#
+# Out of scope (deliberately)
+# ---------------------------
+#
+#   {{#section}}{{/section}}    sections (need iterable locals;
+#                               tep's view args are String=>String)
+#   {{^section}}{{/section}}    inverted sections (same reason)
+#   {{>partial}}                partials -- could be added later as
+#                               sugar for tep_mustache_<partial>(...)
+#   {{=<% %>=}}                 delimiter swaps -- niche
+#   Lambdas                     require Proc / closures
+#
+# When user code reaches for an unsupported tag the compiler raises
+# at build time so the build fails fast with a clear message,
+# instead of silently rendering literal `{{...}}` to the client.
+def mustache_to_ruby_body(template)
+  parts = []
+  parts << 'out = ""'
+  i = 0
+  literal = String.new
+  flush = -> {
+    if !literal.empty?
+      parts << "out += #{literal.dump}"
+      literal = String.new
+    end
+  }
+  while i < template.length
+    open_at = template.index("{{", i)
+    if open_at.nil?
+      literal << template[i..-1]
+      break
+    end
+    literal << template[i...open_at]
+    # Triple-stache `{{{name}}}` -- raw interpolation. Consume {{{ ... }}}.
+    if template[open_at + 2] == "{"
+      close_at = template.index("}}}", open_at + 3)
+      raise "unterminated {{{ in mustache template" if close_at.nil?
+      flush.call
+      key = template[(open_at + 3)...close_at].strip
+      parts << mustache_emit_value(key, escaped: false)
+      i = close_at + 3
+      next
+    end
+    close_at = template.index("}}", open_at + 2)
+    raise "unterminated {{ in mustache template" if close_at.nil?
+    flush.call
+    inner = template[(open_at + 2)...close_at].strip
+    if inner.start_with?("!")
+      # comment, drop
+    elsif inner.start_with?("#")
+      raise "mustache section `{{##{inner[1..-1].strip}}}` unsupported -- tep's view args are String=>String, sections need iterable locals. See SINATRA_COMPAT.md > Mustache subset."
+    elsif inner.start_with?("^")
+      raise "mustache inverted section `{{^#{inner[1..-1].strip}}}` unsupported. See SINATRA_COMPAT.md > Mustache subset."
+    elsif inner.start_with?("/")
+      raise "mustache closing `{{/#{inner[1..-1].strip}}}` without a section opener (sections aren't supported)."
+    elsif inner.start_with?(">")
+      raise "mustache partial `{{>#{inner[1..-1].strip}}}` unsupported -- call `mustache :#{inner[1..-1].strip}` from the handler instead."
+    elsif inner.start_with?("&")
+      key = inner[1..-1].strip
+      parts << mustache_emit_value(key, escaped: false)
+    elsif inner.start_with?("=")
+      raise "mustache delimiter swap `{{=...=}}` unsupported."
+    else
+      parts << mustache_emit_value(inner, escaped: true)
+    end
+    i = close_at + 2
+  end
+  flush.call
+  parts << "out"
+  parts.join("\n  ")
+end
+
+def mustache_emit_value(key, escaped:)
+  # An `@name` key (with or without leading whitespace) reads from
+  # `ivars`; bare names read from `locals`. Mirrors the ERB ivar
+  # convention so a project can mix engines and the per-request
+  # `req.ivars` bag flows uniformly.
+  if key.start_with?("@")
+    bag = "ivars"
+    key = key[1..-1].strip
+  else
+    bag = "locals"
+  end
+  expr = %{#{bag}["#{key}"]}
+  escaped ? "out += Tep.h(#{expr})" : "out += #{expr}"
 end
 
 # Replace `@name` references with `ivars["name"]`. Used inside ERB
