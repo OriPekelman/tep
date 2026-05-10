@@ -112,10 +112,10 @@ module Tep
     # top-level shape works -- but a body that calls a sibling cmeth
     # like `Json.escape(k)` from inside the each block doesn't
     # propagate the narrowed `k:str` signal into `escape`'s param-
-    # type inference, and `escape` widens to int. Inlining the
-    # escape body into `from_str_hash` works, but duplicates
-    # ~30 lines of escape logic. Simpler: keep the building block
-    # fixed-arity. Tracked downstream of #408.
+    # type inference, and `escape` widens to int (tracked upstream
+    # as spinel #424). Inlining the escape body into `from_str_hash`
+    # works, but duplicates ~30 lines of escape logic. Simpler:
+    # keep the building block fixed-arity.
     def self.encode_pair_str(k, v)
       Json.quote(k) + ":" + Json.quote(v)
     end

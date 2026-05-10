@@ -375,7 +375,7 @@ class TestRealWorld < TepTest
       # wait STREAM_MAX (30s) for Net::HTTP to call it done.
       sock = TCPSocket.new("127.0.0.1", @port)
       sock.write("GET /chat/stream?since=0 HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n")
-      events = ""
+      events = String.new
       deadline = Time.now + 4
       while Time.now < deadline
         IO.select([sock], nil, nil, 0.5) or next
