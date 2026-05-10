@@ -30,4 +30,16 @@ module Sock
   ffi_func :sphttp_random_b64url,      [:int],       :str
   ffi_func :sphttp_write_chunk,   [:int, :str],     :int
   ffi_func :sphttp_write_chunk_end, [:int],         :int
+
+  # Poll-based I/O readiness, used by Tep::Scheduler.io_wait. Mode
+  # bits in/out: 1=READ, 2=WRITE.
+  ffi_func :sphttp_poll_reset,    [],               :int
+  ffi_func :sphttp_poll_add,      [:int, :int],     :int
+  ffi_func :sphttp_poll_run,      [:int],           :int
+  ffi_func :sphttp_poll_ready,    [:int],           :int
+  ffi_func :sphttp_set_nonblock,  [:int],           :int
+
+  # Outbound TCP for clients (Tep::Http, etc.).
+  ffi_func :sphttp_connect,       [:str, :int],     :int
+  ffi_func :sphttp_recv_some,     [:int, :int],     :str
 end

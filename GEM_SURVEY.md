@@ -151,11 +151,11 @@ of bang-for-buck:
    Policy, X-XSS-Protection, optional HSTS).
 6. ~~**`Tep::Scheduler`**~~ -- ✅ Shipped (lib/tep/scheduler.rb).
    Cooperative fiber scheduler riding on spinel's native Fiber
-   (ucontext-based, GC-aware). Time-driven only at this rev:
-   `spawn_fiber`, `tick`, `run_until_empty`, `run_for(seconds)`,
-   cooperative `sleep(seconds)`. I/O-readiness peers
-   (`io_wait(fd)` etc.) need non-blocking sphttp primitives and
-   are queued.
+   (ucontext-based, GC-aware). Time-driven (`spawn_fiber`, `tick`,
+   `run_until_empty`, `run_for(seconds)`, cooperative
+   `sleep(seconds)`) **and** I/O-driven (`io_wait(fd, mode, timeout)`)
+   via a shared poll(2)-backed reactor; the same `tick` pass picks
+   up time-ready and I/O-ready fibers together.
 7. ~~**`Tep::Assets`**~~ -- ✅ Shipped (lib/tep/assets.rb). Compile-
    time bundler that walks `<app>/assets/` and emits `_add` calls
    so static files ride in the binary. Served before route

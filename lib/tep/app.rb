@@ -13,6 +13,7 @@ module Tep
     attr_accessor :before_filter, :after_filter, :nf_handler
     attr_accessor :asset_bodies, :asset_mimes
     attr_accessor :sched_fibers, :sched_wake_at, :sched_current
+    attr_accessor :sched_io_fd, :sched_io_mode, :sched_io_ready
 
     def initialize
       @router         = Router.new
@@ -34,6 +35,17 @@ module Tep
       @sched_wake_at.delete_at(0)
       @sched_current  = -1               # currently-running fiber idx
                                          # (-1 = scheduler root).
+      # Parallel I/O-wait arrays. `sched_io_fd[i] == -1` means the
+      # fiber isn't parked on I/O (pure timer wait, or ready). When
+      # parked: `sched_io_mode[i]` carries the requested READ/WRITE
+      # bits, and tick() writes back the observed-ready bits into
+      # `sched_io_ready[i]`. io_wait returns those bits to its caller.
+      @sched_io_fd    = [0]
+      @sched_io_fd.delete_at(0)
+      @sched_io_mode  = [0]
+      @sched_io_mode.delete_at(0)
+      @sched_io_ready = [0]
+      @sched_io_ready.delete_at(0)
     end
 
     def add_asset(path, body, mime)

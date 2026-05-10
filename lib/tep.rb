@@ -229,15 +229,21 @@ module Tep
   # Tep::Scheduler seed -- run every public method once so spinel
   # pins the param/return types. The seed Fiber's body is an
   # immediately-finishing Tep.seed_fiber_noop, so resume + tick are
-  # cheap.
+  # cheap. io_wait gets seeded outside any fiber context, which
+  # exercises the idx < 0 single-shot poll path (fd=-1 returns
+  # immediately on most kernels with a POLLNVAL, which we collapse
+  # to 0 in sphttp_poll_ready).
   _tep_seed_fiber = Tep.seed_fiber
   Tep::Scheduler.spawn_fiber(_tep_seed_fiber)
-  Tep::Scheduler.tick
+  Tep::Scheduler.tick(0)
+  Tep::Scheduler.poll_round(0)
+  Tep::Scheduler.any_io_waiter
   Tep::Scheduler.alive_count
   Tep::Scheduler.next_wake
   Tep::Scheduler.run_until_empty
   Tep::Scheduler.run_for(0)
   Tep::Scheduler.sleep(0)
+  Tep::Scheduler.io_wait(-1, Tep::Scheduler::READ, 0)
   Tep::Scheduler.clear
   _tep_seed_str_arr = [""]
   _tep_seed_str_arr.delete_at(0)

@@ -1,13 +1,13 @@
 require_relative "helper"
 
-# Tep::Scheduler -- cooperative fiber scheduler. End-to-end test that
-# spawns two fibers from inside a handler, drains them, and verifies
-# their execution interleaves.
+# Tep::Scheduler -- cooperative fiber scheduler. End-to-end tests
+# covering both parking modes:
 #
-# Spinel ships Fiber natively (ucontext-based, GC-aware). Tep adds the
-# scheduler layer above: spawn / tick / run_until_empty / sleep. This
-# is the time-driven slice; I/O readiness is a follow-up that needs
-# non-blocking sphttp peers.
+#   * Time-driven (run_until_empty / Fiber.yield)
+#   * I/O-driven (io_wait + poll(2)) -- a fiber parks on a listening
+#     socket, the handler issues an outbound connect against itself
+#     (sphttp_connect) to make the listener readable, the scheduler's
+#     next tick picks up the readiness and resumes the fiber.
 class TestScheduler < TepTest
   app_source <<~RB
     require 'sinatra'
@@ -55,6 +55,48 @@ class TestScheduler < TepTest
       after = Tep::Scheduler.alive_count.to_s
       before + "->" + after
     end
+
+    # Park a fiber on a listening socket via io_wait. From outside the
+    # fiber the handler kicks an outbound TCP connect against the same
+    # listener -- now `lfd` is read-ready (pending accept), the next
+    # tick's poll(2) round sees POLLIN, and resumes the fiber with
+    # the ready bits.
+    class IoWorker
+      attr_accessor :result, :lfd, :timeout, :fiber
+      def initialize(lfd, timeout)
+        @lfd = lfd
+        @timeout = timeout
+        @result = -1
+        @fiber = Fiber.new { run }
+      end
+      def run
+        @result = Tep::Scheduler.io_wait(@lfd, Tep::Scheduler::READ, @timeout)
+      end
+    end
+
+    get '/io_wait_ready' do
+      Tep::Scheduler.clear
+      lfd = Sock.sphttp_listen(15999, 0)
+      w = IoWorker.new(lfd, 3)
+      Tep::Scheduler.spawn_fiber(w.fiber)
+      cfd = Sock.sphttp_connect("127.0.0.1", 15999)
+      Tep::Scheduler.run_for(3)
+      Sock.sphttp_close(cfd)
+      Sock.sphttp_close(lfd)
+      "result=" + w.result.to_s + " cfd=" + (cfd > 0 ? "ok" : "fail")
+    end
+
+    get '/io_wait_timeout' do
+      Tep::Scheduler.clear
+      lfd = Sock.sphttp_listen(15998, 0)
+      t0 = Time.now.to_i
+      w = IoWorker.new(lfd, 1)
+      Tep::Scheduler.spawn_fiber(w.fiber)
+      Tep::Scheduler.run_for(2)
+      elapsed = Time.now.to_i - t0
+      Sock.sphttp_close(lfd)
+      "result=" + w.result.to_s + " elapsed=" + elapsed.to_s
+    end
   RB
 
   def test_one_fiber_drains_via_run_until_empty
@@ -74,5 +116,26 @@ class TestScheduler < TepTest
     res = get("/alive")
     assert_equal "200", res.code
     assert_equal "0->1", res.body.strip
+  end
+
+  def test_io_wait_resumes_when_socket_becomes_readable
+    res = get("/io_wait_ready")
+    assert_equal "200", res.code
+    # READ bit is 1; the connect made the listener accept-ready, so
+    # the fiber should resume with result=1. cfd should be a real fd
+    # (> 0); if connect failed we'd see cfd=fail.
+    assert_match(/result=1/, res.body)
+    assert_match(/cfd=ok/,   res.body)
+  end
+
+  def test_io_wait_returns_zero_on_timeout
+    res = get("/io_wait_timeout")
+    assert_equal "200", res.code
+    # No connect happens, so the listener never becomes readable.
+    # After ~1s the timeout fires and io_wait returns 0.
+    assert_match(/result=0/, res.body)
+    # 1s timeout, run_for cap 2s, allow either 1 or 2 elapsed seconds
+    # (poll wake-up + clock granularity).
+    assert_match(/elapsed=[12]/, res.body)
   end
 end

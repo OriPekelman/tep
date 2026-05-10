@@ -134,7 +134,7 @@ served straight from memory.
 | `Tep::Password`  | PBKDF2-SHA256 password hashing, 200k iters, self-describing storage format. |
 | `Tep::Security`  | `Cors` (before-filter) + `Headers` (after-filter; HSTS, nosniff, frame-options, ...). |
 | `Tep::Assets`    | compile-time bundling for `<app>/assets/*` (CSS, SVG, JS, ...). |
-| `Tep::Scheduler` | cooperative fiber scheduler — spawn / tick / run_until_empty / sleep. Time-driven; I/O-readiness peers planned. |
+| `Tep::Scheduler` | cooperative fiber scheduler — spawn / tick / run_until_empty / sleep + `io_wait(fd, mode, timeout)` via poll(2) for parking on socket readiness. |
 
 ~160 tests across the test suite pass `make test`. 4 documented
 skips. 6 real-world examples build and serve end-to-end (smoke-

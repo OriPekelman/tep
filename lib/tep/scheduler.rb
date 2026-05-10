@@ -6,44 +6,61 @@
 # long-running response (SSE stream, long-poll, slow batch) doesn't
 # pin the worker for the whole connection lifetime.
 #
-# This v1 covers the **time-driven** case: register a fiber to be
-# resumed at-or-after `wake_at`, the scheduler picks the next ready
-# one and resumes it. Fibers cooperate by calling
-# `Tep::Scheduler.sleep(seconds)` (which yields under the hood)
-# instead of POSIX `sleep`.
+# This covers two parking modes:
+#
+#   * **Time**: register a fiber to be resumed at-or-after `wake_at`
+#     via `Tep::Scheduler.sleep(seconds)`.
+#   * **I/O**: park a fiber on (fd, mode) via `Tep::Scheduler.io_wait`.
+#     tick() runs a poll(2) round, marks ready fibers, and resumes them
+#     (along with any time-ready ones) on the same pass.
 #
 # Storage shape
 # -------------
-# Two parallel arrays on the Tep::APP singleton: `sched_fibers`
-# (Fiber instances) + `sched_wake_at` (Unix-second timestamps;
-# -1 means "ready immediately"). Spinel handles same-shaped
-# typed arrays cleanly; using a single array of structs would
-# force a poly_array. Same App-instance pattern as Tep::Assets.
+# Parallel arrays on the Tep::APP singleton -- one entry per fiber:
+#   sched_fibers    PtrArray<FiberSlot>  the Fiber itself
+#   sched_wake_at   IntArray             unix-seconds; -1 = ready now
+#   sched_io_fd     IntArray             fd parked on; -1 = no I/O wait
+#   sched_io_mode   IntArray             requested mode bits (1=R, 2=W)
+#   sched_io_ready  IntArray             observed-ready bits (0=not yet)
+#
+# Spinel handles same-shaped typed arrays cleanly; using a single
+# array of structs would force a poly_array. Same App-instance
+# pattern as Tep::Assets.
 #
 # What it doesn't do (yet)
 # ------------------------
-# **I/O readiness.** A real fiber scheduler hooks into accept /
-# read / write so a fiber blocked on a socket only resumes once the
-# fd is ready. That needs non-blocking-aware sphttp primitives
-# (e.g. `sphttp_select_read(fd, timeout_ms)`); the worker loop
-# would interleave it with `Scheduler.tick`.
-#
 # **Implicit yield on blocking calls.** Ruby 3.0's
 # `Fiber::SchedulerInterface` makes every blocking I/O auto-yield
 # to a registered scheduler. Spinel doesn't recognise that hook;
-# we yield explicitly via `Tep::Scheduler.sleep`.
+# fibers yield explicitly via `Tep::Scheduler.sleep / io_wait`.
+#
+# **Non-blocking accept on the listening socket.** The Server's
+# worker_loop still does a blocking accept(); fibers cooperate
+# *within* a single request lifetime, not across requests. Adding
+# poll-on-accept needs the worker_loop to opt into the scheduler.
 module Tep
   class Scheduler
+    # Mode bits for io_wait. Mirror sphttp's wire encoding so the
+    # C side and Ruby side stay aligned.
+    READ  = 1
+    WRITE = 2
+
     def self.spawn_fiber(f)
       Tep::APP.sched_fibers.push(Tep::FiberSlot.new(f))
       Tep::APP.sched_wake_at.push(-1)
+      Tep::APP.sched_io_fd.push(-1)
+      Tep::APP.sched_io_mode.push(0)
+      Tep::APP.sched_io_ready.push(0)
       f
     end
 
-    # Resume the fiber whose wake_at is soonest-due (and <= now).
-    # Returns true if it resumed something, false if everything is
-    # either done or waiting for the future.
-    def self.tick
+    # One scheduler pass. If any fibers are parked on I/O, build a
+    # poll set, run poll(2) for up to `poll_timeout_ms`, and mark
+    # ready ones. Then resume the soonest-due fiber whose wake_at
+    # is <= now. Returns true if it resumed something.
+    def self.tick(poll_timeout_ms)
+      Scheduler.poll_round(poll_timeout_ms)
+
       now  = Time.now.to_i
       best = -1
       i = 0
@@ -66,39 +83,88 @@ module Tep
       true
     end
 
+    # Build poll set from parked-on-I/O fibers, call poll(2), and
+    # write observed-ready bits back into the parallel arrays.
+    # `timeout_ms` is the poll() timeout (-1 = block forever,
+    # 0 = non-blocking peek). Idempotent for an empty set.
+    def self.poll_round(timeout_ms)
+      Sock.sphttp_poll_reset
+      slots = [-1] # slot index parallel to sched_fibers; -1 = not polled
+      slots.delete_at(0)
+      added = 0
+      i = 0
+      n = Tep::APP.sched_fibers.length
+      while i < n
+        slot = -1
+        if Tep::APP.sched_fibers[i].f.alive? &&
+           Tep::APP.sched_io_fd[i] >= 0 &&
+           Tep::APP.sched_io_ready[i] == 0
+          slot = Sock.sphttp_poll_add(Tep::APP.sched_io_fd[i],
+                                      Tep::APP.sched_io_mode[i])
+          added += 1
+        end
+        slots.push(slot)
+        i += 1
+      end
+      if added == 0
+        return 0
+      end
+      Sock.sphttp_poll_run(timeout_ms)
+      now = Time.now.to_i
+      i = 0
+      while i < n
+        if slots[i] >= 0
+          ready = Sock.sphttp_poll_ready(slots[i])
+          if ready > 0
+            Tep::APP.sched_io_ready[i] = ready
+            Tep::APP.sched_wake_at[i]  = now
+          end
+        end
+        i += 1
+      end
+      added
+    end
+
     # Drain. Resumes everything ready until the schedulable set
     # is empty (every fiber finished or all are waiting for a
-    # future wake_at). Returns the number of resumes performed.
+    # future wake_at / I/O). Returns the number of resumes performed.
+    # Pure non-blocking; no poll() wait between passes.
     def self.run_until_empty
       n = 0
-      while Scheduler.tick
+      while Scheduler.tick(0)
         n += 1
       end
       n
     end
 
     # Drain until `seconds` has elapsed OR every fiber's done.
-    # Sleeps a small amount between ticks if no fibers are due
-    # right now, so a fiber waiting for `wake_at = now + 5`
-    # doesn't spin the CPU while waiting.
+    # Between empty passes, blocks in poll(2) (or sleep, if no
+    # I/O waits) until the next wake-up.
     def self.run_for(seconds)
       deadline = Time.now.to_i + seconds
       while Time.now.to_i < deadline
-        if !Scheduler.tick
-          # Nothing ready; wait until the next-due fiber's
-          # wake_at, capped at the overall deadline.
+        if !Scheduler.tick(0)
+          # Nothing ready this pass. Compute the next deadline:
+          # min(next_wake, overall_deadline). If any fiber is
+          # parked on I/O, block in poll() until that or the
+          # timer hits.
           next_at = Scheduler.next_wake
-          if next_at < 0
+          gap = deadline - Time.now.to_i
+          if next_at >= 0
+            tgap = next_at - Time.now.to_i
+            if tgap < gap
+              gap = tgap
+            end
+          end
+          if gap < 0
+            gap = 0
+          end
+          if Scheduler.any_io_waiter
+            # Park in poll for up to `gap` seconds.
+            Scheduler.poll_round(gap * 1000)
+          elsif next_at < 0
             return 0
-          end
-          gap = next_at - Time.now.to_i
-          if gap < 1
-            gap = 1
-          end
-          if Time.now.to_i + gap > deadline
-            gap = deadline - Time.now.to_i
-          end
-          if gap > 0
+          elsif gap > 0
             sleep gap
           end
         end
@@ -124,6 +190,20 @@ module Tep
       Tep::APP.sched_wake_at[best]
     end
 
+    def self.any_io_waiter
+      i = 0
+      n = Tep::APP.sched_fibers.length
+      while i < n
+        if Tep::APP.sched_fibers[i].f.alive? &&
+           Tep::APP.sched_io_fd[i] >= 0 &&
+           Tep::APP.sched_io_ready[i] == 0
+          return true
+        end
+        i += 1
+      end
+      false
+    end
+
     # Called from within a fiber's body to suspend until at-or-
     # after `seconds` from now.
     def self.sleep(seconds)
@@ -138,12 +218,47 @@ module Tep
       0
     end
 
+    # Park the current fiber until `fd` is ready for the given
+    # `mode` bits (1=READ, 2=WRITE, 3=both) OR `timeout_seconds`
+    # elapses. Returns the observed-ready bits (0 on timeout).
+    # When called from outside a fiber, falls back to a single
+    # poll() call so the same code works at top level.
+    def self.io_wait(fd, mode, timeout_seconds)
+      idx = Tep::APP.sched_current
+      if idx < 0
+        # No fiber context -- single-shot poll inline.
+        Sock.sphttp_poll_reset
+        slot = Sock.sphttp_poll_add(fd, mode)
+        Sock.sphttp_poll_run(timeout_seconds * 1000)
+        return Sock.sphttp_poll_ready(slot)
+      end
+      Tep::APP.sched_io_fd[idx]    = fd
+      Tep::APP.sched_io_mode[idx]  = mode
+      Tep::APP.sched_io_ready[idx] = 0
+      if timeout_seconds < 0
+        # "Wait forever for I/O": -1 would mean "ready now" to the
+        # tick picker, so use a far-future wake_at as the sentinel.
+        Tep::APP.sched_wake_at[idx] = Time.now.to_i + 86400
+      else
+        Tep::APP.sched_wake_at[idx] = Time.now.to_i + timeout_seconds
+      end
+      Fiber.yield
+      ready = Tep::APP.sched_io_ready[idx]
+      Tep::APP.sched_io_fd[idx]    = -1
+      Tep::APP.sched_io_mode[idx]  = 0
+      Tep::APP.sched_io_ready[idx] = 0
+      ready
+    end
+
     # Reset the schedulable set. Useful between worker-loop
     # iterations or between tests.
     def self.clear
       while Tep::APP.sched_fibers.length > 0
         Tep::APP.sched_fibers.delete_at(0)
         Tep::APP.sched_wake_at.delete_at(0)
+        Tep::APP.sched_io_fd.delete_at(0)
+        Tep::APP.sched_io_mode.delete_at(0)
+        Tep::APP.sched_io_ready.delete_at(0)
       end
       0
     end

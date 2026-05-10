@@ -10,6 +10,8 @@
 #include <unistd.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <poll.h>
+#include <netdb.h>
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <sys/wait.h>
@@ -644,4 +646,115 @@ int sphttp_wait_any(void) {
     int status = 0;
     pid_t p = wait(&status);
     return (int)p;
+}
+
+/* ---------- Non-blocking I/O + poll(2) plumbing ----------
+ *
+ * The scheduler parks a fiber on (fd, mode) via Sock.sphttp_poll_add;
+ * tick() then calls sphttp_poll_run with a timeout and walks the
+ * slots to see who got ready. Mode bits:  1=READ, 2=WRITE.
+ *
+ * Storage is process-static. The Ruby side owns the "reset between
+ * tick rounds" discipline -- safe because the scheduler is single-
+ * threaded inside one worker. */
+
+#define SPHTTP_POLL_MAX 256
+static struct pollfd sphttp_poll_set[SPHTTP_POLL_MAX];
+static int           sphttp_poll_n = 0;
+
+int sphttp_poll_reset(void) {
+    sphttp_poll_n = 0;
+    return 0;
+}
+
+/* Add (fd, mode_bits) to the poll set. Returns the slot index for
+ * later sphttp_poll_ready(slot), or -1 if the set is full. */
+int sphttp_poll_add(int fd, int mode_bits) {
+    if (sphttp_poll_n >= SPHTTP_POLL_MAX) return -1;
+    short ev = 0;
+    if (mode_bits & 1) ev |= POLLIN;
+    if (mode_bits & 2) ev |= POLLOUT;
+    sphttp_poll_set[sphttp_poll_n].fd      = fd;
+    sphttp_poll_set[sphttp_poll_n].events  = ev;
+    sphttp_poll_set[sphttp_poll_n].revents = 0;
+    return sphttp_poll_n++;
+}
+
+/* Run poll() with a millisecond timeout. -1 blocks forever, 0 is a
+ * non-blocking peek. Returns the count of ready slots (>=0) or -1. */
+int sphttp_poll_run(int timeout_ms) {
+    int r;
+    do {
+        r = poll(sphttp_poll_set, sphttp_poll_n, timeout_ms);
+    } while (r < 0 && errno == EINTR);
+    return r;
+}
+
+/* Read the ready-mode bits for a slot. POLLHUP/POLLERR fold into the
+ * READ bit so a fiber waiting on read sees the hangup and can call
+ * recv() to get the 0-byte EOF / errno. */
+int sphttp_poll_ready(int slot) {
+    if (slot < 0 || slot >= sphttp_poll_n) return 0;
+    short rev = sphttp_poll_set[slot].revents;
+    int out = 0;
+    if (rev & (POLLIN | POLLHUP | POLLERR)) out |= 1;
+    if (rev & POLLOUT)                       out |= 2;
+    return out;
+}
+
+/* Flip O_NONBLOCK on. Used by the scheduler to make handler-owned
+ * sockets play nicely with poll-based parking. */
+int sphttp_set_nonblock(int fd) {
+    int flags = fcntl(fd, F_GETFL, 0);
+    if (flags < 0) return -1;
+    return fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+}
+
+/* Outbound TCP connect. Resolves `host` via getaddrinfo (so both
+ * IP literals and DNS names work). Returns the connected fd or -1.
+ * Blocking connect for now -- a future variant can do non-blocking
+ * connect + poll(POLLOUT) for fully-async outbound. */
+int sphttp_connect(const char *host, int port) {
+    struct addrinfo hints, *res = NULL;
+    memset(&hints, 0, sizeof(hints));
+    hints.ai_family   = AF_UNSPEC;
+    hints.ai_socktype = SOCK_STREAM;
+
+    char portbuf[16];
+    snprintf(portbuf, sizeof(portbuf), "%d", port);
+
+    if (getaddrinfo(host, portbuf, &hints, &res) != 0) return -1;
+
+    int fd = -1;
+    struct addrinfo *ai;
+    for (ai = res; ai != NULL; ai = ai->ai_next) {
+        fd = socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);
+        if (fd < 0) continue;
+        if (connect(fd, ai->ai_addr, ai->ai_addrlen) == 0) break;
+        close(fd);
+        fd = -1;
+    }
+    freeaddrinfo(res);
+    if (fd < 0) return -1;
+
+    int one = 1;
+    setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));
+    return fd;
+}
+
+/* Best-effort recv() that returns the bytes as a static buffer.
+ * Pairs with sphttp_set_nonblock + sphttp_poll_run for the scheduler
+ * loop. Returns "" on EAGAIN/empty so callers can branch on
+ * .length == 0; "<EOF>" sentinel is the empty-string + closed fd
+ * pattern (use sphttp_close + state machine on the caller side). */
+static char sphttp_recv_buf[SPHTTP_BUFSIZE];
+const char *sphttp_recv_some(int fd, int maxlen) {
+    if (maxlen <= 0 || maxlen >= SPHTTP_BUFSIZE) maxlen = SPHTTP_BUFSIZE - 1;
+    ssize_t n = recv(fd, sphttp_recv_buf, (size_t)maxlen, 0);
+    if (n <= 0) {
+        sphttp_recv_buf[0] = '\0';
+        return sphttp_recv_buf;
+    }
+    sphttp_recv_buf[n] = '\0';
+    return sphttp_recv_buf;
 }
