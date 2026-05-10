@@ -106,14 +106,16 @@ module Tep
     #   "{" + Tep::Json.encode_pair_str("name", name) + "," +
     #         Tep::Json.encode_pair_str("city", "NYC") + "}"
     #
-    # No top-level `from_str_hash(h)` convenience: a method that
-    # `each`-iterates a Hash parameter currently widens the param's
-    # inferred type to poly under conditions we haven't fully nailed
-    # down (the same-shape `set_cookie(opts)` in tep itself stays
-    # correctly typed, so it's not the iteration shape per se). The
-    # workaround is to keep the building block fixed-arity and let
-    # the user spell out the join. Worth filing upstream once a
-    # tighter repro exists.
+    # Why not a `from_str_hash(h)` convenience that takes the full
+    # Hash? spinel #408 (commit 9ca01d7) fixed the body-driven
+    # narrowing for hashes iterated via `each |k, v|`, so the
+    # top-level shape works -- but a body that calls a sibling cmeth
+    # like `Json.escape(k)` from inside the each block doesn't
+    # propagate the narrowed `k:str` signal into `escape`'s param-
+    # type inference, and `escape` widens to int. Inlining the
+    # escape body into `from_str_hash` works, but duplicates
+    # ~30 lines of escape logic. Simpler: keep the building block
+    # fixed-arity. Tracked downstream of #408.
     def self.encode_pair_str(k, v)
       Json.quote(k) + ":" + Json.quote(v)
     end

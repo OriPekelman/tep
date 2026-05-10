@@ -34,11 +34,8 @@ TEP_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 candidate=""
 if [ -n "${TEP_SPINEL_DIR:-}" ]; then
     candidate="$TEP_SPINEL_DIR"
-elif [ -d "$TEP_DIR/../../spinel/.git" ]; then
-    # tep at sites/sinatra_spinel/tep, spinel at sites/spinel
-    candidate="$(cd "$TEP_DIR/../../spinel" && pwd)"
 elif [ -d "$TEP_DIR/../spinel/.git" ]; then
-    # tep and spinel as direct siblings
+    # tep and spinel as direct siblings (e.g. ~/sites/tep + ~/sites/spinel)
     candidate="$(cd "$TEP_DIR/../spinel" && pwd)"
 elif [ -d "$HOME/sites/spinel/.git" ]; then
     candidate="$HOME/sites/spinel"

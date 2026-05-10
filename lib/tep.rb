@@ -36,12 +36,37 @@ require_relative "tep/jwt"
 require_relative "tep/password"
 require_relative "tep/security"
 require_relative "tep/assets"
+require_relative "tep/scheduler"
 
 module Tep
   # Helper: spinel won't infer types on an empty `{}`, so we seed
   # with one entry then delete it. Used by Request/Response so
   # users get the natural Hash[] / Hash[]= surface (Sinatra-style
   # `params["name"]` works without a bespoke Bag wrapper).
+  # Holder for a Fiber so we can keep them in a typed array.
+  # Spinel's `[Fiber.new { ... }]` array literal infers IntArray
+  # (Fiber is a built-in pointer type, not a user class spinel
+  # tracks via PtrArray), so a one-attribute wrapper class is the
+  # cheapest way to put them in a homogeneous container.
+  class FiberSlot
+    attr_accessor :f
+    def initialize(f)
+      @f = f
+    end
+  end
+
+  def self.seed_fiber_noop
+    0
+  end
+
+  # A canonical no-op fiber, used to type-seed Fiber-bearing
+  # collections without running anything user-visible. The body is
+  # a single method call (Fiber tests don't currently support
+  # arbitrary inline-block bodies in spinel).
+  def self.seed_fiber
+    Fiber.new { Tep.seed_fiber_noop }
+  end
+
   def self.str_hash
     h = {"" => ""}
     h.delete("")
@@ -179,7 +204,7 @@ module Tep
   # Tep::Password seed -- one cheap PBKDF2 round at startup, just
   # to pin every method's parameter types. iters=1 keeps the cost
   # negligible.
-  _tep_seed_pwd_hash = Tep::Password.create("seed")
+  _tep_seed_pwd_hash = Tep::Password.hash("seed")
   Tep::Password.verify("seed", _tep_seed_pwd_hash)
   Tep::Password.split4("a$b$c$d")
 
@@ -200,6 +225,20 @@ module Tep
   Tep::Assets.has?("")
   _tep_seed_assets_res = Response.new
   Tep::Assets.serve("", _tep_seed_assets_res)
+
+  # Tep::Scheduler seed -- run every public method once so spinel
+  # pins the param/return types. The seed Fiber's body is an
+  # immediately-finishing Tep.seed_fiber_noop, so resume + tick are
+  # cheap.
+  _tep_seed_fiber = Tep.seed_fiber
+  Tep::Scheduler.spawn_fiber(_tep_seed_fiber)
+  Tep::Scheduler.tick
+  Tep::Scheduler.alive_count
+  Tep::Scheduler.next_wake
+  Tep::Scheduler.run_until_empty
+  Tep::Scheduler.run_for(0)
+  Tep::Scheduler.sleep(0)
+  Tep::Scheduler.clear
   _tep_seed_str_arr = [""]
   _tep_seed_str_arr.delete_at(0)
   Tep::Json.from_str_array(_tep_seed_str_arr)

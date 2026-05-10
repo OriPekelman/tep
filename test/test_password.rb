@@ -8,7 +8,7 @@ class TestPassword < TepTest
     post '/hash' do
       res.headers["Content-Type"] = "text/plain"
       pwd = Tep::Json.get_str(req.raw_body, "password")
-      Tep::Password.create(pwd)
+      Tep::Password.hash(pwd)
     end
 
     post '/verify' do

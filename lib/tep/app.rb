@@ -12,6 +12,7 @@ module Tep
     attr_accessor :router, :static_root, :session_secret
     attr_accessor :before_filter, :after_filter, :nf_handler
     attr_accessor :asset_bodies, :asset_mimes
+    attr_accessor :sched_fibers, :sched_wake_at, :sched_current
 
     def initialize
       @router         = Router.new
@@ -23,6 +24,16 @@ module Tep
       @asset_bodies   = Tep.str_hash # path -> bytes (filled at boot
       @asset_mimes    = Tep.str_hash # by Tep::Assets._add lines
                                      # the bin/tep translator emits)
+      # FiberSlot array for the cooperative scheduler. Initialise
+      # with a noop-bodied slot to pin the array element type, then
+      # drop it. Each slot holds one Fiber + a timer entry in the
+      # parallel `sched_wake_at` int array.
+      @sched_fibers   = [Tep::FiberSlot.new(Fiber.new { Tep.seed_fiber_noop })]
+      @sched_fibers.delete_at(0)
+      @sched_wake_at  = [0]
+      @sched_wake_at.delete_at(0)
+      @sched_current  = -1               # currently-running fiber idx
+                                         # (-1 = scheduler root).
     end
 
     def add_asset(path, body, mime)

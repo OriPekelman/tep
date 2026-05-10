@@ -62,7 +62,7 @@ on_start do
     # Seed the admin user once if the table is empty.
     n = db.first_int("SELECT count(*) FROM users", "")
     if n == 0
-      hash = Tep::Password.create(SEED_PASSWORD)
+      hash = Tep::Password.hash(SEED_PASSWORD)
       db.prepare("INSERT INTO users (name, pwd_hash) VALUES (?, ?)")
       db.bind_str(1, SEED_USER)
       db.bind_str(2, hash)

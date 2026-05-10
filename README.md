@@ -59,69 +59,95 @@ native executable that links against the platform's libc.
 
 ## Why is this fast?
 
-40k+ requests per second on a laptop, 200k+ on a small server, with
-~20 µs median latency. The hot path is C from end to end (kqueue/epoll
-scheduling, request parsing, dispatch table, response writer); the
-Ruby you wrote is compiled, not interpreted. HTTP/1.1 keep-alive and
-prefork-with-`SO_REUSEPORT` are the usual perf wins applied.
+200k+ requests per second on a small Linux server, ~20 µs median
+latency. The hot path is C from end to end (epoll scheduling, request
+parsing, dispatch table, response writer); the Ruby you wrote is
+compiled, not interpreted. HTTP/1.1 keep-alive and prefork-with-
+`SO_REUSEPORT` are the usual perf wins applied.
 
 | Server                              | Req/sec | p50    | p99    |
 |-------------------------------------|--------:|-------:|-------:|
 | **tep, 8 workers (Linux/aarch64)**  | 227,186 |  32 µs | 145 µs |
 | **tep, 1 worker  (Linux/aarch64)**  |  49,037 |  18 µs |  73 µs |
 | Sinatra + Puma + CRuby (8w × 4t)    |  34,108 | 1.2 ms | 152 ms |
-| **tep, 1 worker  (macOS/aarch64)**  |  42,457 |  20 µs |  77 µs |
 
-`wrk -t8 -c256 -d10s` against a hello-world handler. macOS doesn't
-load-balance `SO_REUSEPORT` the same way Linux does, so prefork on
-macOS doesn't scale beyond a single worker — the headline numbers
-come from Linux.
+`wrk -t8 -c256 -d10s` against a hello-world handler on Linux 6.x /
+aarch64.
+
+> **macOS note.** Linux is tep's primary deployment target. Builds and
+> runs on macOS for development too, but Darwin's `SO_REUSEPORT`
+> doesn't load-balance new connections across prefork workers — a
+> single long-running response (SSE, long-poll) on the busy worker
+> blocks every other request on the same listener. On Linux 3.9+
+> the kernel distributes accepts correctly, so prefork scales as
+> the table above.
 
 ## What works (today)
 
 **Routing**: `get` / `post` / `put` / `patch` / `delete`; path
 captures (`:name`), splats (`*`), regex (`get %r{^/posts/(\d+)$}`,
-captures bind to `params["1"]..["9"]`), query string,
-form-urlencoded bodies.
+captures bind to `params["1"]..["9"]`), optional segments
+(`get '/say(/:greeting)'`), `pass` / `pass if cond`,
+query string, form-urlencoded bodies.
 
 **Response**: `status N`, `redirect 'x'`, `halt N, "msg"`,
-`content_type 'x'`, `headers["X"] = "y"`.
+`content_type 'x'`, `headers["X"] = "y"`, `send_file 'path'`.
 
 **State**: cookies (`cookies[k]` to read, `set_cookie "k", "v"` to
 write), sessions (`session[k] = v` — HMAC-SHA256-signed cookie
 store; tampered cookies are rejected; set
 `Tep.session_secret = "..."` to enable).
 
-**Templates**: ERB at build time. Each `views/<name>.erb` becomes a
-top-level method; `erb :name, locals: { x: ... }` calls it.
-`<%= %>`, `<% %>`, and `<%# %>` all work.
+**Templates**: ERB at build time with Sinatra-style `@ivar` locals
+(`@x = "alice"` in the handler, `<%= @x %>` in the template) and
+explicit `locals: {...}` hashes. `__END__` inline templates work.
+A documented Mustache subset ships alongside (`mustache :name`,
+parallel DSL) for projects that prefer logic-less templates.
 
 **Streaming**: chunked Transfer-Encoding via subclass of
 `Tep::Streamer`, dispatched as `stream MyStreamer.new`.
 
 **Composition**: `Sinatra::Base` modular apps (the translator
-unwraps them; routes from multiple classes coexist). `before` /
-`after` filters, custom `not_found`, static-file serving via
-`set :public_dir, '...'`, `set :views, '...'`. `on_start do`.
+unwraps them; routes from multiple classes coexist). Multiple
+chained `before` / `after` filters. Custom `not_found`. Static-file
+serving via `set :public_dir, '...'`, `set :views, '...'`,
+`set :workers, N`. `on_start do`. `configure { ... }` /
+`configure :env { ... }`. Compile-time asset bundling: anything
+under `<app>/assets/` is baked into the binary at build time and
+served straight from memory.
 
 **Request inside handlers**: `request.params`, `request.headers`,
 `request.path`, `request.verb`, `request.body`, `request.cookies`,
-`session`, plus the `params` / `cookies` / `session` shorthands.
+`request.host`, `request.user_agent`, `request.referer`,
+`request.accept`, `request.content_type`, `request.scheme` /
+`.ssl?` (via `X-Forwarded-Proto`). Plus the `params` / `cookies` /
+`session` shorthands.
 
-68 documented Sinatra behaviours pass `make test` (9 still skip).
-5 of 8 small real-world Sinatra apps (Sinatra's own `examples/`
-plus a few fetched-from-GitHub) build and serve correctly through
-`tep build`. Full breakdown in [SINATRA_COMPAT.md](SINATRA_COMPAT.md).
+**Batteries** (under `Tep::*`):
+
+| Module           | What it covers |
+|------------------|---|
+| `Tep::SQLite`    | libsqlite3 wrapper via a small C shim — exec / prepare / bind / step / col / first_str / first_int. |
+| `Tep::Json`      | encode primitives + flat-key decoder for JSON-over-HTTP. |
+| `Tep::Logger`    | levelled logger (debug/info/warn/error), stderr by default, `to_file(path)` for append. |
+| `Tep::Jwt`       | HS256 JWT encode / verify / decode; interop-tested against the canonical `jwt` gem. |
+| `Tep::Password`  | PBKDF2-SHA256 password hashing, 200k iters, self-describing storage format. |
+| `Tep::Security`  | `Cors` (before-filter) + `Headers` (after-filter; HSTS, nosniff, frame-options, ...). |
+| `Tep::Assets`    | compile-time bundling for `<app>/assets/*` (CSS, SVG, JS, ...). |
+| `Tep::Scheduler` | cooperative fiber scheduler — spawn / tick / run_until_empty / sleep. Time-driven; I/O-readiness peers planned. |
+
+~160 tests across the test suite pass `make test`. 4 documented
+skips. 6 real-world examples build and serve end-to-end (smoke-
+tested through `Net::HTTP`). Full breakdown in
+[SINATRA_COMPAT.md](SINATRA_COMPAT.md); ecosystem survey in
+[GEM_SURVEY.md](GEM_SURVEY.md).
 
 ## What doesn't (yet)
 
 `helpers do ... end` (closures aren't first-class in Spinel).
-`send_file 'path'` from inside a handler. Optional path segments
-(`get '/say(/:greeting)'` — Mustermann syntax). Multiple chained
-`before` / `after` filters. `pass`. Full `Rack::Request` methods
-(`.ip`, `.scheme`, `.ssl?`). `configure { ... }`. Sinatra's
-bare-`@ivar` ERB locals (use `locals: {...}` instead).
-`__END__` inline templates. Haml / Slim / etc. ORM gems.
+`request.ip` / `request.remote_ip` (needs an `sphttp_accept`
+variant that returns the peer address). Haml / Slim and other
+metaprogramming-heavy templating gems.
 
 Each gap that bites a real-world app gets logged as a backlog
 entry and either fixed in tep or, where the underlying constraint
@@ -139,9 +165,16 @@ cd tep && make             # builds the C helper + the demo binaries
 ./examples/hello -p 4567   # try it
 ```
 
-The translator (`bin/tep`) is plain CRuby (Ruby >= 3.4 — Prism
-ships with it). The compiled binaries themselves have no Ruby
-dependency; `tep build` is the only step that needs CRuby.
+The translator (`bin/tep`) is plain CRuby and needs Ruby >= 3.4
+(Prism ships with the standard library from 3.4 onward; on older
+rubies install it explicitly: `gem install prism` — but you'll need
+`ruby-dev` / `libruby-dev` for the C extension to build).
+Compiled binaries themselves have no Ruby dependency; `tep build`
+is the only step that needs CRuby.
+
+Linux build deps: `build-essential` (or just `gcc` + `make`),
+`libsqlite3-dev` (for the SQLite-backed examples). macOS:
+Xcode command-line tools cover both.
 
 ## Two flavours of source
 

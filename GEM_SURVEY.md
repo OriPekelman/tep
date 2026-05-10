@@ -136,7 +136,7 @@ of bang-for-buck:
    `verify_and_decode`. Interop-tested against the canonical
    `jwt` Ruby gem.
    ~~**`Tep::Auth::BCrypt`**~~ -- ✅ Shipped as
-   `Tep::Password.create / verify` (lib/tep/password.rb), backed
+   `Tep::Password.hash / verify` (lib/tep/password.rb), backed
    by PBKDF2-SHA256 instead of bcrypt -- avoids the libxcrypt
    portability dance (macOS doesn't ship $2b$, Linux needs
    libxcrypt). Self-describing storage format
@@ -149,7 +149,18 @@ of bang-for-buck:
    (lib/tep/security.rb). CORS preflight short-circuits with 204;
    default-secure header bundle (nosniff, SAMEORIGIN, Referrer-
    Policy, X-XSS-Protection, optional HSTS).
+6. ~~**`Tep::Scheduler`**~~ -- ✅ Shipped (lib/tep/scheduler.rb).
+   Cooperative fiber scheduler riding on spinel's native Fiber
+   (ucontext-based, GC-aware). Time-driven only at this rev:
+   `spawn_fiber`, `tick`, `run_until_empty`, `run_for(seconds)`,
+   cooperative `sleep(seconds)`. I/O-readiness peers
+   (`io_wait(fd)` etc.) need non-blocking sphttp primitives and
+   are queued.
+7. ~~**`Tep::Assets`**~~ -- ✅ Shipped (lib/tep/assets.rb). Compile-
+   time bundler that walks `<app>/assets/` and emits `_add` calls
+   so static files ride in the binary. Served before route
+   dispatch with `Cache-Control: public, max-age=3600`.
 
-The `Tep::Http` outbound HTTP client is the last "essentials"
-gap. After that the framework sits comfortably in "production
-API" shape.
+The `Tep::Http` outbound HTTP client is the last open "essentials"
+gap. After that the framework sits comfortably in "production API"
+shape.

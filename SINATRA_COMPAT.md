@@ -3,12 +3,17 @@
 Generated from the curated checklist suite under `test/` plus
 real-world apps under `test/real_world/`. Run `make test` to refresh.
 
-**Headline**: 71 checklist tests pass + 5 of 8 real-world apps
-build and serve correctly. 9 skips remain. v0.2 added cookies,
-sessions, streaming, regex routes, modular `Sinatra::Base`, ERB.
-Three more landed since: `send_file 'path'` from inside a handler,
-`configure { ... }` (and `configure :env { ... }`), and Sinatra's
-`__END__` inline templates.
+**Headline**: ~160 checklist tests pass + 6 real-world apps build
+and serve correctly (smoke-tested through `Net::HTTP`).
+4 documented skips remain. v0.2 brought cookies, sessions,
+streaming, regex routes, modular `Sinatra::Base`, ERB. v0.3 added
+`send_file 'path'`, `configure { ... }` (incl. `:env`), `__END__`
+inline templates, `pass`, multiple chained `before`/`after`,
+optional path segments, full Rack::Request method surface, ERB
+ivar locals, a Mustache subset, Tep::SQLite, Tep::Json,
+Tep::Logger, Tep::Jwt, Tep::Password, Tep::Security
+(CORS + secure headers), Tep::Assets (compile-time asset
+bundling), and Tep::Scheduler (cooperative fiber scheduler).
 
 ## Phase A — Curated checklist
 
@@ -53,8 +58,10 @@ Three more landed since: `send_file 'path'` from inside a handler,
 | **JSON (subset)**                    | ✅ 13   | Pure-Ruby `Tep::Json`: encode primitives + flat-key decoder. See "JSON subset" below. |
 | **Logger**                           | ✅ 3    | `Tep::Logger` with debug/info/warn/error levels. stderr by default; `to_file(path)` appends. Format: `[<unix_seconds>] [<level>] <msg>`. |
 | **JWT (HS256)**                      | ✅ 10   | `Tep::Jwt` -- encode/verify/decode. HS256 only (asymmetric algs would need OpenSSL); `none` deliberately not supported (RFC 8725 §3.1). Tokens verify cleanly against the canonical `jwt` Ruby gem (interop test included). New base64url helpers (`sphttp_b64url_encode/decode`, `sphttp_hmac_sha256_b64url`) ride on top of the existing HMAC-SHA256 used by the session store. |
-| **Password hashing (PBKDF2)**        | ✅ 9    | `Tep::Password.create` / `verify`. PBKDF2-SHA256, 200k iters by default, 16-byte CSPRNG salt. Self-describing storage format (`pbkdf2-sha256$<iters>$<salt>$<derived>`) so iter rotation can land later without breaking old hashes. New `sphttp_pbkdf2_sha256_b64url` + `sphttp_random_b64url` C helpers. (Named `create` not `hash` because `Object#hash` is the Ruby hash-code method and spinel's per-method type unification would widen the return to int.) |
+| **Password hashing (PBKDF2)**        | ✅ 9    | `Tep::Password.hash` / `verify`. PBKDF2-SHA256, 200k iters by default, 16-byte CSPRNG salt. Self-describing storage format (`pbkdf2-sha256$<iters>$<salt>$<derived>`) so iter rotation can land later without breaking old hashes. New `sphttp_pbkdf2_sha256_b64url` + `sphttp_random_b64url` C helpers. (`Klass.hash(plain)` factory shape resolved via spinel #407.) |
 | **CORS + secure headers**            | ✅ 4    | `Tep::Security::Cors` (before-filter; configurable origin / verbs / headers / max-age; OPTIONS preflight short-circuits with 204) and `Tep::Security::Headers` (after-filter; `nosniff`, `SAMEORIGIN`, `Referrer-Policy: strict-origin-when-cross-origin`, `X-XSS-Protection: 0`, optional HSTS via `set_hsts(seconds)`). |
+| **Cooperative scheduler**            | ✅ 2    | `Tep::Scheduler` -- spawn fibers, drain via tick / `run_until_empty` / `run_for(seconds)`, cooperative `sleep(seconds)` that yields back to the scheduler root. Time-driven only at this rev; I/O-readiness peers planned. Spinel ships Fiber natively (ucontext-based, GC-aware); the scheduler is the layer above. |
+| **Compile-time asset bundling**      | ✅ 1    | `<app>/assets/**` auto-discovered by `bin/tep`, emitted as `Tep::Assets._add` registrations. Body bytes ride in the binary as Ruby string literals. `Tep::Assets.serve(path, res)` runs in `App#dispatch` before route matching; `Cache-Control: public, max-age=3600` on every response. |
 | **send_file `'path'`**               | ✅ 1    | Reuses Tep::Response#send_file streaming path |
 | **configure { ... }** / **:env**     | ✅ 1    | Body runs at module load; env-keyed form gates on `ENV["TEP_ENV"]` (default "development") |
 | **`__END__` inline templates**       | ✅ 1    | `@@ name` blocks compile through the same ERB pipeline as files; file-based views still win when both exist |
@@ -123,19 +130,17 @@ directly from memory.
 
 By default the JS client polls `GET /chat/recent?since=N` once
 per second. The Server-Sent Events transport (the
-`ChatStreamer` + `GET /chat/stream`) is also wired and ready to
-go on Linux -- flip `window.USE_SSE = true` in the page to
-switch. We default to polling because **macOS's SO_REUSEPORT
-doesn't load-balance new connections** across prefork workers,
-so one stuck SSE connection blocks every other request on the
-same listener until the stream self-closes (`STREAM_MAX`, 30 s).
-Linux 3.9+ behaves correctly; production deployment there can
-flip to SSE for sub-second latency.
+`ChatStreamer` + `GET /chat/stream`) is also wired -- flip
+`window.USE_SSE = true` in the page to switch. SSE works fine on
+Linux (prefork distributes accepts across workers); on macOS dev
+machines `SO_REUSEPORT` doesn't load-balance the same way, so a
+held SSE connection on the only-accepting worker blocks every
+other request on the same listener until the stream self-closes
+(`STREAM_MAX`, 30 s). Polling-by-default keeps the dev experience
+identical across the two.
 
 `set :workers, 4` is wired in the app source so prefork is the
-default. On macOS this still helps for short requests (load
-distributes across workers per the bench), it just doesn't
-unblock during a held SSE.
+default.
 
   bin/tep build examples/chat/app.rb -o /tmp/chat
   /tmp/chat -p 4567
@@ -320,13 +325,15 @@ Tep::Json.from_int_array([1, 2, 3])        # [1,2,3]
 ```
 
 There's intentionally **no** `from_str_hash(h)` / `from_int_hash(h)`
-"give me a hash" convenience: a method that `each`-iterates a Hash
-parameter currently widens the param's inferred type to poly under
-conditions tep doesn't fully understand (the same shape on
-`set_cookie(opts)` in tep itself stays correctly typed). The
-fixed-arity `encode_pair_*` building blocks side-step the widening
-and keep the call shape type-clean. If a future spinel update
-fixes the inference, the convenience can land then.
+"give me a hash" convenience right now. Spinel #408 (commit
+9ca01d7) fixed the body-walker harvest for the top-level shape, so
+a method that `each`-iterates a Hash and concatenates `k`/`v` into
+the output works fine. But once the body calls a sibling cmeth
+inside the loop (`Json.escape(k)`), the narrowed `k:str` doesn't
+propagate into `escape`'s param-type inference -- it widens to int
+and the C compile fails. Filed as a #408 follow-up. Until that
+lands, the fixed-arity `encode_pair_*` building blocks side-step
+the issue and keep the call shape type-clean.
 
 ### Decode (flat-key, top-level only)
 

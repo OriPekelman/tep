@@ -28,7 +28,7 @@
 # Usage
 # -----
 #
-#   stored = Tep::Password.create("user-input")
+#   stored = Tep::Password.hash("user-input")
 #   # store `stored` in the DB
 #
 #   # On login:
@@ -44,12 +44,12 @@ module Tep
     # fresh CSPRNG salt and runs PBKDF2-SHA256 at the default
     # iter count. Returns the self-describing storage string.
     #
-    # Named `create` (and not `hash`) because `Object#hash` is the
-    # Ruby hash-code method returning Integer. Spinel's per-method
-    # type inference unifies same-named methods, so a `Password.hash`
-    # signature would widen to `int`-returning everywhere via the
-    # cross-class `.hash` dispatch.
-    def self.create(plain)
+    # Named `hash` to match the bcrypt-gem-style factory shape.
+    # Spinel #407 (commit c780616) added receiver-aware skip of the
+    # name-based `hash -> int` hardcode for class-method dispatch on
+    # user classes, so `Tep::Password.hash(plain)` resolves to this
+    # String-returning definition rather than Object#hash.
+    def self.hash(plain)
       salt = Sock.sphttp_random_b64url(SALT_BYTES)
       derived = Sock.sphttp_pbkdf2_sha256_b64url(plain, salt, DEFAULT_ITERS)
       "pbkdf2-sha256$" + DEFAULT_ITERS.to_s + "$" + salt + "$" + derived
