@@ -38,7 +38,7 @@ LIB_DIR = File.expand_path("../lib", __dir__)
 def self.locate_spinel
   e = ENV["SPINEL"]
   return e if e && !e.empty? && e != "spinel"
-  sibling = File.expand_path("../../../spinel/spinel", __dir__)
+  sibling = File.expand_path("../../spinel/spinel", __dir__)
   return sibling if File.executable?(sibling)
   "spinel"
 end
