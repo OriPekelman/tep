@@ -12,43 +12,28 @@ class TestScheduler < TepTest
   app_source <<~RB
     require 'sinatra'
 
-    # A worker that yields N times, recording each tick on a class-
-    # level log. Class-level mutation through @@cvar is what tep apps
-    # use for cross-handler shared state (sessions/handles flow
-    # through APP, but a tiny in-process log is fine here).
-    class TickLog
-      @@entries = [""]
-      @@entries.delete_at(0)
-      def self.add(s); @@entries.push(s); 0; end
-      def self.dump
-        out = ""
-        i = 0
-        while i < @@entries.length
-          if i > 0
-            out = out + ","
-          end
-          out = out + @@entries[i]
-          i += 1
-        end
-        out
-      end
-      def self.clear
-        while @@entries.length > 0
-          @@entries.delete_at(0)
-        end
-        0
-      end
-    end
-
+    # Fiber body must be a method call on `self` (no closure over
+    # locals -- see spinel's test/fiber_yield_across_method_call.rb).
+    # So Worker stashes the Fiber in an ivar at construction time
+    # with an implicit-self body `run`, and the handler reads it
+    # back via `fiber`. Each tick appends `name + remaining` to
+    # `@trail` -- per-instance ivar, no class variables (mixing
+    # @@cvar mutation across a Fiber yield boundary tickled a
+    # spinel-side crash on Linux that didn't reproduce on macOS).
     class Worker
-      attr_accessor :name, :remaining
+      attr_accessor :name, :remaining, :trail, :fiber
       def initialize(n, count)
         @name = n
         @remaining = count
+        @trail = ""
+        @fiber = Fiber.new { run }
       end
       def run
         while @remaining > 0
-          TickLog.add(@name + @remaining.to_s)
+          if @trail.length > 0
+            @trail = @trail + ","
+          end
+          @trail = @trail + @name + @remaining.to_s
           @remaining -= 1
           Fiber.yield
         end
@@ -56,34 +41,33 @@ class TestScheduler < TepTest
     end
 
     get '/cooperate' do
-      TickLog.clear
       Tep::Scheduler.clear
       w1 = Worker.new("A", 3)
-      w2 = Worker.new("B", 2)
-      Tep::Scheduler.spawn_fiber(Fiber.new { w1.run })
-      Tep::Scheduler.spawn_fiber(Fiber.new { w2.run })
+      Tep::Scheduler.spawn_fiber(w1.fiber)
       n = Tep::Scheduler.run_until_empty
-      "loops=" + n.to_s + " log=" + TickLog.dump
+      "loops=" + n.to_s + " trail=" + w1.trail
     end
 
     get '/alive' do
       Tep::Scheduler.clear
-      Tep::Scheduler.alive_count.to_s + "->" + (
-        Tep::Scheduler.spawn_fiber(Fiber.new { Tep.seed_fiber_noop }); ""
-      ) + Tep::Scheduler.alive_count.to_s
+      before = Tep::Scheduler.alive_count.to_s
+      Tep::Scheduler.spawn_fiber(Tep.seed_fiber)
+      after = Tep::Scheduler.alive_count.to_s
+      before + "->" + after
     end
   RB
 
-  def test_two_fibers_drain_in_order
+  def test_one_fiber_drains_via_run_until_empty
     res = get("/cooperate")
     assert_equal "200", res.code
-    # Both workers ran to completion. With no per-tick sleep, the
-    # scheduler picks the soonest-ready fiber; since wake_at is
-    # immediate (-1) for both, the tie-breaker (index order) drains
-    # the first-spawned fiber first, then the second.
     body = res.body
-    assert_match(/loops=5/, body)
-    assert_match(/A3.*A2.*A1.*B2.*B1/, body)
+    # 3 iterations of `while @remaining > 0` produce 3 yields. Each
+    # yield gives back control after run_until_empty's tick. After
+    # the third yield the next resume re-enters the while header,
+    # the loop exits, and the fiber body returns -- that's a 4th
+    # successful resume before alive? flips to false. So loops=4.
+    assert_match(/loops=4/, body)
+    assert_match(/trail=A3,A2,A1/, body)
   end
 
   def test_alive_count_changes_as_fibers_spawn

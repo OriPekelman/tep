@@ -85,7 +85,11 @@ module Tep
         end
         blob = Sock.sphttp_request_buf
         req = Parser.parse(blob)
-        if req == nil
+        # `if !req` rather than `req == nil` -- spinel #423 lowers
+        # `==/!= nil` on user-class-or-nil values to a constant,
+        # so the equality body runs unconditionally. Truthy form
+        # works.
+        if !req
           send_simple(client, 400, "bad request")
           break
         end

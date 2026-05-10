@@ -1,13 +1,24 @@
 FROM ruby:3.4-slim
 
+# Build deps:
+#   build-essential / make -- spinel emits C, the C compile runs here
+#   libsqlite3-dev          -- Tep::SQLite links against it via the
+#                              tep_sqlite.o helper (and the tests
+#                              + blog showcase exercise it)
+#   sqlite3                 -- handy CLI for poking test DBs
+#   git / curl / wrk        -- git for any in-container clones,
+#                              curl for ad-hoc HTTP probing,
+#                              wrk for the bench harness
+# tep's test harness uses minitest + Net::HTTP (stdlib). The
+# translator needs prism, which is bundled with Ruby >= 3.3.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     make \
+    libsqlite3-dev \
+    sqlite3 \
     git \
     curl \
     wrk \
     && rm -rf /var/lib/apt/lists/*
 
-# tep's test harness uses minitest + Net::HTTP (stdlib). The translator
-# needs prism, which is now bundled with Ruby 3.4.
 WORKDIR /workspace

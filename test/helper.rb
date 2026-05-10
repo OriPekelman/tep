@@ -53,9 +53,10 @@ module TepHarness
       raise "unknown mode: #{mode}"
     end
     port = next_port
-    pid  = Process.spawn(bin, "-p", port.to_s, out: "/dev/null", err: "/dev/null")
-    wait_for_port(port)
-    @running << { pid: pid, tmp: tmp }
+    log  = File.join(tmp, "app.log")
+    pid  = Process.spawn(bin, "-p", port.to_s, out: log, err: [:child, :out])
+    wait_for_port(port, tmp: tmp, pid: pid)
+    @running << { pid: pid, tmp: tmp, log: log }
     port
   end
 
@@ -74,7 +75,7 @@ module TepHarness
     @running.clear
   end
 
-  def self.wait_for_port(port, timeout: 5.0)
+  def self.wait_for_port(port, timeout: 5.0, tmp: nil, pid: nil)
     deadline = Time.now + timeout
     loop do
       begin
@@ -82,7 +83,18 @@ module TepHarness
         return
       rescue Errno::ECONNREFUSED
         sleep 0.05
-        raise "tep server failed to bind :#{port}" if Time.now > deadline
+        if Time.now > deadline
+          msg = "tep server failed to bind :#{port}"
+          if tmp
+            log = File.join(tmp, "app.log")
+            if File.exist?(log)
+              msg += "\n--- app log (#{log}) ---\n" + File.read(log)
+            end
+          end
+          alive = pid && (Process.kill(0, pid) rescue false)
+          msg += "\n--- pid #{pid} alive=#{!!alive}" if pid
+          raise msg
+        end
       end
     end
   end

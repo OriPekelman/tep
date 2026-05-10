@@ -82,7 +82,11 @@ module Tep
         # setting req.passed. Iterate until a handler doesn't pass,
         # or we run out of matching routes.
         served = false
-        while route != nil && !served
+        # `while route && !served` rather than `route != nil` --
+        # spinel #423 lowers `x != nil` on user-class-or-nil values
+        # to unconditional-true, dropping the nil check and entering
+        # the body with `route = NULL`. The truthy form works.
+        while route && !served
           route.fold_captures(req)
           req.passed = false
           out = route.handler.handle(req, res)

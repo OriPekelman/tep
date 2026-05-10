@@ -18,6 +18,7 @@
 #include <netinet/tcp.h>
 #include <arpa/inet.h>
 #include <signal.h>
+#include <time.h>
 
 #define SPHTTP_BUFSIZE   65536
 #define SPHTTP_RESP_MAX  (4 * 1024 * 1024)

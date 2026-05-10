@@ -20,3 +20,10 @@ services:
       - ../spinel:/spinel
     environment:
       SPINEL: /spinel/spinel
+      # Spinel itself is owned by the host -- the container reads the
+      # binary through the bind mount but does not pull / rebuild
+      # spinel master. Skip the auto-fresh step so `make test`
+      # doesn't try to invoke git from inside the container.
+      TEP_SKIP_SPINEL_FRESH: "1"
+      # Quieter shell output when iterating.
+      RUBYOPT: "-W:no-deprecated"
