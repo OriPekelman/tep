@@ -215,6 +215,16 @@ get '/healthz' do
   "{\"ok\":1}"
 end
 
+# Synchronous LLM commentary endpoint. The dashboard page fetches this
+# after first paint so a multi-second inference doesn't block initial
+# render. Behind the login filter (set above) so unauthenticated users
+# can't run inference on our behalf.
+get '/commentary' do
+  res.headers["Content-Type"] = "text/plain; charset=utf-8"
+  res.headers["Cache-Control"] = "no-store"
+  gen_commentary
+end
+
 # -------------------------------------------------------------------
 # Probes -- each returns a small struct of qualitative facts. Heavy
 # users (the dashboard render, SSE pump, /api/status) call them all;
@@ -317,6 +327,68 @@ def probe_ollama_http
     return "ollama HTTP: unreachable (" + OLLAMA_URL + ")"
   end
   "ollama HTTP " + r.status.to_s + " " + r.body.length.to_s + "B from " + OLLAMA_URL
+end
+
+# LLM commentary -- ask a local Ollama-served model to summarise the
+# box's current state. Demonstrates Tep::Http POSTing JSON + reading
+# JSON back. The prompt is built from the same probes the dashboard
+# already runs; the model returns a one-line plain-English summary.
+#
+# Off the hot path: the dashboard's `/` handler doesn't call this --
+# the page fetches `/commentary` after first paint, so a 10s-ish
+# inference doesn't block initial render.
+LLM_MODEL = ENV.fetch("TEP_DASH_LLM_MODEL", "qwen2.5:7b-instruct")
+
+def build_llm_context
+  mem = probe_meminfo
+  # GPU probe is multi-line; take just the first non-empty for prompt
+  # economy.
+  gpu_line = ""
+  probe_gpu.split("\n").each do |ln|
+    if gpu_line.length == 0 && ln.strip.length > 0
+      gpu_line = ln.strip
+    end
+  end
+  "host="     + probe_hostname + "; " +
+  "uptime="   + format_uptime(probe_uptime_seconds) + "; " +
+  "load="     + probe_loadavg + "; " +
+  "mem="      + mem["used_gb"] + " used / " + mem["total_gb"] + " total / " + mem["available_gb"] + " free; " +
+  "gpu="      + gpu_line
+end
+
+def gen_commentary
+  ctx = build_llm_context
+  prompt = "You are the on-call operator for an NVIDIA GB10 dev box. " +
+           "Given this one-line system snapshot, write a single sentence " +
+           "(no more than 25 words) commenting on the box's health -- " +
+           "flag anything that looks off, otherwise say it's fine. " +
+           "Be concise and plain-spoken, no markdown.\n\n" +
+           "Snapshot: " + ctx
+
+  h = Tep.str_hash
+  h["model"]  = LLM_MODEL
+  h["prompt"] = prompt
+  h["stream"] = "false"
+  body = "{" +
+    Tep::Json.encode_pair_str("model",  LLM_MODEL) + "," +
+    Tep::Json.encode_pair_str("prompt", prompt)    + "," +
+    "\"stream\":false" +
+  "}"
+
+  hdr = Tep.str_hash
+  hdr["Content-Type"] = "application/json"
+  r = Tep::Http.send_req("POST", OLLAMA_URL + "api/generate", body, hdr)
+  if r.status == 0
+    return "(ollama unreachable at " + OLLAMA_URL + ")"
+  end
+  if r.status != 200
+    return "(ollama returned HTTP " + r.status.to_s + ")"
+  end
+  text = Tep::Json.get_str(r.body, "response")
+  if text.length == 0
+    return "(ollama returned empty response)"
+  end
+  text.strip
 end
 
 def probe_tmux

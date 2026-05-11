@@ -45,6 +45,13 @@
   </div>
 
   <div class="grid">
+    <article class="card wide" id="commentary-card">
+      <h2>LLM commentary <span class="muted small">(local Ollama)</span></h2>
+      <p id="commentary" class="commentary muted">asking the model…</p>
+    </article>
+  </div>
+
+  <div class="grid">
     <article class="card wide">
       <h2>Running docker</h2>
       <pre><%= @docker %></pre>
@@ -96,5 +103,21 @@
   </p>
 
   <%= @footer %>
+
+  <script>
+    (function () {
+      var el = document.getElementById('commentary');
+      if (!el) return;
+      fetch('/commentary', { credentials: 'same-origin' })
+        .then(function (r) { return r.text(); })
+        .then(function (t) {
+          el.classList.remove('muted');
+          el.textContent = t.trim() || '(no commentary)';
+        })
+        .catch(function (e) {
+          el.textContent = '(commentary unavailable: ' + e + ')';
+        });
+    })();
+  </script>
 </body>
 </html>
