@@ -758,3 +758,45 @@ const char *sphttp_recv_some(int fd, int maxlen) {
     sphttp_recv_buf[n] = '\0';
     return sphttp_recv_buf;
 }
+
+/* popen-based shell-out. Captures stdout (up to SPHTTP_BUFSIZE-1)
+ * into a static buffer and returns it. Stderr is left to the
+ * inherited fd. WARNING: cmd is passed verbatim to /bin/sh -c, so
+ * NEVER interpolate untrusted input.  The Ruby side (Tep::Shell)
+ * enforces this discipline at the API level. */
+static char sphttp_shell_buf[SPHTTP_BUFSIZE];
+const char *sphttp_shell_capture(const char *cmd, int max_bytes) {
+    if (max_bytes <= 0 || max_bytes >= SPHTTP_BUFSIZE) max_bytes = SPHTTP_BUFSIZE - 1;
+    sphttp_shell_buf[0] = '\0';
+    FILE *fp = popen(cmd, "r");
+    if (!fp) return sphttp_shell_buf;
+    size_t total = 0;
+    while (total < (size_t)max_bytes) {
+        size_t n = fread(sphttp_shell_buf + total, 1, (size_t)max_bytes - total, fp);
+        if (n == 0) break;
+        total += n;
+    }
+    sphttp_shell_buf[total] = '\0';
+    pclose(fp);
+    return sphttp_shell_buf;
+}
+
+/* Read up to max_bytes from `path` into a static buffer. Useful for
+ * /proc/* probes from Ruby without each call having to manage a file
+ * handle. Returns "" on open failure. */
+static char sphttp_file_buf[SPHTTP_BUFSIZE];
+const char *sphttp_file_read(const char *path, int max_bytes) {
+    if (max_bytes <= 0 || max_bytes >= SPHTTP_BUFSIZE) max_bytes = SPHTTP_BUFSIZE - 1;
+    sphttp_file_buf[0] = '\0';
+    FILE *fp = fopen(path, "r");
+    if (!fp) return sphttp_file_buf;
+    size_t total = 0;
+    while (total < (size_t)max_bytes) {
+        size_t n = fread(sphttp_file_buf + total, 1, (size_t)max_bytes - total, fp);
+        if (n == 0) break;
+        total += n;
+    }
+    sphttp_file_buf[total] = '\0';
+    fclose(fp);
+    return sphttp_file_buf;
+}

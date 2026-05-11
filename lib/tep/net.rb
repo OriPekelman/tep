@@ -42,4 +42,8 @@ module Sock
   # Outbound TCP for clients (Tep::Http, etc.).
   ffi_func :sphttp_connect,       [:str, :int],     :int
   ffi_func :sphttp_recv_some,     [:int, :int],     :str
+
+  # Process + file helpers used by Tep::Shell.
+  ffi_func :sphttp_shell_capture, [:str, :int],     :str
+  ffi_func :sphttp_file_read,     [:str, :int],     :str
 end

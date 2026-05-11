@@ -37,6 +37,7 @@ require_relative "tep/password"
 require_relative "tep/security"
 require_relative "tep/assets"
 require_relative "tep/scheduler"
+require_relative "tep/shell"
 
 module Tep
   # Helper: spinel won't infer types on an empty `{}`, so we seed
@@ -252,6 +253,12 @@ module Tep
   Tep::Scheduler.sleep(0)
   Tep::Scheduler.io_wait(-1, Tep::Scheduler::READ, 0)
   Tep::Scheduler.clear
+
+  # Tep::Shell seed -- pin :str args at the FFI boundary.
+  Tep::Shell.run(":")
+  Tep::Shell.run_limited(":", 1)
+  Tep::Shell.read("/etc/hostname")
+  Tep::Shell.read_limited("/etc/hostname", 64)
   _tep_seed_str_arr = [""]
   _tep_seed_str_arr.delete_at(0)
   Tep::Json.from_str_array(_tep_seed_str_arr)
