@@ -64,20 +64,25 @@ wiki page.
 
 ## Is it fast?
 
-Yes. 200k+ req/s on a small Linux server, ~20 µs median latency.
-The hot path is C from end to end (epoll, request parsing, dispatch,
+Yes. ~150k req/s on a small Linux server with the request path doing
+actual work (SQLite SELECT + JSON), microsecond median latency. The
+hot path is C from end to end (epoll, request parsing, dispatch,
 response writer); the Ruby you wrote is compiled, not interpreted.
 HTTP/1.1 keep-alive and prefork with `SO_REUSEPORT` are the usual
 wins applied.
 
-| Server                              | Req/sec | p50    | p99    |
-|-------------------------------------|--------:|-------:|-------:|
-| **Tep, 8 workers (Linux/aarch64)**  | 227,186 |  32 µs | 145 µs |
-| **Tep, 1 worker  (Linux/aarch64)**  |  49,037 |  18 µs |  73 µs |
-| Sinatra + Puma + CRuby (8w × 4t)    |  34,108 | 1.2 ms | 152 ms |
+Two scenarios, both `wrk -t8 -c256 -d10s` on Linux 6.x / aarch64,
+8 workers a side (Sinatra: 8 workers × 4 threads):
 
-`wrk -t8 -c256 -d10s` against a hello-world handler on Linux 6.x /
-aarch64.
+| Scenario                | Server         | Req/sec | p50    | p99    |
+|-------------------------|----------------|--------:|-------:|-------:|
+| **hello** (raw plumbing)| Tep            | 167,150 |  40 µs | <1 ms  |
+| hello                   | Sinatra + Puma |  31,184 |  40 ms | 171 ms |
+| **api** (SQLite + JSON) | Tep            | 145,290 |  43 µs | 243 µs |
+| api                     | Sinatra + Puma |  24,926 | 1.8 ms | 171 ms |
+
+Numbers are conservative floors; a clean re-run on a quiet host is
+expected to come in higher. Reproduce with `bench/run_all.sh`.
 
 > **macOS note.** Linux is Tep's primary deployment target. Builds
 > and runs on macOS too, but Darwin's `SO_REUSEPORT` doesn't load-

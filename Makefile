@@ -41,6 +41,7 @@ bench: bench-tep
 
 bench-tep: helper
 	$(TEP) build bench/hello_bench.rb
+	$(TEP) build bench/api_bench.rb
 
 bench-sinatra:
 	cd bench && bundle _2.7.2_ install --quiet
@@ -56,7 +57,7 @@ clean:
 	rm -f $(LIB_DIR)/*.o
 	rm -f examples/hello examples/sinatra_style examples/diag
 	rm -f examples/.*.tep.rb
-	rm -f bench/hello_bench bench/.*.tep.rb
+	rm -f bench/hello_bench bench/api_bench bench/.*.tep.rb
 	rm -f test/real_world/.*.tep.rb
 	# Compiled binaries in test/real_world/ have no extension; sources
 	# are .rb. Find executables and remove only those.
