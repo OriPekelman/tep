@@ -177,6 +177,13 @@ module Tep
   Tep::Json.quote("")
   Tep::Json.encode_pair_str("", "")
   Tep::Json.encode_pair_int("", 0)
+  _tep_seed_str_h = Tep.str_hash
+  _tep_seed_str_h["k"] = "v"
+  Tep::Json.from_str_hash(_tep_seed_str_h)
+  _tep_seed_int_h = {"" => 0}
+  _tep_seed_int_h.delete("")
+  _tep_seed_int_h["k"] = 1
+  Tep::Json.from_int_hash(_tep_seed_int_h)
 
   # Tep::Logger seed -- pin parameter types for every method even
   # when an app uses one but not another. The level-name string

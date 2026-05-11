@@ -100,22 +100,14 @@ module Tep
     end
 
     # Encode a single key/value pair as `"k":"v"` (escaped both
-    # sides). The building block for JSON objects -- users compose
-    # full objects by concatenation:
+    # sides). Building block for ad-hoc object literals where the
+    # caller wants control over key ordering or layout:
     #
     #   "{" + Tep::Json.encode_pair_str("name", name) + "," +
-    #         Tep::Json.encode_pair_str("city", "NYC") + "}"
+    #         Tep::Json.encode_pair_int("age", age) + "}"
     #
-    # Why not a `from_str_hash(h)` convenience that takes the full
-    # Hash? spinel #408 (commit 9ca01d7) fixed the body-driven
-    # narrowing for hashes iterated via `each |k, v|`, so the
-    # top-level shape works -- but a body that calls a sibling cmeth
-    # like `Json.escape(k)` from inside the each block doesn't
-    # propagate the narrowed `k:str` signal into `escape`'s param-
-    # type inference, and `escape` widens to int (tracked upstream
-    # as spinel #424). Inlining the escape body into `from_str_hash`
-    # works, but duplicates ~30 lines of escape logic. Simpler:
-    # keep the building block fixed-arity.
+    # When you have a real Hash, prefer `from_str_hash` /
+    # `from_int_hash` -- those iterate via `each |k, v|` directly.
     def self.encode_pair_str(k, v)
       Json.quote(k) + ":" + Json.quote(v)
     end
@@ -124,6 +116,37 @@ module Tep
     # so JSON-numeric output without quoting.
     def self.encode_pair_int(k, v)
       Json.quote(k) + ":" + v.to_s
+    end
+
+    # Encode a Hash<String,String> as a JSON object. Iterates the
+    # hash directly; spinel narrows `k`/`v` as :str inside the
+    # block, and the nested `Json.escape(k)` cmeth picks up the
+    # narrowed signal too (spinel #424, commit 20d62dc).
+    def self.from_str_hash(h)
+      out = "{"
+      first = true
+      h.each do |k, v|
+        if !first
+          out = out + ","
+        end
+        first = false
+        out = out + Json.quote(k) + ":" + Json.quote(v)
+      end
+      out + "}"
+    end
+
+    # Same shape with integer values. JSON-numeric, no quoting.
+    def self.from_int_hash(h)
+      out = "{"
+      first = true
+      h.each do |k, v|
+        if !first
+          out = out + ","
+        end
+        first = false
+        out = out + Json.quote(k) + ":" + v.to_s
+      end
+      out + "}"
     end
 
     # Encode a string array as a JSON array of quoted strings.
