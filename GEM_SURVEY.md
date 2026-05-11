@@ -45,8 +45,8 @@ find concrete user demand.
 
 | Gem            | Verdict | Notes |
 |----------------|---------|---|
-| `net/http`     | C-shim  | Pure Ruby but uses TCP sockets, SSL via OpenSSL, `Thread`, and a deep class hierarchy with metaprogrammed accessors. Reimpl is much more work than a thin libcurl wrapper. **Recommended target if tep apps need outbound HTTP.** |
-| `faraday`      | no      | Middleware stack with runtime adapter registration. |
+| `net/http`     | done (HTTP only) | `Tep::Http` ships an HTTP/1.0 + Connection: close client over the existing `sphttp_connect` / `sphttp_recv_*` plumbing. HTTPS still pending (needs OpenSSL linkage). |
+| `faraday`      | reimpl  | `Tep::Http` matches Faraday's class-shortcut surface (`Tep::Http.get / .post / ...`) and instance-builder form (`Tep::Http.new(base).do_get(path)`). The middleware DSL doesn't lower; users wrap by hand. |
 | `httparty`     | no      | `define_method` heavy. |
 | `typhoeus`     | C-shim  | libcurl-based; if we already have the libcurl shim from net/http, this gem's surface is sugar. |
 | `excon`        | no      | Pure Ruby + many backends. |
@@ -142,8 +142,12 @@ of bang-for-buck:
    libxcrypt). Self-describing storage format
    (`pbkdf2-sha256$<iters>$<salt>$<derived>`) so a future scrypt /
    argon2 / actual-bcrypt rotation can land alongside.
-4. **`Tep::Http`** (libcurl C-shim) -- still pending. Outbound
-   HTTP for service-to-service calls.
+4. ~~**`Tep::Http`**~~ -- ✅ Shipped (lib/tep/http.rb). Faraday-
+   shaped outbound HTTP/1.0 client over the existing
+   `sphttp_connect` / `sphttp_recv_all` plumbing. Class shortcuts
+   (`Tep::Http.get(url)`) plus a reusable instance form with
+   default headers. HTTP-only at this rev -- HTTPS would need
+   OpenSSL linkage and is queued.
 5. ~~**`Tep::Cors`** + **`Tep::SecureHeaders`**~~ -- ✅ Shipped
    as `Tep::Security::Cors` + `Tep::Security::Headers`
    (lib/tep/security.rb). CORS preflight short-circuits with 204;
@@ -161,6 +165,7 @@ of bang-for-buck:
    so static files ride in the binary. Served before route
    dispatch with `Cache-Control: public, max-age=3600`.
 
-The `Tep::Http` outbound HTTP client is the last open "essentials"
-gap. After that the framework sits comfortably in "production API"
-shape.
+With `Tep::Http` shipped the "essentials" line is complete. Next
+on the gem-survey radar: `Tep::Parallel` (grosser/parallel-shaped
+fan-out), `Tep::Job` (sidekiq-shaped background workers), and an
+`rv`-driven dep story for tep apps.

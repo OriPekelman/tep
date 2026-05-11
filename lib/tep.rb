@@ -38,6 +38,7 @@ require_relative "tep/security"
 require_relative "tep/assets"
 require_relative "tep/scheduler"
 require_relative "tep/shell"
+require_relative "tep/http"
 
 module Tep
   # Helper: spinel won't infer types on an empty `{}`, so we seed
@@ -259,6 +260,35 @@ module Tep
   Tep::Shell.run_limited(":", 1)
   Tep::Shell.read("/etc/hostname")
   Tep::Shell.read_limited("/etc/hostname", 64)
+
+  # Tep::Url seed -- the new split_url has to land at compile time.
+  Tep::Url.split_url("http://x/")
+
+  # Tep::Http seed -- every public method gets one canonical call so
+  # spinel pins the param types. The URL "http://127.0.0.1:1/" won't
+  # connect; send_req returns the empty Response, which is the
+  # type-pinning behaviour we want without any real I/O.
+  _tep_seed_http_headers = Tep.str_hash
+  _tep_seed_http_headers["k"] = "v"
+  Tep::Http.send_req("GET", "http://127.0.0.1:1/", "", _tep_seed_http_headers)
+  Tep::Http.get("http://127.0.0.1:1/")
+  Tep::Http.post("http://127.0.0.1:1/", "")
+  Tep::Http.put("http://127.0.0.1:1/", "")
+  Tep::Http.patch("http://127.0.0.1:1/", "")
+  Tep::Http.delete("http://127.0.0.1:1/")
+  Tep::Http.head("http://127.0.0.1:1/")
+  Tep::Http.empty_headers
+  _tep_seed_http = Tep::Http.new("http://127.0.0.1:1")
+  _tep_seed_http.set_header("k", "v")
+  _tep_seed_http.do_get("/")
+  _tep_seed_http.do_post("/", "")
+  _tep_seed_http.do_put("/", "")
+  _tep_seed_http.do_patch("/", "")
+  _tep_seed_http.do_delete("/")
+  _tep_seed_http.do_head("/")
+  # parse_response and index_from are internal; let spinel infer
+  # their types from the send_req call site rather than seeding
+  # separately (which widens `out` to poly).
   _tep_seed_str_arr = [""]
   _tep_seed_str_arr.delete_at(0)
   Tep::Json.from_str_array(_tep_seed_str_arr)

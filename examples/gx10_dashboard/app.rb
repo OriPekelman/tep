@@ -29,6 +29,7 @@
 #   Tep::Assets                             (bundled CSS + logo SVG)
 #   Tep::Scheduler                          (SSE pump via cooperative sleep)
 #   Tep::Shell                              (popen + /proc reads, everywhere)
+#   Tep::Http                               (Faraday-shaped GET against local Ollama)
 #
 # Build + run:
 #
@@ -303,6 +304,21 @@ def probe_inference
   Tep::Shell.run("docker ps --filter name=vllm --filter name=ollama --format '{{.Names}}\t{{.Status}}' 2>/dev/null")
 end
 
+# Live HTTP probe of the Ollama API via Tep::Http. Returns the
+# observed status code (200 = up, 0 = unreachable). Demonstrates
+# the outbound client against a real local service. The endpoint
+# is env-overridable; default points at the Tailscale-bound port
+# since the gx10 inference containers don't expose 127.0.0.1.
+OLLAMA_URL = ENV.fetch("TEP_DASH_OLLAMA", "http://100.119.174.123:11434/")
+
+def probe_ollama_http
+  r = Tep::Http.get(OLLAMA_URL)
+  if r.status == 0
+    return "ollama HTTP: unreachable (" + OLLAMA_URL + ")"
+  end
+  "ollama HTTP " + r.status.to_s + " " + r.body.length.to_s + "B from " + OLLAMA_URL
+end
+
 def probe_tmux
   raw = Tep::Shell.run("tmux ls 2>/dev/null")
   if raw.length == 0
@@ -352,7 +368,7 @@ get '/' do
   @mem_tot   = meminfo["total_gb"]
   @mem_avail = meminfo["available_gb"]
   @gpu       = probe_gpu
-  @inference = probe_inference
+  @inference = probe_inference + "\n" + probe_ollama_http
   @tmux      = probe_tmux
   @docker    = probe_docker
   @sites     = probe_sites

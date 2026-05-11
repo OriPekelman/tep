@@ -759,6 +759,25 @@ const char *sphttp_recv_some(int fd, int maxlen) {
     return sphttp_recv_buf;
 }
 
+/* Read from `fd` until EOF (peer close) or `max_bytes`, whichever
+ * comes first. Used by Tep::Http for the HTTP/1.0 + Connection:
+ * close response shape. Returns the bytes in a static buffer
+ * (length encoded as the C strlen, which is fine because HTTP
+ * responses don't carry NUL bytes in their headers/body for the
+ * formats this client targets). */
+static char sphttp_recv_all_buf[SPHTTP_BUFSIZE];
+const char *sphttp_recv_all(int fd, int max_bytes) {
+    if (max_bytes <= 0 || max_bytes >= SPHTTP_BUFSIZE) max_bytes = SPHTTP_BUFSIZE - 1;
+    int total = 0;
+    while (total < max_bytes) {
+        ssize_t n = recv(fd, sphttp_recv_all_buf + total, (size_t)(max_bytes - total), 0);
+        if (n <= 0) break;
+        total += (int)n;
+    }
+    sphttp_recv_all_buf[total] = '\0';
+    return sphttp_recv_all_buf;
+}
+
 /* popen-based shell-out. Captures stdout (up to SPHTTP_BUFSIZE-1)
  * into a static buffer and returns it. Stderr is left to the
  * inherited fd. WARNING: cmd is passed verbatim to /bin/sh -c, so

@@ -72,6 +72,70 @@ module Tep
       -1
     end
 
+    # Split a URL into a Hash with str=>str entries:
+    #   "scheme" "host" "port" "path" "query"
+    #
+    # Recognises `http://host[:port]/path?query` and the same shape
+    # with `https://`. Without a scheme, the input is treated as a
+    # path (host stays empty); useful for routing relative paths
+    # through the same parser. Default ports follow the scheme:
+    # 80 for http, 443 for https. Path defaults to "/". `query` is
+    # the raw substring after `?`, no further decoding.
+    #
+    # Inlined as one method on purpose: spinel's analyzer widens
+    # Hash-typed parameters when a helper mutates them and the
+    # caller then keeps reading; sticking to a single body keeps
+    # `out` narrowed to StrStrHash throughout.
+    def self.split_url(u)
+      out = Tep.str_hash
+      out["scheme"] = ""
+      out["host"]   = ""
+      out["port"]   = ""
+      out["path"]   = "/"
+      out["query"]  = ""
+
+      rest = u
+      if rest.length >= 7 && rest[0, 7] == "http://"
+        out["scheme"] = "http"
+        out["port"]   = "80"
+        rest = rest[7, rest.length - 7]
+      elsif rest.length >= 8 && rest[0, 8] == "https://"
+        out["scheme"] = "https"
+        out["port"]   = "443"
+        rest = rest[8, rest.length - 8]
+      end
+
+      if out["scheme"].length > 0
+        slash = rest.index("/")
+        hostport = rest
+        tail     = "/"
+        if slash >= 0
+          hostport = rest[0, slash]
+          tail     = rest[slash, rest.length - slash]
+        end
+        colon = hostport.index(":")
+        if colon >= 0
+          out["host"] = hostport[0, colon]
+          out["port"] = hostport[colon + 1, hostport.length - colon - 1]
+        else
+          out["host"] = hostport
+        end
+        rest = tail
+      end
+
+      qi = rest.index("?")
+      if qi >= 0
+        out["path"]  = rest[0, qi]
+        out["query"] = rest[qi + 1, rest.length - qi - 1]
+      else
+        out["path"] = rest
+      end
+      if out["path"].length == 0
+        out["path"] = "/"
+      end
+      out
+    end
+
     # "a=1&b=2&c" -> Hash {"a"=>"1","b"=>"2","c"=>""}
     def self.parse_query(s)
       h = Tep.str_hash
