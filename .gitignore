@@ -22,6 +22,9 @@ examples/blog/blog
 examples/chat/.*.tep.rb
 examples/chat/*.db
 examples/chat/chat
+examples/gx10_dashboard/.*.tep.rb
+examples/gx10_dashboard/*.db
+examples/gx10_dashboard/gx10dash
 
 # Stray spinel-built binaries from running `spinel some.tep.rb`
 # directly (the default output strips `.rb`, leaving a `.tep`).

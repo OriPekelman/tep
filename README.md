@@ -135,10 +135,14 @@ served straight from memory.
 | `Tep::Security`  | `Cors` (before-filter) + `Headers` (after-filter; HSTS, nosniff, frame-options, ...). |
 | `Tep::Assets`    | compile-time bundling for `<app>/assets/*` (CSS, SVG, JS, ...). |
 | `Tep::Scheduler` | cooperative fiber scheduler — spawn / tick / run_until_empty / sleep + `io_wait(fd, mode, timeout)` via poll(2) for parking on socket readiness. |
+| `Tep::Shell`     | popen-based shell-out + small-file reader (`/proc`, `/sys`, `/etc`) — the systems-y bits that pure-Ruby would reach for `IO.popen` to do. |
 
-~160 tests across the test suite pass `make test`. 4 documented
-skips. 6 real-world examples build and serve end-to-end (smoke-
-tested through `Net::HTTP`). Full breakdown in
+~165 tests across the test suite pass `make test`. 5 documented
+skips. 7 real-world examples build and serve end-to-end (smoke-
+tested through `Net::HTTP`), including
+[`examples/gx10_dashboard/`](examples/gx10_dashboard/app.rb) — a
+Sinatra-style operator dashboard for an NVIDIA GB10 server that
+exercises every public tep feature in ~450 lines. Full breakdown in
 [SINATRA_COMPAT.md](SINATRA_COMPAT.md); ecosystem survey in
 [GEM_SURVEY.md](GEM_SURVEY.md).
 

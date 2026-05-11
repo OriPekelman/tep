@@ -13,8 +13,9 @@ optional path segments, full Rack::Request method surface, ERB
 ivar locals, a Mustache subset, Tep::SQLite, Tep::Json,
 Tep::Logger, Tep::Jwt, Tep::Password, Tep::Security
 (CORS + secure headers), Tep::Assets (compile-time asset
-bundling), and Tep::Scheduler (cooperative fiber scheduler with
-poll(2)-backed `io_wait`).
+bundling), Tep::Scheduler (cooperative fiber scheduler with
+poll(2)-backed `io_wait`), and Tep::Shell (popen + small-file
+reader).
 
 ## Phase A — Curated checklist
 

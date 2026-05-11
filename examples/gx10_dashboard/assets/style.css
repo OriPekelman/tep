@@ -1,0 +1,184 @@
+:root {
+  --bg:      #0c111a;
+  --card:    #15192a;
+  --border:  #232940;
+  --text:    #c8d1e0;
+  --muted:   #6e7791;
+  --accent:  #6aa9ff;
+  --good:    #6cd07a;
+  --warn:    #e0b35a;
+  --bad:     #ff7a7a;
+  --mono:    ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  padding: 1.5rem clamp(1rem, 3vw, 2rem);
+  font: 14px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  color: var(--text);
+  background: var(--bg);
+  max-width: 1180px;
+  margin: 0 auto;
+}
+
+/* ---- top bar ---- */
+.bar {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 1rem; margin-bottom: 1rem;
+}
+.bar h1 {
+  display: flex; align-items: center; gap: .6rem;
+  font: 600 1.05rem/1 system-ui; margin: 0;
+  letter-spacing: -.01em;
+}
+.logo { width: 1.4em; height: 1.4em; }
+.who {
+  display: flex; align-items: center; gap: .6rem; color: var(--muted);
+}
+.who span { color: var(--text); }
+button {
+  background: transparent; color: var(--text);
+  border: 1px solid var(--border); border-radius: 6px;
+  padding: .35rem .7rem; cursor: pointer; font: inherit;
+  transition: border-color .15s, color .15s;
+}
+button:hover { border-color: var(--accent); color: var(--accent); }
+.inline { display: inline; }
+
+/* ---- status strip ---- */
+.strip {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 1px;
+  background: var(--border);
+  border: 1px solid var(--border); border-radius: 8px;
+  overflow: hidden;
+  margin-bottom: 1.25rem;
+}
+.strip > div {
+  background: var(--card); padding: .9rem 1rem;
+}
+.strip .lbl {
+  color: var(--muted); font-size: 12px; text-transform: uppercase;
+  letter-spacing: .04em; margin-right: .5rem;
+}
+
+/* ---- cards ---- */
+.grid {
+  display: grid; gap: 1rem; margin-bottom: 1rem;
+  grid-template-columns: 1fr;
+}
+.grid.two   { grid-template-columns: repeat(auto-fit, minmax(380px, 1fr)); }
+.grid.three { grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
+
+.card {
+  background: var(--card); border: 1px solid var(--border);
+  border-radius: 8px; padding: 1rem 1.1rem;
+}
+.card h2 {
+  font: 600 .8rem/1 system-ui; text-transform: uppercase;
+  letter-spacing: .08em; color: var(--muted);
+  margin: 0 0 .8rem;
+}
+.card pre {
+  font: 12.5px/1.45 var(--mono); white-space: pre-wrap;
+  margin: 0; color: var(--text);
+  max-height: 320px; overflow: auto;
+}
+.wide { grid-column: 1 / -1; }
+
+/* ---- sites table ---- */
+.rows { width: 100%; border-collapse: collapse; font-size: 13px; }
+.rows th {
+  text-align: left; padding: .35rem .8rem .35rem 0;
+  font: 600 12.5px var(--mono); color: var(--accent);
+  white-space: nowrap; vertical-align: top;
+}
+.rows td {
+  padding: .35rem 0; color: var(--muted);
+  font: 12.5px/1.4 var(--mono);
+}
+
+/* ---- todos ---- */
+.add { display: flex; gap: .5rem; margin-bottom: .8rem; }
+.add input {
+  flex: 1; background: var(--bg); color: var(--text);
+  border: 1px solid var(--border); border-radius: 6px;
+  padding: .45rem .6rem; font: inherit;
+}
+.add input:focus { outline: none; border-color: var(--accent); }
+.todos { list-style: none; padding: 0; margin: 0; }
+.todos li {
+  display: flex; align-items: center; gap: .5rem;
+  padding: .35rem 0; border-top: 1px solid var(--border);
+}
+.todos li:first-child { border-top: 0; }
+.todos li.done .body { color: var(--muted); text-decoration: line-through; }
+.todos .body { flex: 1; }
+.todos .check {
+  width: 1.5rem; height: 1.5rem; padding: 0; line-height: 1;
+  font-family: var(--mono);
+}
+.todos .rm { padding: .1rem .5rem; font-family: var(--mono); }
+.todos .open .check:hover { color: var(--good); border-color: var(--good); }
+.todos .done .check { color: var(--good); border-color: var(--good); }
+.todos .rm:hover  { color: var(--bad); border-color: var(--bad); }
+
+/* ---- footer + api links ---- */
+.apilinks {
+  font: 12.5px var(--mono); color: var(--muted);
+  margin: 1rem 0 .5rem;
+}
+.apilinks code {
+  background: var(--card); padding: 1px 6px; border-radius: 4px;
+  border: 1px solid var(--border); color: var(--text);
+}
+.apilinks a { color: var(--accent); text-decoration: none; }
+.apilinks a:hover { text-decoration: underline; }
+.footer {
+  margin-top: 1.5rem; padding-top: 1rem;
+  border-top: 1px solid var(--border);
+  font: 12px var(--mono); color: var(--muted);
+  text-align: center;
+}
+
+/* ---- login screen ---- */
+.login-body {
+  min-height: 100vh; display: grid; place-items: center;
+  margin: 0; padding: 1rem;
+}
+.login-card {
+  background: var(--card); border: 1px solid var(--border);
+  border-radius: 10px; padding: 2rem; max-width: 360px; width: 100%;
+}
+.login-card h1 {
+  display: flex; align-items: center; gap: .6rem;
+  font: 600 1.2rem/1 system-ui; margin: 0 0 .25rem;
+}
+.login-card .hint { color: var(--muted); margin: 0 0 1rem; font-size: 13px; }
+.login-card .hint.dim { font-size: 11.5px; margin-top: 1rem; opacity: .7; }
+.login-card .flash {
+  color: var(--bad); min-height: 1.2em; font-size: 12.5px;
+  margin: 0 0 1rem;
+}
+.login-card label {
+  display: block; margin-bottom: .8rem;
+  font-size: 12px; color: var(--muted);
+}
+.login-card input {
+  display: block; width: 100%; margin-top: .2rem;
+  background: var(--bg); color: var(--text);
+  border: 1px solid var(--border); border-radius: 6px;
+  padding: .55rem .65rem; font: inherit;
+}
+.login-card input:focus { outline: none; border-color: var(--accent); }
+.login-card button {
+  width: 100%; padding: .55rem; margin-top: .3rem;
+  border-color: var(--accent); color: var(--accent);
+}
+.login-card button:hover { background: rgba(106, 169, 255, .08); }
+.login-card code {
+  font: 12px var(--mono); background: var(--bg);
+  padding: 1px 4px; border-radius: 3px;
+}
