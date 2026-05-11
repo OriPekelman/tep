@@ -39,6 +39,8 @@ require_relative "tep/assets"
 require_relative "tep/scheduler"
 require_relative "tep/shell"
 require_relative "tep/http"
+require_relative "tep/parallel"
+require_relative "tep/job"
 
 module Tep
   # Helper: spinel won't infer types on an empty `{}`, so we seed
@@ -68,6 +70,7 @@ module Tep
   def self.seed_fiber
     Fiber.new { Tep.seed_fiber_noop }
   end
+
 
   def self.str_hash
     h = {"" => ""}
@@ -289,6 +292,31 @@ module Tep
   # parse_response and index_from are internal; let spinel infer
   # their types from the send_req call site rather than seeding
   # separately (which widens `out` to poly).
+
+  # Tep::Shell.write seed.
+  Tep::Shell.write("/dev/null", "")
+
+  # Tep::Parallel seed -- a base-class Parallel instance pins the
+  # `worker` slot type to ParallelWorker; subclass call sites at
+  # user code get auto-cast (same idiom as set_before(Filter.new)).
+  _tep_seed_par = Tep::Parallel.new(Tep::ParallelWorker.new)
+  _tep_seed_par_items = [""]
+  _tep_seed_par_items.delete_at(0)
+  _tep_seed_par.map_processes(_tep_seed_par_items)
+  _tep_seed_par.each_process(_tep_seed_par_items)
+  Tep::Parallel.scratch_dir
+
+  # Tep::Job seed -- pin every public-surface method's parameter
+  # types against an in-memory SQLite so the leak is one malloc'd
+  # handle per process at startup. The base `perform(arg)` is also
+  # pinned to :str so subclass overrides resolve cleanly.
+  Tep::Job.init_schema(":memory:")
+  _tep_seed_job = Tep::Job.new
+  _tep_seed_job.perform("")
+  Tep::Job.enqueue("seed", "", ":memory:")
+  Tep::Job.fetch_next(":memory:")
+  Tep::Job.mark_done(":memory:", 0)
+  Tep::Job.mark_failed(":memory:", 0)
   _tep_seed_str_arr = [""]
   _tep_seed_str_arr.delete_at(0)
   Tep::Json.from_str_array(_tep_seed_str_arr)

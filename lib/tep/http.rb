@@ -70,10 +70,12 @@ module Tep
 
     # Instance verbs. `path` is appended to `base_url` if it starts
     # with "/", or used as-is if it's a full URL. Prefixed with
-    # `do_` because bare `get` collides with `Tep::Session#get` in
-    # the type-inference unifier (spinel #429: same-named imeths
-    # across unrelated classes merge return types). The shape is
-    # the same as Faraday's; spelling differs.
+    # `do_` because bare `get` used to collide with `Tep::Session#get`
+    # in spinel's type-inference unifier (#429); the fix landed
+    # upstream but the verb spelling is preserved here to keep the
+    # tep API stable across spinel versions and to avoid the cmeth /
+    # imeth ambiguity at the call site (`http.get(path)` looks like
+    # a Sinatra route in apps; `http.do_get(path)` does not).
     def do_get(path);         do_req(path, "GET",    ""); end
     def do_head(path);        do_req(path, "HEAD",   ""); end
     def do_delete(path);      do_req(path, "DELETE", ""); end

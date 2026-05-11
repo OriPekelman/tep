@@ -636,6 +636,16 @@ int sphttp_fork(void) {
     return (int)fork();
 }
 
+/* Hard exit -- bypasses spinel's Ruby-level `exit(0)` (which was
+ * observed to not actually terminate child processes in some
+ * codegen shapes). Used by Tep::Parallel children after they've
+ * written their result file. Returns int for FFI symmetry; the
+ * function actually never returns. */
+int sphttp_exit(int status) {
+    _exit(status);
+    return 0;
+}
+
 int sphttp_getpid(void) {
     return (int)getpid();
 }
@@ -798,6 +808,19 @@ const char *sphttp_shell_capture(const char *cmd, int max_bytes) {
     sphttp_shell_buf[total] = '\0';
     pclose(fp);
     return sphttp_shell_buf;
+}
+
+/* Atomically write `data` to `path` (truncate-and-rewrite). Used by
+ * Tep::Parallel for child -> parent result IPC. Returns the number
+ * of bytes written, or -1 on open/write failure. */
+int sphttp_file_write(const char *path, const char *data) {
+    FILE *fp = fopen(path, "w");
+    if (!fp) return -1;
+    size_t len = strlen(data);
+    size_t written = fwrite(data, 1, len, fp);
+    fclose(fp);
+    if (written != len) return -1;
+    return (int)written;
 }
 
 /* Read up to max_bytes from `path` into a static buffer. Useful for

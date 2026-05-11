@@ -20,6 +20,7 @@ module Sock
   ffi_func :sphttp_filesize,      [:str],           :int
   ffi_func :sphttp_close,         [:int],           :int
   ffi_func :sphttp_fork,          [],               :int
+  ffi_func :sphttp_exit,          [:int],           :int
   ffi_func :sphttp_getpid,        [],               :int
   ffi_func :sphttp_wait_any,      [],               :int
   ffi_func :sphttp_hmac_sha256_hex,    [:str, :str], :str
@@ -47,4 +48,5 @@ module Sock
   # Process + file helpers used by Tep::Shell.
   ffi_func :sphttp_shell_capture, [:str, :int],     :str
   ffi_func :sphttp_file_read,     [:str, :int],     :str
+  ffi_func :sphttp_file_write,    [:str, :str],     :int
 end
