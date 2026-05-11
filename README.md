@@ -134,7 +134,7 @@ served straight from memory.
 | `Tep::Password`  | PBKDF2-SHA256 password hashing, 200k iters, self-describing storage format. |
 | `Tep::Security`  | `Cors` (before-filter) + `Headers` (after-filter; HSTS, nosniff, frame-options, ...). |
 | `Tep::Assets`    | compile-time bundling for `<app>/assets/*` (CSS, SVG, JS, ...). |
-| `Tep::Scheduler` | cooperative fiber scheduler — spawn / tick / run_until_empty / sleep + `io_wait(fd, mode, timeout)` via poll(2) for parking on socket readiness. |
+| `Tep::Scheduler` | cooperative fiber scheduler — spawn / tick / run_until_empty / pause + `io_wait(fd, mode, timeout)` via poll(2) for parking on socket readiness. |
 | `Tep::Shell`     | popen-based shell-out + small-file reader (`/proc`, `/sys`, `/etc`) — the systems-y bits that pure-Ruby would reach for `IO.popen` to do. |
 
 ~165 tests across the test suite pass `make test`. 5 documented

@@ -250,7 +250,7 @@ module Tep
   Tep::Scheduler.next_wake
   Tep::Scheduler.run_until_empty
   Tep::Scheduler.run_for(0)
-  Tep::Scheduler.sleep(0)
+  Tep::Scheduler.pause(0)
   Tep::Scheduler.io_wait(-1, Tep::Scheduler::READ, 0)
   Tep::Scheduler.clear
 

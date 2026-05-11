@@ -547,7 +547,7 @@ end
 # -------------------------------------------------------------------
 # SSE live status (anyone with session OR bearer can subscribe). Each
 # tick emits one `data:` event with the current status snapshot.
-# Driven by Tep::Scheduler.sleep so any future fiber needs (parallel
+# Driven by Tep::Scheduler.pause so any future fiber needs (parallel
 # probes, etc.) plug in cleanly.
 # -------------------------------------------------------------------
 
@@ -569,12 +569,12 @@ class StatusStreamer < Tep::Streamer
       facts["ts"]     = Time.now.to_i.to_s
       out.write("data: " + Tep::Json.from_str_hash(facts) + "\n\n")
       out.write(": tick\n\n")  # SSE keepalive comment
-      # Bare sleep -- Tep::Scheduler.sleep emits 0 from a non-fiber
-      # context anyway (warning during build: "cannot resolve call
-      # to 'sleep' on class"), and the streamer's pump runs in the
-      # worker's request handler, not inside a fiber. Same shape as
-      # the chat example.
-      sleep TICK_SECONDS
+      # Tep::Scheduler.pause does the right thing in both contexts:
+      # yields back to the scheduler when called from a fiber,
+      # falls back to plain sleep when called from a normal
+      # handler. The streamer runs in a request handler so we hit
+      # the fallback here.
+      Tep::Scheduler.pause(TICK_SECONDS)
       @ticks += 1
     end
     0

@@ -9,7 +9,7 @@
 # This covers two parking modes:
 #
 #   * **Time**: register a fiber to be resumed at-or-after `wake_at`
-#     via `Tep::Scheduler.sleep(seconds)`.
+#     via `Tep::Scheduler.pause(seconds)`.
 #   * **I/O**: park a fiber on (fd, mode) via `Tep::Scheduler.io_wait`.
 #     tick() runs a poll(2) round, marks ready fibers, and resumes them
 #     (along with any time-ready ones) on the same pass.
@@ -32,7 +32,7 @@
 # **Implicit yield on blocking calls.** Ruby 3.0's
 # `Fiber::SchedulerInterface` makes every blocking I/O auto-yield
 # to a registered scheduler. Spinel doesn't recognise that hook;
-# fibers yield explicitly via `Tep::Scheduler.sleep / io_wait`.
+# fibers yield explicitly via `Tep::Scheduler.pause / io_wait`.
 #
 # **Non-blocking accept on the listening socket.** The Server's
 # worker_loop still does a blocking accept(); fibers cooperate
@@ -205,12 +205,18 @@ module Tep
     end
 
     # Called from within a fiber's body to suspend until at-or-
-    # after `seconds` from now.
-    def self.sleep(seconds)
+    # after `seconds` from now. Named `pause` rather than `sleep`
+    # because the body needs to call bare `sleep(seconds)` for the
+    # outside-fiber fallback -- and `Kernel.sleep(N)` fails to
+    # resolve as a cmeth (spinel #428: `Kernel.<m>` lookups emit 0
+    # from the codegen). Naming our method `sleep` would force the
+    # disambiguation via `Kernel.sleep` and we'd hit #428 every
+    # time.
+    def self.pause(seconds)
       idx = Tep::APP.sched_current
       if idx < 0
         # Called from outside any fiber -- fall back to POSIX sleep.
-        Kernel.sleep(seconds)
+        sleep(seconds)
         return 0
       end
       Tep::APP.sched_wake_at[idx] = Time.now.to_i + seconds
