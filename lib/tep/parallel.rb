@@ -61,10 +61,13 @@
 # Real workers subclass `Tep::ParallelWorker` and override
 # `process(item)`. The method is named `process` rather than
 # `run` because `Tep::Server#run(port, workers, quiet)` already
-# exists in the same binary, and spinel #429 unifies same-named
-# imeth signatures across unrelated classes.
+# exists in the same binary; even with spinel #429 closed
+# (return-type unification across same-name imeths), the
+# unifier still cross-contaminates *param* types when the
+# arities differ (tep app surface; not yet reproducible in
+# isolation -- see commit message for the failing build).
 module Tep
-  # Base class for Tep::Parallel workers. Override `run(item)` in
+  # Base class for Tep::Parallel workers. Override `process(item)` in
   # subclasses; the default emits "" so a base-class instance
   # used for seeding stays type-safe.
   class ParallelWorker

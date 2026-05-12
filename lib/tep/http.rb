@@ -44,11 +44,10 @@
 #   res = c.do_post("/users", body)
 #
 # The instance verbs are `do_get` / `do_post` / `do_put` etc. (not
-# the bare Faraday names) so they don't collide with
-# `Tep::Session#get` in spinel's type-inference unifier -- see
-# spinel #429. The class-level shortcuts (`Tep::Http.get(url)`)
-# keep the Faraday spelling because cmeth names live in a separate
-# namespace.
+# the bare Faraday names) so a call like `http.get(path)` doesn't
+# read as a Sinatra route inside an app. The class-level shortcuts
+# (`Tep::Http.get(url)`) keep the Faraday spelling because cmeth
+# names live in a separate namespace.
 #
 # Request-specific headers pass through the lower-level `send_req`:
 #
@@ -70,12 +69,9 @@ module Tep
 
     # Instance verbs. `path` is appended to `base_url` if it starts
     # with "/", or used as-is if it's a full URL. Prefixed with
-    # `do_` because bare `get` used to collide with `Tep::Session#get`
-    # in spinel's type-inference unifier (#429); the fix landed
-    # upstream but the verb spelling is preserved here to keep the
-    # tep API stable across spinel versions and to avoid the cmeth /
-    # imeth ambiguity at the call site (`http.get(path)` looks like
-    # a Sinatra route in apps; `http.do_get(path)` does not).
+    # `do_` to avoid the cmeth / imeth ambiguity at the call site:
+    # `http.get(path)` reads like a Sinatra route in apps, whereas
+    # `http.do_get(path)` does not.
     def do_get(path);         do_req(path, "GET",    ""); end
     def do_head(path);        do_req(path, "HEAD",   ""); end
     def do_delete(path);      do_req(path, "DELETE", ""); end

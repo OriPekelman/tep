@@ -206,12 +206,10 @@ module Tep
 
     # Called from within a fiber's body to suspend until at-or-
     # after `seconds` from now. Named `pause` rather than `sleep`
-    # because the body needs to call bare `sleep(seconds)` for the
-    # outside-fiber fallback -- and `Kernel.sleep(N)` fails to
-    # resolve as a cmeth (spinel #428: `Kernel.<m>` lookups emit 0
-    # from the codegen). Naming our method `sleep` would force the
-    # disambiguation via `Kernel.sleep` and we'd hit #428 every
-    # time.
+    # to keep the semantics distinct from `Kernel#sleep`: this is
+    # a fiber-aware yield that returns the cooperative scheduler to
+    # the dispatch loop, not an OS-level sleep. Outside a fiber it
+    # falls through to bare `sleep(seconds)`.
     def self.pause(seconds)
       idx = Tep::APP.sched_current
       if idx < 0
