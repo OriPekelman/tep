@@ -116,9 +116,7 @@ through Spinel.
 Per-battery API docs and cookbooks live on the
 [wiki](https://github.com/OriPekelman/tep/wiki). The full
 Sinatra-compatibility matrix is in
-[SINATRA_COMPAT.md](SINATRA_COMPAT.md); the ecosystem survey
-(which gems lower today, which don't) in
-[GEM_SURVEY.md](GEM_SURVEY.md).
+[SINATRA_COMPAT.md](SINATRA_COMPAT.md).
 
 ~180 tests pass `make test`. 9 real-world test apps build and serve
 end-to-end (smoke-tested through `Net::HTTP`), and the bundled
