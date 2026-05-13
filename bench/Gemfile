@@ -1,6 +1,6 @@
 source 'https://rubygems.org'
-gem 'sinatra', path: '../../sinatra'
-gem 'rack-protection', path: '../../sinatra/rack-protection'
+gem 'sinatra', path: '../../sinatra_spinel/sinatra'
+gem 'rack-protection', path: '../../sinatra_spinel/sinatra/rack-protection'
 gem 'puma'
 gem 'rackup'
 gem 'sqlite3'
