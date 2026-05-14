@@ -324,18 +324,17 @@ Tep::Json.encode_pair_int("k", v_int)      # "k":N
 # Arrays.
 Tep::Json.from_str_array(["a", "b"])       # ["a","b"]
 Tep::Json.from_int_array([1, 2, 3])        # [1,2,3]
+
+# Hashes (String=>String, String=>Int).
+Tep::Json.from_str_hash({"name" => "alice"})   # {"name":"alice"}
+Tep::Json.from_int_hash({"age" => 30})         # {"age":30}
 ```
 
-There's intentionally **no** `from_str_hash(h)` / `from_int_hash(h)`
-"give me a hash" convenience right now. Spinel #408 (commit
-9ca01d7) fixed the body-walker harvest for the top-level shape, so
-a method that `each`-iterates a Hash and concatenates `k`/`v` into
-the output works fine. But once the body calls a sibling cmeth
-inside the loop (`Json.escape(k)`), the narrowed `k:str` doesn't
-propagate into `escape`'s param-type inference -- it widens to int
-and the C compile fails. Filed as a #408 follow-up. Until that
-lands, the fixed-arity `encode_pair_*` building blocks side-step
-the issue and keep the call shape type-clean.
+The hash forms `each`-iterate and inline `Json.quote` on the
+narrowed `k:str` / `v:str` (or `v:int`) loop locals. The earlier
+`encode_pair_*` building blocks remain useful when the caller
+wants to compose an object from mixed-type pairs without building
+a Hash first.
 
 ### Decode (flat-key, top-level only)
 

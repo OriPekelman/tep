@@ -118,10 +118,7 @@ module Tep
       Json.quote(k) + ":" + v.to_s
     end
 
-    # Encode a Hash<String,String> as a JSON object. Iterates the
-    # hash directly; spinel narrows `k`/`v` as :str inside the
-    # block, and the nested `Json.escape(k)` cmeth picks up the
-    # narrowed signal too (spinel #424, commit 20d62dc).
+    # Encode a Hash<String,String> as a JSON object.
     def self.from_str_hash(h)
       out = "{"
       first = true
