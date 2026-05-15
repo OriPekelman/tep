@@ -42,7 +42,7 @@ module Tep
       end
       payload = cookie_value[0, dot]
       sig     = cookie_value[dot + 1, cookie_value.length - dot - 1]
-      expect  = Crypto.tep_crypto_hmac_sha256_hex(secret, payload)
+      expect  = Crypto.sp_crypto_hmac_sha256_hex(secret, payload)
       if !Tep.timing_safe_eq(sig, expect)
         return false
       end
@@ -64,7 +64,7 @@ module Tep
         payload = payload + Url.escape(k) + "=" + Url.escape(v)
         first = false
       end
-      payload + "." + Crypto.tep_crypto_hmac_sha256_hex(secret, payload)
+      payload + "." + Crypto.sp_crypto_hmac_sha256_hex(secret, payload)
     end
   end
 

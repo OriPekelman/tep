@@ -53,9 +53,9 @@ module Tep
     # signing secret. Returns the three-segment `header.payload.sig`
     # string.
     def self.encode_hs256(payload_json, secret)
-      payload_b64 = Crypto.tep_crypto_b64url_encode(payload_json)
+      payload_b64 = Crypto.sp_crypto_b64url_encode(payload_json)
       signing_input = HEADER_B64U + "." + payload_b64
-      sig = Crypto.tep_crypto_hmac_sha256_b64url(secret, signing_input)
+      sig = Crypto.sp_crypto_hmac_sha256_b64url(secret, signing_input)
       signing_input + "." + sig
     end
 
@@ -72,7 +72,7 @@ module Tep
       end
       signing_input = token[0, d2]
       provided_sig = token[d2 + 1, token.length - d2 - 1]
-      expected_sig = Crypto.tep_crypto_hmac_sha256_b64url(secret, signing_input)
+      expected_sig = Crypto.sp_crypto_hmac_sha256_b64url(secret, signing_input)
       Jwt.timing_safe_eq(provided_sig, expected_sig)
     end
 
@@ -89,7 +89,7 @@ module Tep
         return ""
       end
       payload_b64 = token[d1 + 1, d2 - d1 - 1]
-      Crypto.tep_crypto_b64url_decode(payload_b64)
+      Crypto.sp_crypto_b64url_decode(payload_b64)
     end
 
     # One-shot: verify, then decode. Returns the JSON payload on

@@ -45,8 +45,8 @@ module Tep
     # iter count. Returns the self-describing storage string.
     # Named `hash` to match the bcrypt-gem-style factory shape.
     def self.hash(plain)
-      salt = Crypto.tep_crypto_random_b64url(SALT_BYTES)
-      derived = Crypto.tep_crypto_pbkdf2_sha256_b64url(plain, salt, DEFAULT_ITERS)
+      salt = Crypto.sp_crypto_random_b64url(SALT_BYTES)
+      derived = Crypto.sp_crypto_pbkdf2_sha256_b64url(plain, salt, DEFAULT_ITERS)
       "pbkdf2-sha256$" + DEFAULT_ITERS.to_s + "$" + salt + "$" + derived
     end
 
@@ -69,7 +69,7 @@ module Tep
       if iters < 1
         return false
       end
-      candidate = Crypto.tep_crypto_pbkdf2_sha256_b64url(plain, salt, iters)
+      candidate = Crypto.sp_crypto_pbkdf2_sha256_b64url(plain, salt, iters)
       Tep::Jwt.timing_safe_eq(candidate, derived)
     end
 

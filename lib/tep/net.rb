@@ -45,16 +45,15 @@ module Sock
   ffi_func :sphttp_shell_capture, [:str, :int],     :str
 end
 
-# Crypto FFI -- SHA-256/HMAC/PBKDF2/B64URL/random. Implementation in
-# lib/tep/tep_crypto.c. Symbol prefix `tep_crypto_` follows the same
-# convention as `tep_sqlite_` (see lib/tep/sqlite.rb).
+# Crypto FFI -- SHA-256/HMAC/PBKDF2/B64URL/random. Symbols live in
+# spinel's libspinel_rt.a (added upstream as lib/sp_crypto.c via
+# matz/spinel#514), which the spinel driver auto-links into every
+# binary. No ffi_cflags needed; just declare the signatures.
 module Crypto
-  ffi_cflags "@TEP_CRYPTO_O@"
-
-  ffi_func :tep_crypto_hmac_sha256_hex,      [:str, :str],       :str
-  ffi_func :tep_crypto_hmac_sha256_b64url,   [:str, :str],       :str
-  ffi_func :tep_crypto_b64url_encode,        [:str],             :str
-  ffi_func :tep_crypto_b64url_decode,        [:str],             :str
-  ffi_func :tep_crypto_pbkdf2_sha256_b64url, [:str, :str, :int], :str
-  ffi_func :tep_crypto_random_b64url,        [:int],             :str
+  ffi_func :sp_crypto_hmac_sha256_hex,      [:str, :str],       :str
+  ffi_func :sp_crypto_hmac_sha256_b64url,   [:str, :str],       :str
+  ffi_func :sp_crypto_b64url_encode,        [:str],             :str
+  ffi_func :sp_crypto_b64url_decode,        [:str],             :str
+  ffi_func :sp_crypto_pbkdf2_sha256_b64url, [:str, :str, :int], :str
+  ffi_func :sp_crypto_random_b64url,        [:int],             :str
 end
