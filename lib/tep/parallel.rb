@@ -66,7 +66,7 @@
 # sourced rhs) still bails to the conservative all-classes
 # enumeration, so `Server#run` gets pulled into the dispatch
 # table and the unifier widens `port` to a pointer. A followup
-# is filed; retry the rename once it lands.
+# is filed (spinel#531); retry the rename once it lands.
 module Tep
   # Base class for Tep::Parallel workers. Override `process(item)` in
   # subclasses; the default emits "" so a base-class instance
