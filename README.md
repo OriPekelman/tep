@@ -25,7 +25,7 @@ export PATH="$PWD:$PATH"
 
 # 2. install Tep
 git clone https://github.com/OriPekelman/tep
-cd tep && make
+cd tep && make all
 ./examples/hello -p 4567
 ```
 
