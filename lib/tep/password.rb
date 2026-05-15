@@ -43,12 +43,7 @@ module Tep
     # Derive a stored hash from a plain password. Generates a
     # fresh CSPRNG salt and runs PBKDF2-SHA256 at the default
     # iter count. Returns the self-describing storage string.
-    #
     # Named `hash` to match the bcrypt-gem-style factory shape.
-    # Spinel #407 (commit c780616) added receiver-aware skip of the
-    # name-based `hash -> int` hardcode for class-method dispatch on
-    # user classes, so `Tep::Password.hash(plain)` resolves to this
-    # String-returning definition rather than Object#hash.
     def self.hash(plain)
       salt = Sock.sphttp_random_b64url(SALT_BYTES)
       derived = Sock.sphttp_pbkdf2_sha256_b64url(plain, salt, DEFAULT_ITERS)
