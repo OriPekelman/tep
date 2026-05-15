@@ -3,7 +3,7 @@
 # Uses PBKDF2-HMAC-SHA256 with a 16-byte CSPRNG salt and a default
 # of 200,000 iterations -- sits in the OWASP-recommended ballpark
 # (200k for SHA256 as of 2023). Backed by a small C helper in
-# sphttp.c; no libcrypt / OpenSSL / bcrypt-gem dependency.
+# tep_crypto.c; no libcrypt / OpenSSL / bcrypt-gem dependency.
 #
 # Why PBKDF2 instead of bcrypt?
 # -----------------------------
@@ -45,8 +45,8 @@ module Tep
     # iter count. Returns the self-describing storage string.
     # Named `hash` to match the bcrypt-gem-style factory shape.
     def self.hash(plain)
-      salt = Sock.sphttp_random_b64url(SALT_BYTES)
-      derived = Sock.sphttp_pbkdf2_sha256_b64url(plain, salt, DEFAULT_ITERS)
+      salt = Crypto.tep_crypto_random_b64url(SALT_BYTES)
+      derived = Crypto.tep_crypto_pbkdf2_sha256_b64url(plain, salt, DEFAULT_ITERS)
       "pbkdf2-sha256$" + DEFAULT_ITERS.to_s + "$" + salt + "$" + derived
     end
 
@@ -69,7 +69,7 @@ module Tep
       if iters < 1
         return false
       end
-      candidate = Sock.sphttp_pbkdf2_sha256_b64url(plain, salt, iters)
+      candidate = Crypto.tep_crypto_pbkdf2_sha256_b64url(plain, salt, iters)
       Tep::Jwt.timing_safe_eq(candidate, derived)
     end
 

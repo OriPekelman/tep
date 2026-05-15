@@ -851,9 +851,10 @@ end
 # the require lines stripped. Used to inline the framework into a
 # build-temp file so spinel doesn't have to resolve any requires.
 #
-# Also substitutes `@TEP_SPHTTP_O@` with the absolute path to the
-# built sphttp.o file. Override via TEP_SPHTTP_O env var; default is
-# `<LIB_DIR>/tep/sphttp.o`.
+# Also substitutes `@TEP_SPHTTP_O@` / `@TEP_SQLITE_O@` /
+# `@TEP_CRYPTO_O@` with the absolute paths to the built .o files.
+# Override via TEP_SPHTTP_O / TEP_SQLITE_O / TEP_CRYPTO_O env vars;
+# defaults live under `<LIB_DIR>/tep/`.
 def inlined_tep_library
   loaded = []
   visit  = lambda do |abs_path|
@@ -873,8 +874,10 @@ def inlined_tep_library
   combined = loaded.map { |l| "# --- inlined: " + relative_to_lib(l[:path]) + " ---\n" + l[:body] }.join("\n")
   sphttp_o = ENV.fetch("TEP_SPHTTP_O", File.join(LIB_DIR, "tep", "sphttp.o"))
   sqlite_o = ENV.fetch("TEP_SQLITE_O", File.join(LIB_DIR, "tep", "tep_sqlite.o"))
+  crypto_o = ENV.fetch("TEP_CRYPTO_O", File.join(LIB_DIR, "tep", "tep_crypto.o"))
   combined = combined.gsub("@TEP_SPHTTP_O@", sphttp_o)
   combined = combined.gsub("@TEP_SQLITE_O@", sqlite_o)
+  combined = combined.gsub("@TEP_CRYPTO_O@", crypto_o)
   combined
 end
 

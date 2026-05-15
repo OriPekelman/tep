@@ -26,7 +26,7 @@ class TestPassword < TepTest
 
     post '/random' do
       res.headers["Content-Type"] = "text/plain"
-      Sock.sphttp_random_b64url(16)
+      Crypto.tep_crypto_random_b64url(16)
     end
   RB
 
