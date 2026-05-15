@@ -61,11 +61,11 @@
 # Real workers subclass `Tep::ParallelWorker` and override
 # `process(item)`. The method is named `process` rather than
 # `run` because `Tep::Server#run(port, workers, quiet)` already
-# exists in the same binary; even with spinel #429 closed
-# (return-type unification across same-name imeths), the
-# unifier still cross-contaminates *param* types when the
-# arities differ (tep app surface; not yet reproducible in
-# isolation -- see commit message for the failing build).
+# exists in the same binary; the same-name-imeth-across-arity
+# unifier in spinel widens both parameter lists (Server#run's
+# `port` ends up typed as `const char *` to match ParallelWorker
+# #run's `item:str`). Still unreproduced in isolation; tracked
+# as a #429 followup, untouched by the #450/#467 cascades.
 module Tep
   # Base class for Tep::Parallel workers. Override `process(item)` in
   # subclasses; the default emits "" so a base-class instance
