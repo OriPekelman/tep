@@ -5,8 +5,8 @@
 # `OpenSSL::HMAC` (a CRuby C extension). We can't load it through
 # spinel.
 #
-# Tep already ships HMAC-SHA256 in the sphttp.c shim (the session-
-# cookie store uses it). The JWT spec on top of that is short:
+# Tep already ships HMAC-SHA256 in tep_crypto.c (the session-cookie
+# store uses it). The JWT spec on top of that is short:
 # base64url-encoded JSON for header + payload, base64url-encoded
 # 32-byte HMAC for the signature, joined by `.`.
 #
@@ -53,9 +53,9 @@ module Tep
     # signing secret. Returns the three-segment `header.payload.sig`
     # string.
     def self.encode_hs256(payload_json, secret)
-      payload_b64 = Sock.sphttp_b64url_encode(payload_json)
+      payload_b64 = Crypto.tep_crypto_b64url_encode(payload_json)
       signing_input = HEADER_B64U + "." + payload_b64
-      sig = Sock.sphttp_hmac_sha256_b64url(secret, signing_input)
+      sig = Crypto.tep_crypto_hmac_sha256_b64url(secret, signing_input)
       signing_input + "." + sig
     end
 
@@ -72,7 +72,7 @@ module Tep
       end
       signing_input = token[0, d2]
       provided_sig = token[d2 + 1, token.length - d2 - 1]
-      expected_sig = Sock.sphttp_hmac_sha256_b64url(secret, signing_input)
+      expected_sig = Crypto.tep_crypto_hmac_sha256_b64url(secret, signing_input)
       Jwt.timing_safe_eq(provided_sig, expected_sig)
     end
 
@@ -89,7 +89,7 @@ module Tep
         return ""
       end
       payload_b64 = token[d1 + 1, d2 - d1 - 1]
-      Sock.sphttp_b64url_decode(payload_b64)
+      Crypto.tep_crypto_b64url_decode(payload_b64)
     end
 
     # One-shot: verify, then decode. Returns the JSON payload on

@@ -23,12 +23,6 @@ module Sock
   ffi_func :sphttp_exit,          [:int],           :int
   ffi_func :sphttp_getpid,        [],               :int
   ffi_func :sphttp_wait_any,      [],               :int
-  ffi_func :sphttp_hmac_sha256_hex,    [:str, :str], :str
-  ffi_func :sphttp_hmac_sha256_b64url, [:str, :str], :str
-  ffi_func :sphttp_b64url_encode,      [:str],       :str
-  ffi_func :sphttp_b64url_decode,      [:str],       :str
-  ffi_func :sphttp_pbkdf2_sha256_b64url, [:str, :str, :int], :str
-  ffi_func :sphttp_random_b64url,      [:int],       :str
   ffi_func :sphttp_write_chunk,   [:int, :str],     :int
   ffi_func :sphttp_write_chunk_end, [:int],         :int
 
@@ -49,4 +43,18 @@ module Sock
   ffi_func :sphttp_shell_capture, [:str, :int],     :str
   ffi_func :sphttp_file_read,     [:str, :int],     :str
   ffi_func :sphttp_file_write,    [:str, :str],     :int
+end
+
+# Crypto FFI -- SHA-256/HMAC/PBKDF2/B64URL/random. Implementation in
+# lib/tep/tep_crypto.c. Symbol prefix `tep_crypto_` follows the same
+# convention as `tep_sqlite_` (see lib/tep/sqlite.rb).
+module Crypto
+  ffi_cflags "@TEP_CRYPTO_O@"
+
+  ffi_func :tep_crypto_hmac_sha256_hex,      [:str, :str],       :str
+  ffi_func :tep_crypto_hmac_sha256_b64url,   [:str, :str],       :str
+  ffi_func :tep_crypto_b64url_encode,        [:str],             :str
+  ffi_func :tep_crypto_b64url_decode,        [:str],             :str
+  ffi_func :tep_crypto_pbkdf2_sha256_b64url, [:str, :str, :int], :str
+  ffi_func :tep_crypto_random_b64url,        [:int],             :str
 end

@@ -32,12 +32,12 @@ class TestJwt < TepTest
 
     post '/b64u_encode' do
       res.headers["Content-Type"] = "text/plain"
-      Sock.sphttp_b64url_encode(req.raw_body)
+      Crypto.tep_crypto_b64url_encode(req.raw_body)
     end
 
     post '/b64u_decode' do
       res.headers["Content-Type"] = "text/plain"
-      Sock.sphttp_b64url_decode(req.raw_body)
+      Crypto.tep_crypto_b64url_decode(req.raw_body)
     end
 
     post '/timing_eq' do

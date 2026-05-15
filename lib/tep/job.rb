@@ -150,31 +150,25 @@ module Tep
       out
     end
 
-    # Mark the row `done` with an empty result. Use `write_result`
-    # if you want to attach a result string -- a spinel issue with
-    # cross-class parameter widening (the followup to #429) means a
-    # cmeth that takes a String param sourced from a virtual or
-    # cross-class dispatch loses the :str type at the cmeth signature,
-    # breaking the bind_str body. Until that lands upstream, the user
-    # writes the result via direct SQLite calls in their own handler;
-    # this method just flips the row status.
-    def self.mark_done(db_path, row_id)
+    # Mark the row `done` and store the result string.
+    def self.mark_done(db_path, row_id, result)
       db = Tep::SQLite.new
       if !db.open(db_path)
         return 0
       end
-      db.prepare("UPDATE tep_jobs SET status = 'done', finished_at = ? WHERE id = ?")
+      db.prepare("UPDATE tep_jobs SET status = 'done', finished_at = ?, result = ? WHERE id = ?")
       db.bind_int(1, Time.now.to_i)
-      db.bind_int(2, row_id)
+      db.bind_str(2, result)
+      db.bind_int(3, row_id)
       db.step
       db.finalize
       db.close
       1
     end
 
-    # Mark the row `failed`. Same caveat as `mark_done`: the error
-    # message is not stored by this method; the user writes it via
-    # their own SQLite calls if they want it persisted.
+    # Mark the row `failed`. The error message is not stored by this
+    # method; the user writes it via their own SQLite calls if they
+    # want it persisted.
     def self.mark_failed(db_path, row_id)
       db = Tep::SQLite.new
       if !db.open(db_path)

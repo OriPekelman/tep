@@ -315,7 +315,7 @@ module Tep
   _tep_seed_job.perform("")
   Tep::Job.enqueue("seed", "", ":memory:")
   Tep::Job.fetch_next(":memory:")
-  Tep::Job.mark_done(":memory:", 0)
+  Tep::Job.mark_done(":memory:", 0, "")
   Tep::Job.mark_failed(":memory:", 0)
   _tep_seed_str_arr = [""]
   _tep_seed_str_arr.delete_at(0)

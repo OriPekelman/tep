@@ -4,11 +4,12 @@ SPINEL    ?= spinel
 TEP       := $(TEP_ROOT)/bin/tep
 
 # Exported so bin/tep injects the right path into the @TEP_SPHTTP_O@
-# / @TEP_SQLITE_O@ placeholders inside net.rb / sqlite.rb. Override
-# either env var to point at a pre-built .o (useful when the source
-# tree isn't writable).
+# / @TEP_SQLITE_O@ / @TEP_CRYPTO_O@ placeholders inside net.rb /
+# sqlite.rb. Override any env var to point at a pre-built .o (useful
+# when the source tree isn't writable).
 export TEP_SPHTTP_O := $(LIB_DIR)/sphttp.o
 export TEP_SQLITE_O := $(LIB_DIR)/tep_sqlite.o
+export TEP_CRYPTO_O := $(LIB_DIR)/tep_crypto.o
 export SPINEL
 
 .PHONY: all clean helper hello sinatra_style bench bench-tep bench-sinatra demo test spinel-fresh
@@ -23,12 +24,15 @@ spinel-fresh:
 
 all: spinel-fresh helper hello sinatra_style bench
 
-helper: spinel-fresh $(LIB_DIR)/sphttp.o $(LIB_DIR)/tep_sqlite.o
+helper: spinel-fresh $(LIB_DIR)/sphttp.o $(LIB_DIR)/tep_sqlite.o $(LIB_DIR)/tep_crypto.o
 
 $(LIB_DIR)/sphttp.o: $(LIB_DIR)/sphttp.c
 	cc -O2 -c $< -o $@
 
 $(LIB_DIR)/tep_sqlite.o: $(LIB_DIR)/tep_sqlite.c
+	cc -O2 -c $< -o $@
+
+$(LIB_DIR)/tep_crypto.o: $(LIB_DIR)/tep_crypto.c
 	cc -O2 -c $< -o $@
 
 hello: helper

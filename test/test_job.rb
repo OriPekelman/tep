@@ -4,11 +4,7 @@ require_relative "helper"
 # job classes, enqueues from one handler, then drains via fetch_next
 # from another. Dispatch is user-side (spinel can't carry cls_id
 # through PtrArray<Tep::Job>), so the worker handler has an explicit
-# `if name == "..."` ladder. Worker classes are plain Ruby classes
-# (not Tep::Job subclasses) because spinel widens `perform` cross-
-# class signatures in ways that cascade into the framework's
-# bind_str calls -- the framework expects a String result, so the
-# worker just needs to produce one. Inheritance is optional sugar.
+# `if name == "..."` ladder.
 class TestJob < TepTest
   app_source <<~RB
     require 'sinatra'
@@ -20,14 +16,14 @@ class TestJob < TepTest
       Tep::Job.init_schema(DB_PATH)
     end
 
-    class UpcaseWorker
-      def upcase_run(arg)
+    class UpcaseJob < Tep::Job
+      def perform(arg)
         arg.upcase
       end
     end
 
-    class ReverseWorker
-      def reverse_run(arg)
+    class ReverseJob < Tep::Job
+      def perform(arg)
         out = ""
         i = arg.length - 1
         while i >= 0
@@ -43,14 +39,6 @@ class TestJob < TepTest
       "id=" + id.to_s
     end
 
-    # Side-channel for the worker output -- write into /tmp keyed on
-    # row_id so the test can read it back. We can't store the result
-    # back into the SQLite row (the bind_str path widens to poly
-    # whenever `result` originates from a cross-class method call;
-    # this is the same spinel followup-to-#429 issue the framework's
-    # `mark_done` runs into).
-    RESULT_PREFIX = "/tmp/tep_job_test_result_"
-
     get '/process' do
       claim = Tep::Job.fetch_next(DB_PATH)
       if claim.length == 0
@@ -62,12 +50,11 @@ class TestJob < TepTest
         arg    = parts[2]
         result = ""
         if name == "UpcaseJob"
-          result = UpcaseWorker.new.upcase_run(arg)
+          result = UpcaseJob.new.perform(arg)
         elsif name == "ReverseJob"
-          result = ReverseWorker.new.reverse_run(arg)
+          result = ReverseJob.new.perform(arg)
         end
-        Sock.sphttp_file_write(RESULT_PREFIX + row_id.to_s, result)
-        Tep::Job.mark_done(DB_PATH, row_id)
+        Tep::Job.mark_done(DB_PATH, row_id, result)
         "ran=1"
       end
     end
@@ -75,9 +62,9 @@ class TestJob < TepTest
     get '/result/:id' do
       db = Tep::SQLite.new
       db.open(DB_PATH)
-      st = db.first_str("SELECT status FROM tep_jobs WHERE id = ?", params[:id])
+      st   = db.first_str("SELECT status FROM tep_jobs WHERE id = ?", params[:id])
+      body = db.first_str("SELECT result FROM tep_jobs WHERE id = ?", params[:id])
       db.close
-      body = Tep::Shell.read(RESULT_PREFIX + params[:id])
       st + "/" + body
     end
   RB
