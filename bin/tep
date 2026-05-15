@@ -457,7 +457,27 @@ def handle_top_call(node, routes, filters, not_founds, config, warnings, passthr
   end
 
   case name
-  when "require", "require_relative" then return  # ignore
+  when "require", "require_relative"
+    # The translator inlines tep's own library (see inlined_tep_library);
+    # other require / require_relative calls are silently dropped because
+    # spinel resolves require_relative finicky-ly and the build-time
+    # inline is the reliable path. Warn on non-tep paths so app authors
+    # who didn't read the framework docs aren't left with a wall of
+    # "uninitialized constant" warnings from spinel, fifty lines later,
+    # with no hint of the cause.
+    if name == "require_relative"
+      args = node.arguments&.arguments || []
+      first = args.first
+      if first.is_a?(Prism::StringNode)
+        path = first.unescaped
+        unless path == "tep" || path.start_with?("tep/")
+          warnings << "external `require_relative #{path.inspect}` ignored " \
+                      "(tep build only inlines tep/lib). Pre-inline the " \
+                      "file into the app source, or use a wrapper script."
+        end
+      end
+    end
+    return
   when "enable", "disable"           then return  # ignore (sessions, etc.)
   when "configure"                   then return  # we run as a single env
   when "use"
