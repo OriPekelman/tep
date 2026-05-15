@@ -113,10 +113,6 @@ module Tep
       out.delete_at(0)
       k = 0
       while k < n
-        # Tep::Shell.read does the +"" dup so the entries don't
-        # all alias the sphttp_file_buf static. A direct
-        # Sock.sphttp_file_read(...) here would have every entry
-        # point at the same buffer with the final read's bytes.
         out.push(Tep::Shell.read(job_dir + "/" + k.to_s))
         k += 1
       end
@@ -132,7 +128,7 @@ module Tep
       if pid == 0
         result = @worker.process(item)
         path   = job_dir + "/" + idx.to_s
-        Sock.sphttp_file_write(path, result)
+        File.write(path, result)
         Sock.sphttp_exit(0)
       end
       pid

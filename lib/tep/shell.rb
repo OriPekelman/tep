@@ -34,28 +34,29 @@ module Tep
       Sock.sphttp_shell_capture(cmd, max_bytes) + ""
     end
 
-    # Read a file's contents (up to DEFAULT_MAX). Useful for
-    # /proc/loadavg, /proc/meminfo, /sys/class/thermal/.../temp,
-    # and similar small-text endpoints. Returns "" on open failure.
-    #
-    # The `+ ""` forces a Ruby-side string copy: the C helper
-    # returns a pointer to a static buffer that gets clobbered on
-    # the next call, so two consecutive `Tep::Shell.read` calls
-    # without the dup would both end up returning the *latest*
-    # read's bytes (each :str return from FFI is a raw const
-    # char *, not a Ruby-owned copy).
+    # Read a file's contents. Useful for /proc/loadavg, /proc/meminfo,
+    # /sys/class/thermal/.../temp, and similar small-text endpoints.
+    # Returns "" on open failure (spinel's File.read swallows fopen
+    # errors and returns the empty string -- matches the prior
+    # sphttp_file_read behaviour).
     def self.read(path)
-      Sock.sphttp_file_read(path, DEFAULT_MAX) + ""
+      File.read(path)
     end
 
+    # Bounded read: slice after the fact. The cap is mostly a
+    # defensive cue -- callers that need it should be reading
+    # bounded /proc files anyway.
     def self.read_limited(path, max_bytes)
-      Sock.sphttp_file_read(path, max_bytes) + ""
+      out = File.read(path)
+      out.length > max_bytes ? out[0, max_bytes] : out
     end
 
-    # Write `data` to `path` atomically (truncate + rewrite).
-    # Returns the byte count written, or -1 on failure.
+    # Write `data` to `path` (truncate + rewrite). Returns the byte
+    # count for symmetry with the old FFI shape; spinel's File.write
+    # is void, so we recover it from data.length.
     def self.write(path, data)
-      Sock.sphttp_file_write(path, data)
+      File.write(path, data)
+      data.length
     end
   end
 end

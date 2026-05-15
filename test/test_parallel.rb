@@ -67,7 +67,7 @@ class TestParallel < TepTest
 
     class FileSentinel < Tep::ParallelWorker
       def process(item)
-        Sock.sphttp_file_write("/tmp/tep_par_test_each_" + item, "done")
+        File.write("/tmp/tep_par_test_each_" + item, "done")
         ""
       end
     end

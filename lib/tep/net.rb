@@ -39,10 +39,10 @@ module Sock
   ffi_func :sphttp_recv_some,     [:int, :int],     :str
   ffi_func :sphttp_recv_all,      [:int, :int],     :str
 
-  # Process + file helpers used by Tep::Shell.
+  # popen-shaped shell capture used by Tep::Shell.run. File I/O goes
+  # through spinel's built-in File.read / File.write since master
+  # (matz/spinel#505 made File.write binary-safe).
   ffi_func :sphttp_shell_capture, [:str, :int],     :str
-  ffi_func :sphttp_file_read,     [:str, :int],     :str
-  ffi_func :sphttp_file_write,    [:str, :str],     :int
 end
 
 # Crypto FFI -- SHA-256/HMAC/PBKDF2/B64URL/random. Implementation in

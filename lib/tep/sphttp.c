@@ -393,35 +393,4 @@ const char *sphttp_shell_capture(const char *cmd, int max_bytes) {
     return sphttp_shell_buf;
 }
 
-/* Atomically write `data` to `path` (truncate-and-rewrite). Used by
- * Tep::Parallel for child -> parent result IPC. Returns the number
- * of bytes written, or -1 on open/write failure. */
-int sphttp_file_write(const char *path, const char *data) {
-    FILE *fp = fopen(path, "w");
-    if (!fp) return -1;
-    size_t len = strlen(data);
-    size_t written = fwrite(data, 1, len, fp);
-    fclose(fp);
-    if (written != len) return -1;
-    return (int)written;
-}
-
-/* Read up to max_bytes from `path` into a static buffer. Useful for
- * /proc/* probes from Ruby without each call having to manage a file
- * handle. Returns "" on open failure. */
-static char sphttp_file_buf[SPHTTP_BUFSIZE];
-const char *sphttp_file_read(const char *path, int max_bytes) {
-    if (max_bytes <= 0 || max_bytes >= SPHTTP_BUFSIZE) max_bytes = SPHTTP_BUFSIZE - 1;
-    sphttp_file_buf[0] = '\0';
-    FILE *fp = fopen(path, "r");
-    if (!fp) return sphttp_file_buf;
-    size_t total = 0;
-    while (total < (size_t)max_bytes) {
-        size_t n = fread(sphttp_file_buf + total, 1, (size_t)max_bytes - total, fp);
-        if (n == 0) break;
-        total += n;
-    }
-    sphttp_file_buf[total] = '\0';
-    fclose(fp);
-    return sphttp_file_buf;
-}
+/* File read/write moved to spinel's built-in File.read / File.write */
