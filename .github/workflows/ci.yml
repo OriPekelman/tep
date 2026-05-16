@@ -42,7 +42,7 @@ jobs:
           cp spinel-src/spinel_codegen.rb  spinel-dist/
           cp -R spinel-src/lib             spinel-dist/lib
       - name: Upload spinel toolchain
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: spinel-dist
           path: spinel-dist
@@ -65,7 +65,7 @@ jobs:
         uses: ruby/setup-ruby@v1
         with:
           ruby-version: "3.4"
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         with:
           name: spinel-dist
           path: spinel-dist
