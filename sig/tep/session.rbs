@@ -1,0 +1,29 @@
+# Signed-cookie session store. Per-request instance hangs off
+# `req.session`. `data` is a string-keyed string-valued hash; the
+# round-trip JSON-encodes it and HMACs the payload with the app's
+# session secret.
+module Tep
+  class Session
+    attr_accessor data: Hash[String, String]
+    attr_accessor dirty: bool
+
+    def initialize: () -> void
+
+    # Direct hash access (no per-key dirty tracking on read).
+    def get: (String k) -> String
+    def set: (String k, String v) -> bool
+    def has?: (String k) -> bool
+    def length: () -> Integer
+    def clear: () -> bool
+
+    # Decode `cookie_value` (the cookie's raw value, base64-and-sig
+    # encoded), verifying with `secret`. Fails silently on tamper.
+    def load_from: (String cookie_value, String secret) -> bool
+
+    # Re-encode `@data` as a signed cookie value.
+    def to_cookie_value: (String secret) -> String
+  end
+
+  # Module-level helper exposed for tests.
+  def self.timing_safe_eq: (String a, String b) -> bool
+end

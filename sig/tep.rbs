@@ -1,0 +1,23 @@
+# Top-level Tep module signatures.
+#
+# Library-shipped RBS for tep's public surface. Spinel doesn't consume
+# these yet (matz/spinel discussion at OriPekelman/tep#6) — they live
+# here for human readers, IDE tooling (Solargraph, RubyMine), and so
+# tep is ready when the analyzer learns to read RBS as authoritative
+# (which would let the type-seed block in `lib/tep.rb` go away).
+#
+# Convention: one `sig/tep/<file>.rbs` per `lib/tep/<file>.rb`. Run
+# `rake rbs:validate` to syntax-check the tree.
+module Tep
+  # Empty str=>str hash, typed so spinel pins the hash's value-type
+  # to `:str` rather than widening on first insert.
+  def self.str_hash: () -> Hash[String, String]
+
+  # HTML-escape the minimum safe set for attribute / PCDATA contexts.
+  def self.h: (String s) -> String
+
+  # Naive substring search returning the int position of `needle` in
+  # `s` starting from `start`, or -1 if not found. Workaround for
+  # String#index returning nil under spinel master (see matz/spinel#550).
+  def self.str_find: (String s, String needle, Integer start) -> Integer
+end

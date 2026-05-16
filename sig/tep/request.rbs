@@ -1,0 +1,50 @@
+# Per-request bag passed to handlers and filters as `req`.
+module Tep
+  class Request
+    attr_accessor verb: String
+    attr_accessor path: String
+    attr_accessor raw_path: String
+    attr_accessor http_version: String
+
+    # Merged path captures + query + form. All values stringified.
+    attr_accessor params: Hash[String, String]
+    # Raw query string keys/values (no path captures, no form).
+    attr_accessor query: Hash[String, String]
+    # Downcased header names. Renamed from `headers` to avoid sharing
+    # an ivar slot with Response.
+    attr_accessor req_headers: Hash[String, String]
+    attr_accessor raw_body: String
+    attr_accessor cookies: Hash[String, String]
+    attr_accessor session: Tep::Session
+    attr_accessor remote_host: String
+
+    # Per-request scratch bag. Sinatra-translator rewrites `@x = v`
+    # to `req.ivars["x"] = v.to_s` in handler bodies; templates read
+    # back via `ivars["x"]`.
+    attr_accessor ivars: Hash[String, String]
+
+    # `pass` flag: when true the dispatcher skips to the next matching
+    # route. Set by `req.set_passed`.
+    attr_accessor passed: bool
+
+    def initialize: () -> void
+    def set_passed: () -> bool
+
+    # Aliases / shortcuts.
+    def headers: () -> Hash[String, String]
+    def body: () -> String
+    def host: () -> String
+    def user_agent: () -> String
+    def referer: () -> String
+    def referrer: () -> String   # spelling alias
+    def accept: () -> String
+    def content_type: () -> String
+
+    # Derived.
+    def keep_alive?: () -> bool
+    def content_length: () -> Integer
+    def form?: () -> bool
+    def scheme: () -> String
+    def ssl?: () -> bool
+  end
+end

@@ -1,0 +1,18 @@
+# Streaming-chunked response support. Subclass and override `pump(out)`.
+module Tep
+  class Streamer
+    # Default no-op. Override in subclasses to write into `out`.
+    def pump: (Tep::Stream out) -> void
+  end
+
+  # The argument passed into `pump`. Wraps the active fd and exposes
+  # a single `write` that emits one HTTP chunk.
+  class Stream
+    attr_accessor fd: Integer
+    def initialize: (Integer fd) -> void
+
+    # Write one chunk. Returns the byte count of the chunk payload
+    # (excludes the chunk framing).
+    def write: (String s) -> Integer
+  end
+end

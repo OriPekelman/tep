@@ -124,6 +124,17 @@ end-to-end (smoke-tested through `Net::HTTP`), and the bundled
 operator dashboard for an NVIDIA GB10 server — exercises every
 public Tep feature in ~640 lines.
 
+### Type signatures (RBS)
+
+`sig/` ships [RBS](https://github.com/ruby/rbs) signatures for tep's
+public surface, mirroring `lib/tep/`. They're for IDE tooling today
+(Solargraph, RubyMine) and for forward compatibility with
+spinel-side RBS consumption (discussion at [#6](https://github.com/OriPekelman/tep/issues/6)) —
+the goal is to let library authors carry the type-correctness burden
+in `.rbs` files so app developers can write idiomatic Ruby without
+the inference-warming seed dance that currently lives at the top
+of `lib/tep.rb`. `rake rbs:validate` syntax-checks the tree.
+
 ## Spinel-direct
 
 `tep build` accepts either the Sinatra DSL or a lower-level

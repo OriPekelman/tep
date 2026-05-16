@@ -1,0 +1,24 @@
+# HS256 JWT encode / verify / decode. Pure Ruby on `Crypto` FFI.
+module Tep
+  class Jwt
+    # Encode `payload_json` (caller-built; `Tep::Json.from_str_hash`
+    # is the usual source) with HS256 using `secret`. Returns the
+    # three-part token string.
+    def self.encode_hs256: (String payload_json, String secret) -> String
+
+    # Constant-time verification of an HS256 token. Returns `true`
+    # only when both the structure and the signature match.
+    def self.verify_hs256: (String token, String secret) -> bool
+
+    # Pull the payload JSON out of a token without verifying. Use
+    # only when verification is known to have already succeeded.
+    def self.decode_payload: (String token) -> String
+
+    # Combined verify + decode: returns the payload JSON on success,
+    # or "" on any verification failure.
+    def self.verify_and_decode: (String token, String secret) -> String
+
+    # Internal helper exposed for tests; same byte length is assumed.
+    def self.timing_safe_eq: (String a, String b) -> bool
+  end
+end

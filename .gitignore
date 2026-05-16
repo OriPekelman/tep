@@ -36,6 +36,7 @@ examples/gx10_dashboard/gx10dash
 *.gem
 pkg/
 .bundle/
+Gemfile.lock
 
 # Editor / OS noise.
 .DS_Store

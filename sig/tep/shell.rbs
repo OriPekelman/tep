@@ -1,0 +1,22 @@
+# popen-based shell-out + file-read helpers.
+#
+# Security note: `run(cmd)` passes its argument verbatim to `/bin/sh -c`.
+# Never interpolate untrusted input.
+module Tep
+  class Shell
+    DEFAULT_MAX: Integer
+
+    # Run `cmd` via /bin/sh -c, capture up to DEFAULT_MAX bytes of
+    # stdout. Stderr inherits. Exit status is discarded.
+    def self.run: (String cmd) -> String
+    def self.run_limited: (String cmd, Integer max_bytes) -> String
+
+    # Read a file's contents. Returns "" on open failure.
+    def self.read: (String path) -> String
+    def self.read_limited: (String path, Integer max_bytes) -> String
+
+    # Write `data` to `path` (truncate + rewrite). Returns the byte
+    # count for symmetry with the old FFI shape.
+    def self.write: (String path, String data) -> Integer
+  end
+end

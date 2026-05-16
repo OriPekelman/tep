@@ -1,0 +1,42 @@
+# Per-request response object passed to handlers as `res`.
+module Tep
+  class Response
+    attr_accessor status: Integer
+    attr_accessor headers: Hash[String, String]
+    attr_accessor body: String
+    attr_accessor halted: bool
+
+    # File-send mode: when non-empty the writer streams `file_path`
+    # via sendfile(2) instead of `body`.
+    attr_accessor file_path: String
+
+    # Set-Cookie repeats; each entry is one fully-formatted line.
+    attr_accessor set_cookies: Array[String]
+
+    # Streaming-chunked-write mode. Default streamer is a no-op;
+    # activated by `start_stream`.
+    attr_accessor streamer: Tep::Streamer
+    attr_accessor streaming: bool
+
+    def initialize: () -> void
+
+    def start_stream: (Tep::Streamer streamer) -> bool
+
+    # `opts` keys: "path", "domain", "max_age", "expires", "secure",
+    # "http_only", "same_site". All string values; only keys that
+    # appear get serialized.
+    def set_cookie: (String name, String value, Hash[String, String] opts) -> Array[String]
+
+    def send_file: (String path) -> String
+
+    # Set `body` only if empty (handler convention: `return "" if X`
+    # without overwriting an earlier-set body).
+    def set_body_if_empty: (String s) -> String
+
+    def set_status: (Integer n) -> Integer
+
+    # `true` if the response is halted AND the connection should close
+    # (the keep-alive escape hatch for filters that need to bail).
+    def halted_close?: () -> bool
+  end
+end

@@ -1,0 +1,44 @@
+# JSON encoder for primitive str=>str / int containers, plus a
+# flat-key decoder for JSON-over-HTTP request bodies.
+#
+# Scope: the encode side covers what HTTP services actually round-
+# trip (string-valued hashes, int-valued hashes, string arrays,
+# int arrays). The decode side is flat-key access (`get_str`,
+# `get_int`) -- nested structures aren't materialised, by design.
+module Tep
+  class Json
+    # --- Encode helpers ---
+
+    # JSON-escape a string for embedding inside double-quoted output.
+    def self.escape: (String s) -> String
+
+    # Two-digit uppercase hex (used by escape's \uXXXX path).
+    def self.hex2: (Integer n) -> String
+
+    # Wrap a string in `"..."` with content escaped.
+    def self.quote: (String s) -> String
+
+    # `"key":"value"` and `"key":<int>` fragments for object building.
+    def self.encode_pair_str: (String k, String v) -> String
+    def self.encode_pair_int: (String k, Integer v) -> String
+
+    # Serialise a typed container as a JSON object/array.
+    def self.from_str_hash:  (Hash[String, String] h) -> String
+    def self.from_int_hash:  (Hash[String, Integer] h) -> String
+    def self.from_str_array: (Array[String] a) -> String
+    def self.from_int_array: (Array[Integer] a) -> String
+
+    # --- Decode (flat-key access) ---
+
+    # Return the string value at top-level `key`, or "" if missing
+    # or not a string.
+    def self.get_str: (String s, String key) -> String
+
+    # Return the int value at top-level `key`, or 0 if missing or
+    # not parseable.
+    def self.get_int: (String s, String key) -> Integer
+
+    # `true` iff the top-level object has `key`.
+    def self.has_key?: (String s, String key) -> bool
+  end
+end

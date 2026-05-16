@@ -1,0 +1,47 @@
+# Outbound HTTP/1.0 client (Faraday-shaped). No TLS in v1.
+module Tep
+  class Http
+    attr_accessor base_url: String
+    attr_accessor default_headers: Hash[String, String]
+
+    def initialize: (String base_url) -> void
+    def set_header: (String k, String v) -> String
+
+    # Instance verbs. `path` is appended to `base_url` if it starts
+    # with "/", or used as-is if it's a full URL. Prefixed with
+    # `do_` to avoid the cmeth/imeth ambiguity at the call site.
+    def do_get:    (String path) -> Tep::Http::Response
+    def do_head:   (String path) -> Tep::Http::Response
+    def do_delete: (String path) -> Tep::Http::Response
+    def do_post:   (String path, String body) -> Tep::Http::Response
+    def do_put:    (String path, String body) -> Tep::Http::Response
+    def do_patch:  (String path, String body) -> Tep::Http::Response
+
+    def do_req: (String path, String verb, String body) -> Tep::Http::Response
+
+    # Class-level one-shots. Use Faraday spelling (no `do_` prefix)
+    # since cmeths live in a separate namespace from imeths.
+    def self.get:    (String url) -> Tep::Http::Response
+    def self.head:   (String url) -> Tep::Http::Response
+    def self.delete: (String url) -> Tep::Http::Response
+    def self.post:   (String url, String body) -> Tep::Http::Response
+    def self.put:    (String url, String body) -> Tep::Http::Response
+    def self.patch:  (String url, String body) -> Tep::Http::Response
+
+    def self.empty_headers: () -> Hash[String, String]
+
+    # The workhorse. Returns a Response in all cases; on failure
+    # `.status == 0` and `.body == ""`.
+    def self.send_req: (String verb, String url, String body, Hash[String, String] headers) -> Tep::Http::Response
+
+    def self.parse_response: (String raw) -> Tep::Http::Response
+
+    class Response
+      attr_accessor status: Integer
+      attr_accessor headers: Hash[String, String]
+      attr_accessor body: String
+
+      def initialize: () -> void
+    end
+  end
+end
