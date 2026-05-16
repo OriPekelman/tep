@@ -106,14 +106,14 @@ module Tep
       end
 
       if out["scheme"].length > 0
-        slash = rest.index("/")
+        slash = Tep.str_find(rest, "/", 0)
         hostport = rest
         tail     = "/"
         if slash >= 0
           hostport = rest[0, slash]
           tail     = rest[slash, rest.length - slash]
         end
-        colon = hostport.index(":")
+        colon = Tep.str_find(hostport, ":", 0)
         if colon >= 0
           out["host"] = hostport[0, colon]
           out["port"] = hostport[colon + 1, hostport.length - colon - 1]
@@ -123,7 +123,7 @@ module Tep
         rest = tail
       end
 
-      qi = rest.index("?")
+      qi = Tep.str_find(rest, "?", 0)
       if qi >= 0
         out["path"]  = rest[0, qi]
         out["query"] = rest[qi + 1, rest.length - qi - 1]
@@ -145,7 +145,7 @@ module Tep
       pairs = s.split("&")
       pairs.each do |pair|
         if pair.length > 0
-          eq = pair.index("=")
+          eq = Tep.str_find(pair, "=", 0)
           if eq < 0
             h[Url.unescape(pair)] = ""
           else

@@ -59,14 +59,16 @@
 # Worker base class
 # -----------------
 # Real workers subclass `Tep::ParallelWorker` and override
-# `process(item)`. The method is named `process` rather than
-# `run` because `Tep::Server#run(port, workers, quiet)` already
-# exists in the same binary; spinel#513's first iteration
-# narrows ivar receivers, but tep's `@worker = worker` (param-
-# sourced rhs) still bails to the conservative all-classes
-# enumeration, so `Server#run` gets pulled into the dispatch
-# table and the unifier widens `port` to a pointer. A followup
-# is filed (spinel#531); retry the rename once it lands.
+# `process(item)`. spinel#531 (closed by 270eceb) fixed the
+# original blocker -- `Tep::Server#run` no longer leaks into the
+# `@worker.X` dispatch table -- but a separate spinel issue still
+# blocks renaming `process` to `run`: when the dispatch arms all
+# return the same scalar type, spinel still boxes through sp_RbVal
+# (sp_box_str + sp_box_int wrappers) instead of returning the
+# scalar directly, so the result of `@worker.process(item)` is
+# typed as sp_RbVal even when every arm returns a String. Tracked
+# as a #531 followup; retry the rename once dispatch-result
+# unification lands.
 module Tep
   # Base class for Tep::Parallel workers. Override `process(item)` in
   # subclasses; the default emits "" so a base-class instance

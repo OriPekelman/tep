@@ -162,17 +162,17 @@ module Tep
         return out
       end
       # Status line: "HTTP/1.x SSS reason\r\n"
-      eol = raw.index("\r\n")
+      eol = Tep.str_find(raw, "\r\n", 0)
       if eol < 0
         return out
       end
       line = raw[0, eol]
-      sp1 = line.index(" ")
+      sp1 = Tep.str_find(line, " ", 0)
       if sp1 < 0
         return out
       end
       rest = line[sp1 + 1, line.length - sp1 - 1]
-      sp2 = rest.index(" ")
+      sp2 = Tep.str_find(rest, " ", 0)
       code_str = ""
       if sp2 >= 0
         code_str = rest[0, sp2]
@@ -184,7 +184,7 @@ module Tep
       # Walk header lines until empty line.
       pos = eol + 2
       while pos < raw.length
-        next_eol = Http.index_from(raw, "\r\n", pos)
+        next_eol = Tep.str_find(raw, "\r\n", pos)
         if next_eol < 0
           return out
         end
@@ -197,7 +197,7 @@ module Tep
           return out
         end
         line2 = raw[pos, next_eol - pos]
-        ci = line2.index(":")
+        ci = Tep.str_find(line2, ":", 0)
         if ci > 0
           k = line2[0, ci].downcase
           # Skip leading space after the colon.
@@ -211,20 +211,6 @@ module Tep
         pos = next_eol + 2
       end
       out
-    end
-
-    # String#index doesn't take a start-position offset in spinel's
-    # current coverage, so we slice + adjust.
-    def self.index_from(s, needle, start)
-      if start >= s.length
-        return -1
-      end
-      tail = s[start, s.length - start]
-      hit = tail.index(needle)
-      if hit < 0
-        return -1
-      end
-      hit + start
     end
 
     class Response

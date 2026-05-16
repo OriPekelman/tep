@@ -848,7 +848,10 @@ def mustache_emit_value(key, escaped:)
   else
     bag = "locals"
   end
-  expr = %{#{bag}["#{key}"]}
+  # `.to_s` to coerce any spinel-widened sp_RbVal (e.g. when the
+  # hash's value-type inference widens) back to String. Hash lookup
+  # of a present String key is a no-op (String#to_s returns self).
+  expr = %{#{bag}["#{key}"].to_s}
   escaped ? "out += Tep.h(#{expr})" : "out += #{expr}"
 end
 

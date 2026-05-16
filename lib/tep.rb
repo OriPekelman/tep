@@ -78,6 +78,29 @@ module Tep
     h
   end
 
+  # str_find -- naive substring search returning the int position of
+  # `needle` in `s` starting from `start`, or -1 if not found.
+  #
+  # Workaround for spinel master (0210389 / 2026-05-15) which changed
+  # String#index to return nil for not-found (was -1). Spinel's
+  # narrowing doesn't yet propagate through `.nil?` checks, so any
+  # callsite that used `s.index(needle)` widens to sp_RbVal and
+  # cascades into the call chain. Pure-int loop avoids the issue
+  # entirely. Replace with `s.index(needle, start)` once spinel
+  # narrows int|nil locals after an early `return if x.nil?`.
+  def self.str_find(s, needle, start)
+    nlen = needle.length
+    slen = s.length
+    pos = start
+    while pos <= slen - nlen
+      if s[pos, nlen] == needle
+        return pos
+      end
+      pos += 1
+    end
+    -1
+  end
+
   # HTML-escape: minimum safe set for attribute and PCDATA contexts.
   # Used by the build-time Mustache compiler for the default
   # `{{var}}` (escaped) form. Char-by-char to avoid `gsub` (spinel's

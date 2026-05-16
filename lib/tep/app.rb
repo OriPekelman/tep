@@ -141,7 +141,7 @@ module Tep
       if req.verb != "GET" && req.verb != "HEAD"
         return false
       end
-      if req.path.index("..") >= 0
+      if Tep.str_find(req.path, "..", 0) >= 0
         return false
       end
       full = @static_root + req.path
