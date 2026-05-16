@@ -83,12 +83,15 @@ module Tep
   #
   # History: workaround for spinel `0210389` which made `String#index`
   # return nil for not-found (was -1). spinel `28545ff` (matz/spinel#550)
-  # since added int|nil narrowing after an explicit nil-guard, so the
-  # nil-side risk is upstream-resolved. The helper is still useful
-  # for two reasons: (1) the offset overload `s.index(needle, start)`
-  # isn't part of spinel's String#index coverage yet (this fn rolls
-  # it in via the start param), and (2) pure-int return keeps the
-  # 17 callsites idiomatic with `if x >= 0` vs `if x.nil?`.
+  # added int|nil narrowing after an explicit nil-guard, so the
+  # nil-side risk is upstream-resolved AND spinel supports the
+  # offset overload `s.index(needle, start)` directly (emits
+  # `sp_str_index_from_poly`). The helper stays solely for callsite
+  # ergonomics: the 17 callers all use `if x < 0` style int comparison
+  # (which can't narrow against int|nil under spinel's current
+  # narrowing model). Removing it would require a mechanical
+  # `< 0` -> `.nil?` refactor across http.rb / parser.rb / url.rb /
+  # jwt.rb / app.rb. Worth doing eventually; not urgent.
   def self.str_find(s, needle, start)
     nlen = needle.length
     slen = s.length
