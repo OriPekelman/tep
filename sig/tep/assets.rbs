@@ -1,0 +1,16 @@
+# Compile-time asset bundling. The bin/tep translator scans
+# `<app_dir>/assets/` at build time and emits `Tep::Assets._add`
+# calls. Bytes ride in the binary as string literals; mime is
+# inferred by extension. The runtime side serves from the bundle.
+module Tep
+  class Assets
+    # Builder-emitted: register one asset by absolute path.
+    def self._add: (String path, String body, String mime) -> Integer
+
+    def self.has?: (String path) -> bool
+
+    # Serve `path` into `res` (body + Content-Type). Returns true
+    # if the path was found in the bundle.
+    def self.serve: (String path, Tep::Response res) -> bool
+  end
+end

@@ -1,0 +1,9 @@
+# HTTP/1.x request parser. Internal -- app code receives the
+# Tep::Request from the framework dispatch loop.
+module Tep
+  class Parser
+    # Parse a raw request blob (the bytes between the start-line
+    # and end-of-headers / body). Returns a populated Tep::Request.
+    def self.parse: (String blob) -> Tep::Request
+  end
+end

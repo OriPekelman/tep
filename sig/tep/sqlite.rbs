@@ -1,0 +1,46 @@
+# libsqlite3 wrapper via a small C shim. Single in-flight cursor
+# per instance (prepare -> bind -> step -> finalize). Multiple
+# overlapping queries need multiple SQLite instances.
+module Tep
+  class SQLite
+    # Named `:dbh` rather than `:handle` so it doesn't collide with
+    # Tep::Handler#handle in spinel's poly-dispatch tables.
+    attr_accessor dbh: Integer
+
+    def initialize: () -> void
+
+    # `:memory:` works for an anonymous in-memory db. Returns true on
+    # success. Multiple opens leak the prior handle -- close first.
+    def open: (String path) -> bool
+    def close: () -> Integer
+
+    # No-row statements (DDL / DML). No bind in this form; use
+    # `prepare + bind + step + finalize` for user-supplied values.
+    def exec: (String sql) -> bool
+
+    # Open a cursor on a parameterised query. Followed by zero or
+    # more bind_* + step calls + finalize.
+    def prepare: (String sql) -> bool
+
+    # 1-indexed bind slot (matches sqlite3 convention).
+    def bind_str: (Integer idx, String value) -> Integer
+    def bind_int: (Integer idx, Integer value) -> Integer
+
+    # Cursor stepping. 1 = row available, 0 = done, -1 = error.
+    def step: () -> Integer
+
+    # Column readers (0-indexed). NULL columns return "" / 0.
+    def col_str: (Integer i) -> String
+    def col_int: (Integer i) -> Integer
+    def col_count: () -> Integer
+
+    def finalize: () -> Integer
+    def reset: () -> Integer
+    def last_rowid: () -> Integer
+
+    # Convenience for single-row, single-column queries. Optional
+    # `p1` -- pass "" for no bind. Always finalises before returning.
+    def first_str: (String sql, String p1) -> String
+    def first_int: (String sql, String p1) -> Integer
+  end
+end

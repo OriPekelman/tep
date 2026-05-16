@@ -1,0 +1,9 @@
+# Base class for before / after request filters. Override `before`
+# or `after` (or both) on subclasses; non-empty default bodies in
+# the base keep spinel's dispatch happy.
+module Tep
+  class Filter
+    def before: (Tep::Request req, Tep::Response res) -> Integer
+    def after:  (Tep::Request req, Tep::Response res) -> Integer
+  end
+end

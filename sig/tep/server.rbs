@@ -1,0 +1,24 @@
+# Prefork HTTP/1.x server -- listen + SO_REUSEPORT + per-worker
+# blocking accept loop. The default `run(port, workers, true)` is
+# the production shape; pass `false` for the quiet flag if you want
+# stderr request logging during dev.
+module Tep
+  class Server
+    attr_accessor app: Tep::App
+
+    def initialize: (Tep::App app) -> void
+
+    # Bind, fork `workers` children, run the per-worker accept loop
+    # in each. Returns when all children exit.
+    def run: (Integer port, Integer workers, bool quiet) -> Integer
+
+    def worker_loop: (Integer sfd) -> Integer
+    def handle_connection: (Integer client) -> Integer
+    def write_response: (Integer client, Tep::Request req, Tep::Response res, bool keep_alive) -> Integer
+    def build_head: (Tep::Request req, Tep::Response res) -> String
+    def send_simple: (Integer client, Integer status, String msg) -> Integer
+  end
+
+  # Translates an HTTP status code to its standard reason phrase.
+  def self.reason: (Integer status) -> String
+end

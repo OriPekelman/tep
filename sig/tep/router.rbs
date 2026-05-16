@@ -1,0 +1,27 @@
+# Route table + matcher. Each Route holds the verb / pattern /
+# handler triple plus a per-request `r_params` capture buffer.
+# Internal: app code goes through `Tep::App#add_route`.
+module Tep
+  class Route
+    attr_accessor r_verb: String
+    attr_accessor r_pat: String
+    attr_accessor r_handler: Tep::Handler
+    attr_accessor r_params: Array[String]
+
+    def initialize: (String verb, String pattern, Tep::Handler handler) -> void
+
+    def handler: () -> Tep::Handler
+    def matches?: (String req_verb, String req_path) -> bool
+    def fold_captures: (Tep::Request req) -> Integer
+  end
+
+  class Router
+    attr_accessor routes: Array[Tep::Route]
+
+    def initialize: () -> void
+    def add: (String verb, String pattern, Tep::Handler handler) -> Array[Tep::Route]
+    def match: (Tep::Request req) -> Tep::Route?
+    def match_after: (Tep::Request req, Integer start_idx) -> Tep::Route?
+    def index_of: (Tep::Route route) -> Integer
+  end
+end

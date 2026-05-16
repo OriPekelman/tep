@@ -1,0 +1,29 @@
+# Sidekiq-shaped background job queue, backed by SQLite. Subclass
+# `Tep::Job` and override `#perform(arg)`; enqueue via the class-side
+# `enqueue(name, arg, db_path)`.
+module Tep
+  class Job
+    # Subclass override. The base returns "" so the dispatch table
+    # stays type-safe.
+    def perform: (String arg) -> String
+
+    # CREATE TABLE if not exists. Returns 0 on success.
+    def self.init_schema: (String db_path) -> Integer
+
+    # Insert a queued row. Returns the new rowid.
+    def self.enqueue: (String name, String arg, String db_path) -> Integer
+
+    # Pull the next pending row as a JSON-ish blob with keys "id",
+    # "job_name", "arg". Returns "" if the queue is empty.
+    def self.fetch_next: (String db_path) -> String
+
+    # Mark a row done + persist the result string into the row's
+    # `result` column. Returns 1 on success, 0 on db failure.
+    def self.mark_done: (String db_path, Integer row_id, String result) -> Integer
+
+    # Mark a row failed. The error message isn't persisted by this
+    # method -- callers write it via their own SQLite calls if they
+    # need it.
+    def self.mark_failed: (String db_path, Integer row_id) -> Integer
+  end
+end

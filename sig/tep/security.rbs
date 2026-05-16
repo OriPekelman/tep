@@ -1,0 +1,35 @@
+# Two before/after filters covering the bulk of "must-have" web
+# security headers. Apps with stricter needs compose their own
+# Tep::Filter subclass.
+module Tep
+  class Security
+    # Cross-origin handshake. `set_origin("*")` is the permissive
+    # default; production should pin to a specific origin.
+    class Cors < Tep::Filter
+      attr_accessor origin: String
+      attr_accessor allowed_verbs: String
+      attr_accessor allowed_headers: String
+      attr_accessor max_age: Integer
+
+      def initialize: () -> void
+
+      def set_origin: (String o) -> String
+      def set_allowed_verbs: (String m) -> String
+      def set_allowed_headers: (String h) -> String
+      def set_max_age: (Integer n) -> Integer
+
+      def before: (Tep::Request req, Tep::Response res) -> Integer
+    end
+
+    # HSTS, X-Content-Type-Options, X-Frame-Options. After-filter so
+    # it lands on every response (including static / 404).
+    class Headers < Tep::Filter
+      attr_accessor hsts_seconds: Integer
+
+      def initialize: () -> void
+      def set_hsts: (Integer seconds) -> Integer
+
+      def after: (Tep::Request req, Tep::Response res) -> Integer
+    end
+  end
+end

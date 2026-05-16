@@ -1,0 +1,16 @@
+# Base class for HTTP request handlers. Subclass and override
+# `#handle(req, res)`. The Sinatra-style `get '/' do ... end`
+# DSL emits a TepRoute_N subclass per block.
+module Tep
+  class Handler
+    # Return a String to set the body, or mutate `res` directly.
+    def handle: (Tep::Request req, Tep::Response res) -> String
+
+    # Regex-route hooks. Default is false / no-match / empty captures.
+    # TepRoute_N subclasses for `get %r{...}` routes override these
+    # with literal-regex bodies baked at build time.
+    def is_regex?: () -> bool
+    def re_match?: (String path) -> bool
+    def re_capture: (String path) -> Array[String]
+  end
+end

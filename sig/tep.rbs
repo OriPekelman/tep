@@ -20,4 +20,30 @@ module Tep
   # `s` starting from `start`, or -1 if not found. Workaround for
   # String#index returning nil under spinel master (see matz/spinel#550).
   def self.str_find: (String s, String needle, Integer start) -> Integer
+
+  # No-op fiber body. Used to type-seed Fiber-bearing collections
+  # (the App's `sched_fibers` array) without triggering anything.
+  def self.seed_fiber_noop: () -> Integer
+
+  # A canonical no-op Fiber instance. Returns `Fiber.new { seed_fiber_noop }`.
+  def self.seed_fiber: () -> Fiber
+
+  # Session-secret accessors (`Tep::APP` underneath).
+  def self.session_secret: () -> String
+  def self.session_secret=: (String v) -> bool
+
+  # Wrapper for the active Fiber slot in the scheduler array. `f`
+  # is the actual Fiber; the parallel `sched_wake_at` / `sched_io_*`
+  # arrays index by slot position.
+  class FiberSlot
+    attr_accessor f: Fiber
+    def initialize: (Fiber f) -> void
+  end
+
+  COOKIE_NAME: String
+  VERSION: String
+
+  # The framework-wide singleton App instance. Set by the bin/tep
+  # translator near the top of the inlined library text.
+  APP: Tep::App
 end

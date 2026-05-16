@@ -1,0 +1,46 @@
+# Cooperative fiber scheduler with timer + I/O parking. State lives
+# in parallel arrays on `Tep::APP` (sched_fibers / sched_wake_at /
+# sched_io_fd / sched_io_mode / sched_io_ready) so codegen can keep
+# them as typed arrays rather than a single PtrArray of structs.
+module Tep
+  class Scheduler
+    # Mode bits for io_wait. Match sphttp's wire encoding.
+    READ: Integer
+    WRITE: Integer
+
+    def self.spawn_fiber: (Fiber f) -> Fiber
+
+    # One scheduler pass. Returns true if it resumed a fiber.
+    def self.tick: (Integer poll_timeout_ms) -> bool
+
+    # Build the poll set from any I/O-parked fibers and run poll(2).
+    def self.poll_round: (Integer timeout_ms) -> Integer
+
+    # Spin tick() until every fiber has finished.
+    def self.run_until_empty: () -> Integer
+
+    # Spin tick() for at most `seconds`. Returns 0.
+    def self.run_for: (Integer seconds) -> Integer
+
+    # Next scheduled wake time (unix seconds), or -1 if none.
+    def self.next_wake: () -> Integer
+
+    # Any fiber currently parked on I/O.
+    def self.any_io_waiter: () -> bool
+
+    # Fiber-aware yield. Outside a fiber, falls back to `sleep`.
+    def self.pause: (Integer seconds) -> Integer
+
+    # Park current fiber until `fd` is ready (mode bits: 1=READ,
+    # 2=WRITE, 3=both) OR `timeout_seconds` elapses. Returns the
+    # observed-ready bits (0 on timeout). Outside a fiber: single
+    # poll() call inline.
+    def self.io_wait: (Integer fd, Integer mode, Integer timeout_seconds) -> Integer
+
+    # Drop every fiber slot. Used between worker-loop iterations.
+    def self.clear: () -> Integer
+
+    # Number of still-running fibers.
+    def self.alive_count: () -> Integer
+  end
+end
