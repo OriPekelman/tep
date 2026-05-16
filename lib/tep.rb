@@ -81,13 +81,14 @@ module Tep
   # str_find -- naive substring search returning the int position of
   # `needle` in `s` starting from `start`, or -1 if not found.
   #
-  # Workaround for spinel master (0210389 / 2026-05-15) which changed
-  # String#index to return nil for not-found (was -1). Spinel's
-  # narrowing doesn't yet propagate through `.nil?` checks, so any
-  # callsite that used `s.index(needle)` widens to sp_RbVal and
-  # cascades into the call chain. Pure-int loop avoids the issue
-  # entirely. Replace with `s.index(needle, start)` once spinel
-  # narrows int|nil locals after an early `return if x.nil?`.
+  # History: workaround for spinel `0210389` which made `String#index`
+  # return nil for not-found (was -1). spinel `28545ff` (matz/spinel#550)
+  # since added int|nil narrowing after an explicit nil-guard, so the
+  # nil-side risk is upstream-resolved. The helper is still useful
+  # for two reasons: (1) the offset overload `s.index(needle, start)`
+  # isn't part of spinel's String#index coverage yet (this fn rolls
+  # it in via the start param), and (2) pure-int return keeps the
+  # 17 callsites idiomatic with `if x >= 0` vs `if x.nil?`.
   def self.str_find(s, needle, start)
     nlen = needle.length
     slen = s.length

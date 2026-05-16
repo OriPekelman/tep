@@ -8,7 +8,7 @@ class TestParallel < TepTest
     require 'sinatra'
 
     class Doubler < Tep::ParallelWorker
-      def process(item)
+      def run(item)
         # Item is a small integer-as-string; double it and emit the
         # child's pid so the test can verify each result came from a
         # distinct process.
@@ -18,7 +18,7 @@ class TestParallel < TepTest
     end
 
     class Echoer < Tep::ParallelWorker
-      def process(item)
+      def run(item)
         item
       end
     end
@@ -66,7 +66,7 @@ class TestParallel < TepTest
     end
 
     class FileSentinel < Tep::ParallelWorker
-      def process(item)
+      def run(item)
         File.write("/tmp/tep_par_test_each_" + item, "done")
         ""
       end

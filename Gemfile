@@ -8,6 +8,10 @@ source "https://rubygems.org"
 gem "rake"
 gem "minitest"
 
+# Stdlib-bundled-gems Ruby 3.4 stopped default-requiring. test_jwt
+# uses Base64 to decode a JWT payload during the tamper test.
+gem "base64"
+
 # Library-shipped type signatures live under `sig/`. RBS gives us
 # syntax validation today (`rake rbs:validate`) and IDE tooling
 # integration; spinel-side consumption is tracked at #6.

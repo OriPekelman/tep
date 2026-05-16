@@ -58,23 +58,19 @@
 #
 # Worker base class
 # -----------------
-# Real workers subclass `Tep::ParallelWorker` and override
-# `process(item)`. spinel#531 (closed by 270eceb) fixed the
-# original blocker -- `Tep::Server#run` no longer leaks into the
-# `@worker.X` dispatch table -- but a separate spinel issue still
-# blocks renaming `process` to `run`: when the dispatch arms all
-# return the same scalar type, spinel still boxes through sp_RbVal
-# (sp_box_str + sp_box_int wrappers) instead of returning the
-# scalar directly, so the result of `@worker.process(item)` is
-# typed as sp_RbVal even when every arm returns a String. Tracked
-# as a #531 followup; retry the rename once dispatch-result
-# unification lands.
+# Real workers subclass `Tep::ParallelWorker` and override `run(item)`.
+# Two spinel landings made this name viable: matz/spinel#531 (270eceb)
+# narrowed the poly-receiver dispatch table by ivar observed-class set
+# (so `Tep::Server#run` no longer leaks into `@worker.run`'s switch),
+# and matz/spinel#549 (1d561ad) collapsed the dispatch result to a
+# scalar when all reachable arms agree on the return type (so the
+# result lands as `const char *` instead of sp_RbVal).
 module Tep
-  # Base class for Tep::Parallel workers. Override `process(item)` in
-  # subclasses; the default emits "" so a base-class instance
-  # used for seeding stays type-safe.
+  # Base class for Tep::Parallel workers. Override `run(item)` in
+  # subclasses; the default emits "" so a base-class instance used
+  # for seeding stays type-safe.
   class ParallelWorker
-    def process(item)
+    def run(item)
       ""
     end
   end
@@ -129,7 +125,7 @@ module Tep
     def spawn_one(item, idx, job_dir)
       pid = Sock.sphttp_fork
       if pid == 0
-        result = @worker.process(item)
+        result = @worker.run(item)
         path   = job_dir + "/" + idx.to_s
         File.write(path, result)
         Sock.sphttp_exit(0)
@@ -158,7 +154,7 @@ module Tep
     def spawn_one_silent(item)
       pid = Sock.sphttp_fork
       if pid == 0
-        @worker.process(item)
+        @worker.run(item)
         Sock.sphttp_exit(0)
       end
       pid

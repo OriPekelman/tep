@@ -1,0 +1,37 @@
+# grosser/parallel-shaped fork fan-out. Each item becomes one child
+# process; results are collected via a tiny file-based IPC channel.
+#
+# Strings only (no Marshal under spinel), one fork per item (no
+# fixed-size pool in v1).
+module Tep
+  # Base class for parallel workers. Subclasses override `run(item)`
+  # and return a String. The base class's `run` returns "" so the
+  # type-seeding in lib/tep.rb stays type-safe.
+  class ParallelWorker
+    def run: (String item) -> String
+  end
+
+  class Parallel
+    attr_accessor worker: Tep::ParallelWorker
+
+    def initialize: (Tep::ParallelWorker worker) -> void
+
+    # Result-collecting fan-out: returns an Array<String> in input
+    # order. One fork per item.
+    def map_processes: (Array[String] items) -> Array[String]
+
+    # Fork one child to process `item`, writing the result to
+    # `<job_dir>/<idx>`. Returns the child pid in the parent; the
+    # child never returns.
+    def spawn_one: (String item, Integer idx, String job_dir) -> Integer
+
+    # Fire-and-forget shape: forks one child per item, doesn't capture
+    # results. Returns 0 once every child exits.
+    def each_process: (Array[String] items) -> Integer
+
+    def spawn_one_silent: (String item) -> Integer
+
+    # Per-invocation scratch dir under /tmp.
+    def self.scratch_dir: () -> String
+  end
+end
