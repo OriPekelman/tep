@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>tep chatbot — first-boot setup</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body class="auth-page">
+  <main class="auth-card">
+    <h1>Set a password</h1>
+    <p class="hint">This is the first boot. Pick a password to protect this chatbot — you'll use it to log in on subsequent visits.</p>
+    <% if @error %>
+      <p class="error"><%= @error %></p>
+    <% end %>
+    <form method="post" action="/setup">
+      <label>Password (6+ characters)
+        <input type="password" name="password" autofocus required minlength="6">
+      </label>
+      <button type="submit">Set password</button>
+    </form>
+  </main>
+</body>
+</html>

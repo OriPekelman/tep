@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>tep chatbot</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <h1>tep chatbot</h1>
+    <div class="topbar-meta">
+      <span class="model"><%= @model %></span>
+      <span class="backend"><%= @backend %></span>
+      <form method="post" action="/logout" class="logout-form">
+        <button type="submit">Log out</button>
+      </form>
+    </div>
+  </header>
+
+  <main id="chat">
+    <ol id="messages" class="messages"></ol>
+    <form id="composer" class="composer">
+      <textarea id="composer-input" rows="3" placeholder="Send a message…" autofocus></textarea>
+      <button type="submit" id="send-btn">Send</button>
+    </form>
+    <p id="status" class="status"></p>
+  </main>
+
+  <!-- Boot data embedded inline so the page renders without a JS round-trip. -->
+  <script id="bootdata" type="application/json"><%= @messages_json %></script>
+  <script src="/markdown.js"></script>
+  <script src="/chat.js"></script>
+</body>
+</html>

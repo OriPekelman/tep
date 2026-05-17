@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>tep chatbot — login</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body class="auth-page">
+  <main class="auth-card">
+    <h1>Log in</h1>
+    <% if @error %>
+      <p class="error"><%= @error %></p>
+    <% end %>
+    <form method="post" action="/login">
+      <label>Password
+        <input type="password" name="password" autofocus required>
+      </label>
+      <button type="submit">Log in</button>
+    </form>
+  </main>
+</body>
+</html>
