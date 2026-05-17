@@ -33,6 +33,10 @@ module Tep
     attr_accessor pending_client_fd: Integer
     attr_accessor pending_quiet: bool
 
+    # Tep::Job background-worker idempotency flag for the chatbot
+    # demo (see examples/chatbot/app.rb's JobWorker).
+    attr_accessor user_bg_started: bool
+
     def initialize: () -> void
 
     def add_asset: (String path, String body, String mime) -> String

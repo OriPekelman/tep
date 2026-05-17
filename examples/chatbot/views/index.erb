@@ -5,19 +5,25 @@
   <title>tep chatbot</title>
   <link rel="stylesheet" href="/style.css">
 </head>
-<body>
-  <header class="topbar">
-    <h1>tep chatbot</h1>
-    <div class="topbar-meta">
-      <span class="model"><%= @model %></span>
-      <span class="backend"><%= @backend %></span>
+<body class="app">
+  <aside class="sidebar">
+    <div class="sidebar-head">
+      <strong>tep chatbot</strong>
+      <button id="new-conv-btn" type="button">+ New</button>
+    </div>
+    <ol id="conv-list" class="conv-list"></ol>
+    <div class="sidebar-foot">
       <form method="post" action="/logout" class="logout-form">
         <button type="submit">Log out</button>
       </form>
     </div>
-  </header>
+  </aside>
 
-  <main id="chat">
+  <main id="chat" data-conv-id="<%= @conv_id %>">
+    <header class="topbar">
+      <span class="model"><%= @model %></span>
+      <span class="backend"><%= @backend %></span>
+    </header>
     <ol id="messages" class="messages"></ol>
     <form id="composer" class="composer">
       <textarea id="composer-input" rows="3" placeholder="Send a message…" autofocus></textarea>
@@ -26,8 +32,9 @@
     <p id="status" class="status"></p>
   </main>
 
-  <!-- Boot data embedded inline so the page renders without a JS round-trip. -->
-  <script id="bootdata" type="application/json"><%= @messages_json %></script>
+  <!-- Boot data: current conversation messages + sidebar conversations. -->
+  <script id="bootmsgs" type="application/json"><%= @messages_json %></script>
+  <script id="bootconvs" type="application/json"><%= @conversations_json %></script>
   <script src="/markdown.js"></script>
   <script src="/chat.js"></script>
 </body>

@@ -1,4 +1,5 @@
-/* tep chatbot — minimal CSS, ~150 lines. No framework, no build. */
+/* tep chatbot — Phase C: sidebar + chat panel layout. ~200 lines,
+ * vanilla CSS, no framework. */
 
 * { box-sizing: border-box; }
 html, body {
@@ -22,115 +23,109 @@ html, body {
   border-radius: 12px;
   box-shadow: 0 2px 16px rgba(0,0,0,0.08);
 }
-.auth-card h1 {
-  margin: 0 0 1rem;
-  font-size: 1.25rem;
-}
-.auth-card .hint {
-  font-size: 0.9rem;
-  color: #666;
-  margin: 0 0 1rem;
-}
+.auth-card h1     { margin: 0 0 1rem; font-size: 1.25rem; }
+.auth-card .hint  { font-size: 0.9rem; color: #666; margin: 0 0 1rem; }
 .auth-card .error {
-  background: #fee;
-  border: 1px solid #fcc;
-  color: #c33;
-  padding: 0.5rem 0.75rem;
-  border-radius: 6px;
-  margin: 0 0 1rem;
+  background: #fee; border: 1px solid #fcc; color: #c33;
+  padding: 0.5rem 0.75rem; border-radius: 6px; margin: 0 0 1rem;
   font-size: 0.9rem;
 }
-.auth-card label {
-  display: block;
-  margin: 0 0 1rem;
-  font-size: 0.9rem;
-  color: #444;
-}
-.auth-card input {
-  display: block;
-  width: 100%;
-  margin-top: 0.25rem;
-  padding: 0.5rem;
-  border: 1px solid #ccc;
-  border-radius: 6px;
-  font: inherit;
+.auth-card label  { display: block; margin: 0 0 1rem; font-size: 0.9rem; color: #444; }
+.auth-card input  {
+  display: block; width: 100%; margin-top: 0.25rem;
+  padding: 0.5rem; border: 1px solid #ccc; border-radius: 6px; font: inherit;
 }
 .auth-card button {
-  width: 100%;
-  padding: 0.6rem;
-  background: #111;
-  color: #fff;
-  border: none;
-  border-radius: 6px;
-  font: inherit;
-  cursor: pointer;
+  width: 100%; padding: 0.6rem; background: #111; color: #fff;
+  border: none; border-radius: 6px; font: inherit; cursor: pointer;
 }
 .auth-card button:hover { background: #333; }
 
-/* ---------------- chat page ---------------- */
-.topbar {
+/* ---------------- app layout: sidebar + main ---------------- */
+.app {
+  display: grid;
+  grid-template-columns: 260px 1fr;
+  height: 100vh;
+}
+
+/* ---- sidebar ---- */
+.sidebar {
+  background: #1f1f23;
+  color: #ddd;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+.sidebar-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0.5rem 1rem;
-  background: #fff;
-  border-bottom: 1px solid #e5e5e5;
+  padding: 1rem;
+  border-bottom: 1px solid #2c2c30;
 }
-.topbar h1 {
-  margin: 0;
-  font-size: 1rem;
-  font-weight: 600;
+.sidebar-head strong { color: #fff; font-size: 1rem; }
+.sidebar-head button {
+  font: inherit; font-size: 0.85rem; padding: 0.3rem 0.7rem;
+  background: #2c2c30; color: #ddd;
+  border: 1px solid #3a3a3f; border-radius: 6px; cursor: pointer;
 }
-.topbar-meta {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  font-size: 0.85rem;
-  color: #666;
+.sidebar-head button:hover { background: #38383d; color: #fff; }
+
+.conv-list {
+  list-style: none; margin: 0; padding: 0.5rem;
+  flex: 1; overflow-y: auto;
 }
-.topbar-meta .model { font-weight: 600; color: #333; }
-.topbar-meta .backend { font-family: ui-monospace, monospace; font-size: 0.75rem; }
+.conv-list li {
+  padding: 0.5rem 0.75rem; margin-bottom: 0.25rem;
+  border-radius: 6px; cursor: pointer;
+  font-size: 0.9rem; color: #ccc;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.conv-list li:hover    { background: #2c2c30; color: #fff; }
+.conv-list li.active   { background: #3a3a3f; color: #fff; }
+.conv-list li.untitled { color: #888; font-style: italic; }
+
+.sidebar-foot {
+  padding: 1rem; border-top: 1px solid #2c2c30;
+}
 .logout-form { margin: 0; }
 .logout-form button {
-  font: inherit;
-  font-size: 0.85rem;
-  padding: 0.3rem 0.6rem;
-  background: transparent;
-  border: 1px solid #ccc;
-  border-radius: 6px;
-  cursor: pointer;
+  width: 100%; font: inherit; font-size: 0.85rem; padding: 0.4rem;
+  background: transparent; border: 1px solid #3a3a3f; color: #ddd;
+  border-radius: 6px; cursor: pointer;
 }
+.logout-form button:hover { background: #2c2c30; color: #fff; }
 
+/* ---- chat main ---- */
 #chat {
-  max-width: 720px;
-  margin: 0 auto;
-  padding: 1rem;
-  display: flex;
-  flex-direction: column;
-  height: calc(100vh - 50px);
+  display: flex; flex-direction: column;
+  height: 100vh; overflow: hidden;
 }
+.topbar {
+  display: flex; align-items: center; gap: 0.75rem;
+  padding: 0.5rem 1rem;
+  background: #fff; border-bottom: 1px solid #e5e5e5;
+  font-size: 0.85rem; color: #666;
+}
+.topbar .model   { font-weight: 600; color: #333; }
+.topbar .backend { font-family: ui-monospace, monospace; font-size: 0.75rem; }
 
 .messages {
-  list-style: none;
-  margin: 0 0 1rem;
-  padding: 0;
-  flex: 1;
-  overflow-y: auto;
+  list-style: none; margin: 0; padding: 1rem;
+  flex: 1; overflow-y: auto;
+  max-width: 760px; width: 100%;
+  margin-left: auto; margin-right: auto;
 }
 
 .msg {
-  margin: 0 0 1rem;
-  padding: 0.75rem 1rem;
-  border-radius: 12px;
-  max-width: 85%;
-  white-space: pre-wrap;
-  word-wrap: break-word;
+  margin: 0 0 1rem; padding: 0.75rem 1rem;
+  border-radius: 12px; max-width: 85%;
+  white-space: pre-wrap; word-wrap: break-word;
 }
 .msg.user      { background: #d8e9fb; margin-left: auto; }
 .msg.assistant { background: #fff; border: 1px solid #e5e5e5; }
 .msg.error     { background: #fee; color: #c33; border: 1px solid #fcc; }
 
-/* Markdown-rendered chunks inside .msg.assistant */
 .msg.assistant p              { margin: 0 0 0.5rem; }
 .msg.assistant p:last-child   { margin-bottom: 0; }
 .msg.assistant code           { background: #f3f3f3; padding: 0.05em 0.3em; border-radius: 3px; font-family: ui-monospace, monospace; font-size: 0.9em; }
@@ -139,32 +134,21 @@ html, body {
 .msg.assistant a              { color: #0366d6; }
 
 .composer {
-  display: flex;
-  gap: 0.5rem;
-  align-items: flex-end;
+  display: flex; gap: 0.5rem; align-items: flex-end;
+  padding: 1rem; border-top: 1px solid #e5e5e5; background: #fafafa;
+  max-width: 760px; width: 100%; margin: 0 auto;
 }
 .composer textarea {
-  flex: 1;
-  padding: 0.6rem;
-  border: 1px solid #ccc;
-  border-radius: 8px;
-  font: inherit;
-  resize: vertical;
+  flex: 1; padding: 0.6rem; border: 1px solid #ccc; border-radius: 8px;
+  font: inherit; resize: vertical;
 }
 .composer button {
-  padding: 0.6rem 1.2rem;
-  background: #111;
-  color: #fff;
-  border: none;
-  border-radius: 8px;
-  font: inherit;
-  cursor: pointer;
+  padding: 0.6rem 1.2rem; background: #111; color: #fff;
+  border: none; border-radius: 8px; font: inherit; cursor: pointer;
 }
 .composer button:disabled { background: #888; cursor: wait; }
 
 .status {
-  margin: 0.5rem 0 0;
-  font-size: 0.85rem;
-  color: #888;
+  margin: 0 1rem 0.5rem; font-size: 0.85rem; color: #888;
   min-height: 1.5em;
 }

@@ -21,6 +21,11 @@ module Tep
     # by writing the values to App-state and yielding so the new fiber
     # reads them before the next accept iteration overwrites.
     attr_accessor :pending_listen_fd, :pending_client_fd, :pending_quiet
+    # Tep::Job background-worker idempotency flag. App-level so a
+    # single-shot spawn from a before-filter doesn't fire repeatedly.
+    # Per-worker (each prefork child has its own Tep::APP, so each
+    # worker spawns one background fiber).
+    attr_accessor :user_bg_started
 
     def initialize
       @router         = Router.new
@@ -57,6 +62,7 @@ module Tep
       @pending_listen_fd = -1
       @pending_client_fd = -1
       @pending_quiet     = false
+      @user_bg_started   = false
     end
 
     def add_asset(path, body, mime)

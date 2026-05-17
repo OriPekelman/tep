@@ -1,28 +1,74 @@
-// chat.js -- vanilla JS, ~120 lines. Wires the composer to /api/send
-// and renders the resulting messages. Phase A is synchronous: send,
-// wait for the full reply, render. Phase B adds SSE streaming.
+// chat.js -- Phase C: sidebar + multi-conversation + SSE streaming.
+// Vanilla JS, ~200 lines. Polls /api/conversations every 10s to
+// pick up titles set by TitleJob (background worker, server-side).
 
 (function () {
+  var chatEl     = document.getElementById('chat');
   var messagesEl = document.getElementById('messages');
   var formEl     = document.getElementById('composer');
   var inputEl    = document.getElementById('composer-input');
   var btnEl      = document.getElementById('send-btn');
   var statusEl   = document.getElementById('status');
+  var convListEl = document.getElementById('conv-list');
+  var newBtnEl   = document.getElementById('new-conv-btn');
 
-  // Boot from the inline JSON the server embedded in the page.
-  var boot;
-  try {
-    boot = JSON.parse(document.getElementById('bootdata').textContent);
-  } catch (e) {
-    boot = { messages: [] };
-  }
-  boot.messages.forEach(appendMessage);
+  var currentConvId = parseInt(chatEl.dataset.convId || '0', 10);
+
+  // Boot from inline JSON the server embedded.
+  var bootMsgs, bootConvs;
+  try { bootMsgs = JSON.parse(document.getElementById('bootmsgs').textContent); }
+  catch (e) { bootMsgs = { messages: [] }; }
+  try { bootConvs = JSON.parse(document.getElementById('bootconvs').textContent); }
+  catch (e) { bootConvs = { conversations: [] }; }
+
+  bootMsgs.messages.forEach(appendMessage);
+  renderConvList(bootConvs.conversations);
   scrollToEnd();
+
+  // ---------------- conversation sidebar ----------------
+
+  function renderConvList(convs) {
+    convListEl.innerHTML = '';
+    convs.forEach(function (c) {
+      var li = document.createElement('li');
+      var label = (c.title && c.title.length > 0) ? c.title : 'New chat';
+      li.textContent = label;
+      if (!c.title || c.title.length === 0) li.classList.add('untitled');
+      if (c.id === currentConvId) li.classList.add('active');
+      li.addEventListener('click', function () {
+        if (c.id !== currentConvId) {
+          window.location.href = '/c/' + c.id;
+        }
+      });
+      convListEl.appendChild(li);
+    });
+  }
+
+  function refreshConvList() {
+    fetch('/api/conversations')
+      .then(function (r) { return r.json(); })
+      .then(function (j) { renderConvList(j.conversations); })
+      .catch(function () { /* ignore transient errors */ });
+  }
+
+  newBtnEl.addEventListener('click', function () {
+    fetch('/api/conversations', { method: 'POST' })
+      .then(function (r) { return r.json(); })
+      .then(function (j) { window.location.href = '/c/' + j.id; })
+      .catch(function (err) { appendError('could not create: ' + err.message); });
+  });
+
+  // Sidebar refresh tick. TitleJob latency is ~5s (poll) + ~LLM
+  // round-trip; 10s is plenty.
+  setInterval(refreshConvList, 10000);
+
+  // ---------------- messages + streaming ----------------
 
   function appendMessage(msg) {
     var li = document.createElement('li');
     li.className = 'msg ' + msg.role;
     if (msg.role === 'assistant') {
+      li.dataset.raw = msg.content;
       li.innerHTML = renderMarkdown(msg.content);
     } else {
       li.textContent = msg.content;
@@ -52,24 +98,20 @@
     var content = inputEl.value.trim();
     if (!content) return;
 
-    // Optimistically render the user turn.
     appendMessage({ role: 'user', content: content });
     inputEl.value = '';
     scrollToEnd();
     setSending(true);
 
-    // Pre-create the assistant message so we can append deltas
-    // into it as they arrive. Phase B streams via SSE; Phase A's
-    // /api/send (non-streaming JSON) stays as a fallback.
     var assistantLi = document.createElement('li');
     assistantLi.className = 'msg assistant';
-    var rawContent = '';
+    assistantLi.dataset.raw = '';
     messagesEl.appendChild(assistantLi);
 
     var body = new URLSearchParams();
     body.set('content', content);
 
-    fetch('/api/stream', {
+    fetch('/api/c/' + currentConvId + '/stream', {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: body.toString()
@@ -81,8 +123,7 @@
         }
         var reader = resp.body.getReader();
         var decoder = new TextDecoder();
-        var buf = '';
-        return readChunk(reader, decoder, buf, assistantLi, function (acc) { rawContent = acc; });
+        return readChunk(reader, decoder, '', assistantLi);
       })
       .catch(function (err) {
         appendError('network error: ' + err.message);
@@ -90,14 +131,13 @@
       .finally(function () {
         setSending(false);
         inputEl.focus();
+        // First reply may have triggered TitleJob -- refresh
+        // sidebar sooner than the 10s tick.
+        setTimeout(refreshConvList, 6000);
       });
   });
 
-  // Pull the next chunk off the reader, split out complete SSE
-  // events on \n\n, parse each `data: {"content":"<delta>"}` and
-  // append into the assistant <li>. Re-render markdown after every
-  // batch so code blocks etc. stay structured even mid-stream.
-  function readChunk(reader, decoder, buf, liEl, setAcc) {
+  function readChunk(reader, decoder, buf, liEl) {
     return reader.read().then(function (out) {
       if (out.done) return;
       buf += decoder.decode(out.value, { stream: true });
@@ -119,10 +159,10 @@
             scrollToEnd();
           }
         } catch (e) {
-          // Malformed SSE frame; ignore and keep reading.
+          // ignore malformed
         }
       }
-      return readChunk(reader, decoder, buf, liEl, setAcc);
+      return readChunk(reader, decoder, buf, liEl);
     });
   }
 

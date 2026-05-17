@@ -54,6 +54,13 @@ LOGGER = Tep::Logger.new
 LOGGER.set_level("info")
 LOGGER.to_stderr
 
+# Tep::Job's queue table init -- once per worker at module load,
+# avoids the "called every request" segfault we saw under
+# Tep::Server::Scheduled. (Probably an interaction between
+# Tep::Job's open/close cycle and the cooperative scheduler;
+# noted as a debug TODO in the Phase C commit.)
+Tep::Job.init_schema(ENV.fetch("CHAT_DB", "/tmp/tep_chatbot.db"))
+
 # -------------------------------------------------------------------
 # DB helpers. Each call opens + closes a fresh handle; tep_sqlite's
 # single-cursor-per-instance contract means the per-call shape is
@@ -93,20 +100,101 @@ def password_set?
   config_get("password_hash").length > 0
 end
 
-# Ensure conversation row #1 exists. Returns its id.
-def ensure_default_conversation
+# Conversation lifecycle. Phase C ships multi-conversation: a new
+# row per "New chat" click, sidebar listing newest-first, per-id
+# stream route. The schema is unchanged from Phase A.
+def create_conversation
   db = db_open
-  existing = db.first_int("SELECT id FROM conversations LIMIT 1", "")
-  if existing == 0
-    db.prepare("INSERT INTO conversations (title, created_at) VALUES (?, ?)")
-    db.bind_str(1, "Chat")
-    db.bind_int(2, Time.now.to_i)
-    db.step
-    db.finalize
-  end
-  out = db.first_int("SELECT id FROM conversations LIMIT 1", "")
+  db.prepare("INSERT INTO conversations (title, created_at) VALUES (?, ?)")
+  db.bind_str(1, "")   # title filled later by TitleJob
+  db.bind_int(2, Time.now.to_i)
+  db.step
+  db.finalize
+  id = db.last_rowid
   db.close
-  out
+  id
+end
+
+# Newest conversation id, or 0 if none exist.
+def newest_conversation_id
+  db = db_open
+  id = db.first_int("SELECT id FROM conversations ORDER BY id DESC LIMIT 1", "")
+  db.close
+  id
+end
+
+# Returns an existing conversation id, or creates a new one if the
+# db is empty. The chatbot defaults to "show me the newest" on /.
+def ensure_default_conversation
+  id = newest_conversation_id
+  if id == 0
+    id = create_conversation
+  end
+  id
+end
+
+# JSON list of {id, title, created_at} for the sidebar.
+def conversations_as_json
+  db = db_open
+  db.prepare("SELECT id, title, created_at FROM conversations ORDER BY id DESC")
+  out = '{"conversations":['
+  first = true
+  while db.step == 1
+    id = db.col_int(0)
+    title = db.col_str(1)
+    created = db.col_int(2)
+    if !first
+      out = out + ","
+    end
+    out = out + "{\"id\":" + id.to_s +
+                ",\"title\":" + Tep::Json.quote(title) +
+                ",\"created_at\":" + created.to_s + "}"
+    first = false
+  end
+  db.finalize
+  db.close
+  out + "]}"
+end
+
+# Set the title for a conversation. Used by TitleJob.
+def set_conversation_title(conv_id, title)
+  db = db_open
+  db.prepare("UPDATE conversations SET title = ? WHERE id = ?")
+  db.bind_str(1, title)
+  db.bind_int(2, conv_id)
+  db.step
+  db.finalize
+  db.close
+  0
+end
+
+# Count the assistant turns in a conversation. Used to decide
+# whether to enqueue TitleJob (only after the first one).
+def assistant_msg_count(conv_id)
+  db = db_open
+  db.prepare("SELECT COUNT(*) FROM messages WHERE conversation_id = ? AND role = 'assistant'")
+  db.bind_int(1, conv_id)
+  n = 0
+  if db.step == 1
+    n = db.col_int(0)
+  end
+  db.finalize
+  db.close
+  n
+end
+
+# Does this conversation lack a title?
+def needs_title?(conv_id)
+  db = db_open
+  db.prepare("SELECT title FROM conversations WHERE id = ?")
+  db.bind_int(1, conv_id)
+  t = ""
+  if db.step == 1
+    t = db.col_str(0)
+  end
+  db.finalize
+  db.close
+  t.length == 0
 end
 
 def append_message(conv_id, role, content)
@@ -196,6 +284,101 @@ end
 Tep.before AuthFilter.new
 
 # -------------------------------------------------------------------
+# Background worker -- TitleJob via Tep::Job
+# -------------------------------------------------------------------
+# Tep::Job persists pending work in SQLite (queue table init'd via
+# Tep::Job.init_schema). The chatbot enqueues TitleJob each time a
+# conversation gets its first assistant reply; a background fiber
+# (one per prefork worker) polls every 5 s, dispatches to
+# TitleJob.perform, and marks done.
+#
+# perform(arg) gets the conversation_id (as a String -- Tep::Job's
+# arg surface). The body reads the first user+assistant turns,
+# asks the LLM for a ~5-word title, and writes it back to
+# conversations.title. The sidebar polls /api/conversations every
+# few seconds to pick up the change.
+
+class TitleJob < Tep::Job
+  def perform(arg)
+    conv_id = arg.to_i
+
+    db = db_open
+    db.prepare("SELECT role, content FROM messages WHERE conversation_id = ? ORDER BY id ASC LIMIT 2")
+    db.bind_int(1, conv_id)
+    user_msg = ""
+    asst_msg = ""
+    while db.step == 1
+      r = db.col_str(0)
+      c = db.col_str(1)
+      if r == "user" && user_msg.length == 0
+        user_msg = c
+      elsif r == "assistant" && asst_msg.length == 0
+        asst_msg = c
+      end
+    end
+    db.finalize
+    db.close
+
+    if user_msg.length == 0
+      return ""
+    end
+
+    client = Tep::Llm.new(BACKEND_URL)
+    client.set_model(MODEL)
+    if API_KEY.length > 0
+      client.set_api_key(API_KEY)
+    end
+    client.set_system_prompt(
+      "You produce 4-6 word titles summarising a chat conversation. " +
+      "Reply with the title only, no quotes or punctuation."
+    )
+
+    prompt = "User: " + user_msg + "\n\nAssistant: " + asst_msg +
+             "\n\nWrite a 4-6 word title for this conversation."
+    msgs = [Tep::Llm::Message.new("user", prompt)]
+    reply = client.chat(msgs)
+
+    title = reply.content
+    if title.length > 80
+      title = title[0, 80]
+    end
+    if title.length == 0
+      title = "New chat"
+    end
+    set_conversation_title(conv_id, title)
+    ""
+  end
+end
+
+# Job dispatcher. Phase C ships INLINE dispatch (called from
+# LlmStreamer.pump right after the stream completes) rather than a
+# background-fiber poller. A naive `Fiber.new { poll_loop }` spawned
+# from a before-filter segfaulted under Tep::Server::Scheduled --
+# needs its own debug session (probably an interaction between the
+# scheduler tick + Tep::SQLite's single-cursor-per-process contract).
+# Inline dispatch keeps the Tep::Job queue table as an audit trail
+# without cross-fiber races. Phase E ("Tep::Parallel multi-backend
+# compare") is the better showcase for fork-based background work.
+class JobWorker
+  def self.process_one
+    json = Tep::Job.fetch_next(DB_PATH)
+    if json.length == 0
+      return 0
+    end
+    job_id = Tep::Json.get_int(json, "id")
+    name   = Tep::Json.get_str(json, "job_name")
+    arg    = Tep::Json.get_str(json, "arg")
+    if name == "TitleJob"
+      TitleJob.new.perform(arg)
+      Tep::Job.mark_done(DB_PATH, job_id, "")
+    else
+      Tep::Job.mark_failed(DB_PATH, job_id)
+    end
+    0
+  end
+end
+
+# -------------------------------------------------------------------
 # Routes
 # -------------------------------------------------------------------
 
@@ -254,19 +437,51 @@ post '/logout' do
   redirect "/login"
 end
 
-# Main UI. Embeds the conversation history inline so the page renders
-# usefully on first load without a JS round-trip.
+# Main UI: list of conversations + the most-recent conversation
+# pre-loaded into the chat panel. The sidebar JS polls
+# /api/conversations every few seconds to pick up titles set by
+# TitleJob, and rerenders the list.
 get '/' do
   conv_id = ensure_default_conversation
+  @conv_id = conv_id
   @messages_json = messages_as_json(conv_id)
+  @conversations_json = conversations_as_json
   @model = MODEL
   @backend = BACKEND_URL
   erb :index
 end
 
-# JSON: list of messages in the current conversation.
-get '/api/messages' do
-  conv_id = ensure_default_conversation
+# Same UI, scoped to a specific conversation. /c/:id is the
+# bookmarkable URL the sidebar links to.
+get '/c/:id' do
+  conv_id = params["id"].to_i
+  if conv_id == 0
+    redirect "/"
+  end
+  @conv_id = conv_id
+  @messages_json = messages_as_json(conv_id)
+  @conversations_json = conversations_as_json
+  @model = MODEL
+  @backend = BACKEND_URL
+  erb :index
+end
+
+# JSON: list of conversations for the sidebar.
+get '/api/conversations' do
+  res.headers["Content-Type"] = "application/json"
+  conversations_as_json
+end
+
+# Create a new conversation. Returns the new id as JSON.
+post '/api/conversations' do
+  res.headers["Content-Type"] = "application/json"
+  id = create_conversation
+  '{"id":' + id.to_s + '}'
+end
+
+# JSON: messages for a specific conversation.
+get '/api/c/:id/messages' do
+  conv_id = params["id"].to_i
   res.headers["Content-Type"] = "application/json"
   messages_as_json(conv_id)
 end
@@ -295,13 +510,27 @@ class LlmStreamer < Tep::Streamer
     full_reply = client.chat_stream(@messages, out)
     if full_reply.length > 0
       append_message(@conv_id, "assistant", full_reply)
+      # If this was the conversation's first assistant turn AND the
+      # conversation still lacks a title, enqueue a TitleJob and
+      # process one pending job inline. Phase C ships INLINE
+      # dispatch (vs. a background-poller fiber) until the
+      # Scheduled+JobWorker+SQLite segfault is debugged.
+      if needs_title?(@conv_id) && assistant_msg_count(@conv_id) == 1
+        Tep::Job.enqueue("TitleJob", @conv_id.to_s, DB_PATH)
+        JobWorker.process_one
+      end
     end
     0
   end
 end
 
-post '/api/stream' do
-  conv_id = ensure_default_conversation
+post '/api/c/:id/stream' do
+  conv_id = params["id"].to_i
+  if conv_id == 0
+    res.set_status(400)
+    res.headers["Content-Type"] = "application/json"
+    return '{"error":"bad conversation id"}'
+  end
   content = params["content"].to_s
   if content.length == 0
     res.set_status(400)
