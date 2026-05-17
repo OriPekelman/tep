@@ -9,7 +9,11 @@
 require_relative "helper"
 
 class TestLlm < TepTest
-  app_source <<~RB
+  # Single-quoted heredoc so the Phase B test bodies (which embed
+  # `\r\n` chunked-transfer terminators) pass through literally
+  # rather than getting interpreted as raw CR+LF at heredoc-parse
+  # time.
+  app_source <<~'RB'
     require "sinatra"
 
     get "/build_simple" do
@@ -74,6 +78,74 @@ class TestLlm < TepTest
       c.set_system_prompt("p")
       c.model + "|" + c.api_key + "|" + c.system_prompt
     end
+
+    # --- Phase B: chunked decode + SSE event consume ---
+
+    get "/hex_to_int_valid" do
+      Tep::Llm.hex_to_int("ff").to_s + "|" +
+      Tep::Llm.hex_to_int("a").to_s  + "|" +
+      Tep::Llm.hex_to_int("100").to_s
+    end
+
+    get "/hex_to_int_invalid" do
+      Tep::Llm.hex_to_int("zz").to_s + "|" +
+      Tep::Llm.hex_to_int("").to_s
+    end
+
+    # One chunked body: 5 bytes "Hello", then last-chunk 0.
+    get "/dechunk_complete" do
+      s = "5\r\nHello\r\n0\r\n\r\n"
+      Tep::Llm.dechunk_consume(s)
+    end
+
+    # Two chunks in one buffer.
+    get "/dechunk_multiple" do
+      s = "3\r\nfoo\r\n3\r\nbar\r\n0\r\n\r\n"
+      Tep::Llm.dechunk_consume(s)
+    end
+
+    # Partial body: chunk header present, but body bytes not all there.
+    # dechunk_consume returns the already-consumed portion ("");
+    # dechunk_leftover returns the still-pending tail.
+    get "/dechunk_partial" do
+      s = "5\r\nHel"
+      consumed = Tep::Llm.dechunk_consume(s)
+      leftover = Tep::Llm.dechunk_leftover(s)
+      "consumed=" + consumed.length.to_s + "|leftover=" + leftover
+    end
+
+    # consume_sse_events on a buffer with one delta + DONE marker.
+    # The mock stream just counts writes and records the last write.
+    get "/sse_one_delta_then_done" do
+      state = Tep::Llm::StreamState.new
+      state.leftover = "data: {\"choices\":[{\"delta\":{\"content\":\"Hello\"}}]}\n\n" +
+                       "data: [DONE]\n\n"
+      sink = Tep::Stream.new(0)   # write goes to fd 0 (stdout); we
+                                   # only assert on state.acc + done
+      Tep::Llm.consume_sse_events(sink, state)
+      state.acc + "|done=" + (state.done ? "true" : "false")
+    end
+
+    # Partial: one full delta, then half of the next data: line.
+    # consume_sse_events should drain the full one + leave the rest.
+    get "/sse_partial_tail" do
+      state = Tep::Llm::StreamState.new
+      state.leftover = "data: {\"choices\":[{\"delta\":{\"content\":\"X\"}}]}\n\n" +
+                       "data: {\"choices\":[{\"delta\":{\"content\""
+      sink = Tep::Stream.new(0)
+      Tep::Llm.consume_sse_events(sink, state)
+      "acc=" + state.acc + "|done=" + (state.done ? "true" : "false") +
+        "|leftover_len=" + state.leftover.length.to_s
+    end
+
+    # finish_reason in a data line should set state.done.
+    get "/sse_finish_reason_ends" do
+      state = Tep::Llm::StreamState.new
+      state.leftover = "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n"
+      sink = Tep::Stream.new(0)
+      Tep::Llm.consume_sse_events(sink, state)
+      "done=" + (state.done ? "true" : "false")
+    end
   RB
 
   def test_build_simple_user_message
@@ -131,5 +203,48 @@ class TestLlm < TepTest
   def test_client_setters_round_trip
     res = get("/client_setters")
     assert_equal "m|k|p", res.body
+  end
+
+  # --- Phase B: chunked + SSE primitives ---
+
+  def test_hex_to_int_valid
+    res = get("/hex_to_int_valid")
+    assert_equal "255|10|256", res.body
+  end
+
+  def test_hex_to_int_malformed_returns_neg_one
+    res = get("/hex_to_int_invalid")
+    assert_equal "-1|-1", res.body
+  end
+
+  def test_dechunk_complete_single_chunk
+    res = get("/dechunk_complete")
+    assert_equal "Hello", res.body
+  end
+
+  def test_dechunk_complete_multiple_chunks
+    res = get("/dechunk_multiple")
+    assert_equal "foobar", res.body
+  end
+
+  def test_dechunk_partial_tail_left_for_next_recv
+    res = get("/dechunk_partial")
+    # No full chunk yet -- consumed empty, leftover holds the full tail.
+    assert_equal "consumed=0|leftover=5\r\nHel", res.body
+  end
+
+  def test_sse_one_delta_then_done_sets_done
+    res = get("/sse_one_delta_then_done")
+    assert_equal "Hello|done=true", res.body
+  end
+
+  def test_sse_partial_tail_preserved_for_next_recv
+    res = get("/sse_partial_tail")
+    assert_match(/^acc=X\|done=false\|leftover_len=\d+/, res.body)
+  end
+
+  def test_sse_finish_reason_terminates_stream
+    res = get("/sse_finish_reason_ends")
+    assert_equal "done=true", res.body
   end
 end

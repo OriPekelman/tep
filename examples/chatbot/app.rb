@@ -271,8 +271,57 @@ get '/api/messages' do
   messages_as_json(conv_id)
 end
 
+# SSE: append user message, stream the assistant reply from the
+# backend incrementally to the browser, persist the full reply
+# on completion. Phase B.
+class LlmStreamer < Tep::Streamer
+  attr_accessor :conv_id, :messages
+
+  def initialize
+    @conv_id  = 0
+    @messages = [Tep::Llm::Message.new("", "")]
+    @messages.delete_at(0)
+  end
+
+  def pump(out)
+    client = Tep::Llm.new(BACKEND_URL)
+    client.set_model(MODEL)
+    if API_KEY.length > 0
+      client.set_api_key(API_KEY)
+    end
+    if SYSTEM_PROMPT.length > 0
+      client.set_system_prompt(SYSTEM_PROMPT)
+    end
+    full_reply = client.chat_stream(@messages, out)
+    if full_reply.length > 0
+      append_message(@conv_id, "assistant", full_reply)
+    end
+    0
+  end
+end
+
+post '/api/stream' do
+  conv_id = ensure_default_conversation
+  content = params["content"].to_s
+  if content.length == 0
+    res.set_status(400)
+    res.headers["Content-Type"] = "application/json"
+    return '{"error":"empty content"}'
+  end
+  append_message(conv_id, "user", content)
+
+  res.headers["Content-Type"]  = "text/event-stream"
+  res.headers["Cache-Control"] = "no-cache"
+  s = LlmStreamer.new
+  s.conv_id  = conv_id
+  s.messages = conversation_history(conv_id)
+  stream s
+end
+
 # JSON: append user message, call backend, append assistant reply,
-# return the assistant reply. Synchronous -- streaming is Phase B.
+# return the assistant reply. Synchronous; kept as a fallback /
+# debugging endpoint. Phase B's default for the JS client is the
+# streaming /api/stream route above.
 post '/api/send' do
   conv_id = ensure_default_conversation
   content = params["content"].to_s

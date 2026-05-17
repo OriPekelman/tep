@@ -19,6 +19,14 @@ module Tep
     # is "error" / "no_message" / "http_<status>".
     def chat: (Array[Tep::Llm::Message] messages) -> Tep::Llm::Response
 
+    # Streaming variant. Opens a connection with `stream: true`,
+    # decodes the SSE response (handling raw + HTTP/1.1 chunked),
+    # writes each `data: {"content":"<delta>"}\n\n` event to
+    # `out_stream` (typically the framework-provided Tep::Stream
+    # from a Tep::Streamer#pump). Returns the accumulated content
+    # so the caller can persist it.
+    def chat_stream: (Array[Tep::Llm::Message] messages, Tep::Stream out_stream) -> String
+
     # Internal: hand-rolled JSON for the request body (nested-array
     # shape that Tep::Json's flat encoders don't cover).
     def self.build_request_body: (String model, String system_prompt, Array[Tep::Llm::Message] messages) -> String
@@ -30,6 +38,15 @@ module Tep
     # honouring \" / \\ / \n / \t escapes.
     def self.extract_str_field: (String json, String key, Integer from) -> String
 
+    # Internal: SSE / chunked-transfer reader -- see lib/tep/llm.rb.
+    def self.read_sse_response: (Integer fd, Tep::Stream out_stream) -> String
+    def self.consume_sse_events: (Tep::Stream out_stream, Tep::Llm::StreamState state) -> Integer
+    def self.dechunk_consume: (String s) -> String
+    def self.dechunk_leftover: (String s) -> String
+    def self.dechunk_pass: (String s) -> String
+    def self.drain_sse_buf: (String body_buf, Tep::Stream out_stream, String acc) -> String
+    def self.hex_to_int: (String s) -> Integer
+
     class Message
       attr_accessor role: String
       attr_accessor content: String
@@ -40,6 +57,13 @@ module Tep
       attr_accessor content: String
       attr_accessor role: String
       attr_accessor stop_reason: String
+      def initialize: () -> void
+    end
+
+    class StreamState
+      attr_accessor acc: String
+      attr_accessor leftover: String
+      attr_accessor done: bool
       def initialize: () -> void
     end
   end

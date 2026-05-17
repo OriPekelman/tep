@@ -378,6 +378,23 @@ module Tep
   _tep_seed_llm_client.set_model("")
   _tep_seed_llm_client.set_api_key("")
   _tep_seed_llm_client.set_system_prompt("")
+  # Streaming surface seeds. The chat_stream signature wants a
+  # Tep::Stream `out_stream` -- using fd=0 (stdin) for the seed
+  # never executes the .write path here (this block runs at module
+  # init; the chat_stream call below is type-seed-only and would
+  # need a real connection to actually fire). Tep::Llm::StreamState
+  # likewise pinned via attr writes.
+  _tep_seed_llm_state = Tep::Llm::StreamState.new
+  _tep_seed_llm_state.acc      = ""
+  _tep_seed_llm_state.leftover = ""
+  _tep_seed_llm_state.done     = false
+  _tep_seed_llm_stream = Tep::Stream.new(0)
+  Tep::Llm.consume_sse_events(_tep_seed_llm_stream, _tep_seed_llm_state)
+  Tep::Llm.dechunk_consume("")
+  Tep::Llm.dechunk_leftover("")
+  Tep::Llm.dechunk_pass("")
+  Tep::Llm.drain_sse_buf("", _tep_seed_llm_stream, "")
+  Tep::Llm.hex_to_int("")
 
   # ---------------- DSL ----------------
   # Spinel emits every defined method whether called or not, and

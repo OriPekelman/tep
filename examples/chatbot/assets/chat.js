@@ -58,26 +58,31 @@
     scrollToEnd();
     setSending(true);
 
+    // Pre-create the assistant message so we can append deltas
+    // into it as they arrive. Phase B streams via SSE; Phase A's
+    // /api/send (non-streaming JSON) stays as a fallback.
+    var assistantLi = document.createElement('li');
+    assistantLi.className = 'msg assistant';
+    var rawContent = '';
+    messagesEl.appendChild(assistantLi);
+
     var body = new URLSearchParams();
     body.set('content', content);
 
-    fetch('/api/send', {
+    fetch('/api/stream', {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: body.toString()
     })
-      .then(function (r) { return r.json().then(function (j) { return { status: r.status, body: j }; }); })
-      .then(function (out) {
-        if (out.status >= 400) {
-          appendError('error: ' + (out.body.error || out.status));
-          return;
+      .then(function (resp) {
+        if (!resp.ok) {
+          appendError('error: HTTP ' + resp.status);
+          return null;
         }
-        if (out.body.stop_reason === 'error' || out.body.stop_reason === 'no_message' || /^http_/.test(out.body.stop_reason)) {
-          appendError('backend error (stop_reason=' + out.body.stop_reason + '). Check CHAT_BACKEND is reachable and CHAT_MODEL is correct.');
-          return;
-        }
-        appendMessage({ role: 'assistant', content: out.body.content });
-        scrollToEnd();
+        var reader = resp.body.getReader();
+        var decoder = new TextDecoder();
+        var buf = '';
+        return readChunk(reader, decoder, buf, assistantLi, function (acc) { rawContent = acc; });
       })
       .catch(function (err) {
         appendError('network error: ' + err.message);
@@ -87,6 +92,39 @@
         inputEl.focus();
       });
   });
+
+  // Pull the next chunk off the reader, split out complete SSE
+  // events on \n\n, parse each `data: {"content":"<delta>"}` and
+  // append into the assistant <li>. Re-render markdown after every
+  // batch so code blocks etc. stay structured even mid-stream.
+  function readChunk(reader, decoder, buf, liEl, setAcc) {
+    return reader.read().then(function (out) {
+      if (out.done) return;
+      buf += decoder.decode(out.value, { stream: true });
+      var sep;
+      while ((sep = buf.indexOf('\n\n')) >= 0) {
+        var ev = buf.slice(0, sep);
+        buf = buf.slice(sep + 2);
+        if (!ev.startsWith('data: ')) continue;
+        var data = ev.slice(6);
+        if (data === '[DONE]') {
+          buf = '';
+          continue;
+        }
+        try {
+          var obj = JSON.parse(data);
+          if (obj.content) {
+            liEl.dataset.raw = (liEl.dataset.raw || '') + obj.content;
+            liEl.innerHTML = renderMarkdown(liEl.dataset.raw);
+            scrollToEnd();
+          }
+        } catch (e) {
+          // Malformed SSE frame; ignore and keep reading.
+        }
+      }
+      return readChunk(reader, decoder, buf, liEl, setAcc);
+    });
+  }
 
   // Cmd/Ctrl+Enter to send.
   inputEl.addEventListener('keydown', function (ev) {
