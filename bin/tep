@@ -301,10 +301,12 @@ def translate(input_path)
   # CLI option parsing -- emitted at top level so spinel's codegen
   # actually declares `sp_argv` (it skips it for method-local ARGV
   # references). Every translated app picks up `-p`, `-w`, `-q`.
+  scheduled = config[:scheduler] == :scheduled
   out << <<~RB
     __port = #{config[:port] || 4567}
     __workers = #{config[:workers] || 1}
     __quiet = false
+    __scheduled = #{scheduled ? 'true' : 'false'}
     __i = 0
     while __i < ARGV.length
       __a = ARGV[__i]
@@ -317,11 +319,16 @@ def translate(input_path)
       elsif __a == "-q"
         __quiet = true
         __i += 1
+      elsif __a == "-s"
+        # Phase 1.5 opt-in: scheduled fiber-per-connection server
+        # (vs the default prefork-blocking-one-conn-per-worker shape).
+        __scheduled = true
+        __i += 1
       else
         __i += 1
       end
     end
-    Tep.run!(__port, __workers, __quiet)
+    Tep.run!(__port, __workers, __quiet, __scheduled)
   RB
   out << ""
 
@@ -449,6 +456,20 @@ def handle_top_call(node, routes, filters, not_founds, config, warnings, passthr
         config[:workers] = literal_int(args[1]) || config[:workers]
       when "bind"
         # silently accept; tep always binds 0.0.0.0
+      when "scheduler"
+        # `set :scheduler, :scheduled` opts the app into the fiber-
+        # per-connection server (Tep::Server::Scheduled). Default
+        # stays the prefork-blocking Tep::Server until the next major
+        # release, when this flips and Blocking is deleted. The CLI
+        # `-s` flag overrides the same way `-w` overrides `:workers`.
+        sym = args[1].is_a?(Prism::SymbolNode) ? args[1].unescaped : nil
+        if sym == "scheduled"
+          config[:scheduler] = :scheduled
+        elsif sym == "blocking" || sym.nil?
+          # default; explicit blocking is a no-op
+        else
+          warnings << "unsupported `set :scheduler, :#{sym}` -- choose :scheduled or :blocking"
+        end
       else
         warnings << "unsupported `set :#{key}` -- ignored"
       end

@@ -78,6 +78,22 @@ int sphttp_accept(int sfd) {
     return fd;
 }
 
+/* Non-blocking accept. Returns the new fd on success, -1 with errno
+ * EAGAIN/EWOULDBLOCK if no pending connection, -1 with other errno
+ * on real error. Caller (Tep::Server::Scheduled) parks the accept
+ * fiber on Tep::Scheduler.io_wait(sfd, READ) before retrying.
+ * Requires the listen fd to already be in non-blocking mode -- call
+ * sphttp_set_nonblock(sfd) once after sphttp_listen. */
+int sphttp_accept_nb(int sfd) {
+    struct sockaddr_in caddr;
+    socklen_t clen = sizeof(caddr);
+    int fd;
+    do {
+        fd = accept(sfd, (struct sockaddr *)&caddr, &clen);
+    } while (fd < 0 && errno == EINTR);
+    return fd;
+}
+
 /* Read until end-of-headers ("\r\n\r\n") or the buffer fills. Subsequent
  * recv()s for the body are the caller's job (we expose a length helper).
  * Returns the parsed length (>0), 0 on clean EOF, -1 on error. */
