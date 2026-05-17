@@ -1,0 +1,46 @@
+# OpenAI-compatible chat-completions client. Backends interchangeable
+# via base_url (Ollama / toy / OpenAI / vLLM / etc.).
+module Tep
+  class Llm
+    attr_accessor base_url: String
+    attr_accessor model: String
+    attr_accessor api_key: String
+    attr_accessor system_prompt: String
+
+    def initialize: (String base_url) -> void
+
+    def set_model: (String name) -> String
+    def set_api_key: (String key) -> String
+    def set_system_prompt: (String s) -> String
+
+    # POST <base_url>/v1/chat/completions. Returns a Response with
+    # `.content` (the assistant reply) and `.stop_reason`. On
+    # transport / parse failure, `.content` is "" and `.stop_reason`
+    # is "error" / "no_message" / "http_<status>".
+    def chat: (Array[Tep::Llm::Message] messages) -> Tep::Llm::Response
+
+    # Internal: hand-rolled JSON for the request body (nested-array
+    # shape that Tep::Json's flat encoders don't cover).
+    def self.build_request_body: (String model, String system_prompt, Array[Tep::Llm::Message] messages) -> String
+
+    # Internal: parse the response body's choices[0].message.
+    def self.parse_response: (Tep::Http::Response http_response) -> Tep::Llm::Response
+
+    # Internal: walk an OpenAI-shaped JSON for one `"key":"value"`,
+    # honouring \" / \\ / \n / \t escapes.
+    def self.extract_str_field: (String json, String key, Integer from) -> String
+
+    class Message
+      attr_accessor role: String
+      attr_accessor content: String
+      def initialize: (String role, String content) -> void
+    end
+
+    class Response
+      attr_accessor content: String
+      attr_accessor role: String
+      attr_accessor stop_reason: String
+      def initialize: () -> void
+    end
+  end
+end

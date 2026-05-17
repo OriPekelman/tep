@@ -40,6 +40,7 @@ require_relative "tep/assets"
 require_relative "tep/scheduler"
 require_relative "tep/shell"
 require_relative "tep/http"
+require_relative "tep/llm"
 require_relative "tep/parallel"
 require_relative "tep/job"
 
@@ -354,6 +355,29 @@ module Tep
   Tep::Json.get_str("{}", "")
   Tep::Json.get_int("{}", "")
   Tep::Json.has_key?("{}", "")
+
+  # Tep::Llm seeds. attr_accessor return types default to mrb_int
+  # if spinel sees no concrete callsite -- and Tep::Llm.build_request_body
+  # passes msg.role / msg.content into Tep::Json.quote(String) which
+  # then mismatches. Pin Message + Response attrs to String, and
+  # run one full encode + parse round-trip so the static analyzer
+  # sees every public method called with concrete types.
+  _tep_seed_llm_msg = Tep::Llm::Message.new("user", "")
+  _tep_seed_llm_msg.role = ""
+  _tep_seed_llm_msg.content = ""
+  _tep_seed_llm_msgs = [_tep_seed_llm_msg]
+  Tep::Llm.build_request_body("", "", _tep_seed_llm_msgs)
+  _tep_seed_llm_resp = Tep::Llm::Response.new
+  _tep_seed_llm_resp.content = ""
+  _tep_seed_llm_resp.role = ""
+  _tep_seed_llm_resp.stop_reason = ""
+  _tep_seed_llm_http_res = Tep::Http::Response.new
+  Tep::Llm.parse_response(_tep_seed_llm_http_res)
+  Tep::Llm.extract_str_field("", "", 0)
+  _tep_seed_llm_client = Tep::Llm.new("")
+  _tep_seed_llm_client.set_model("")
+  _tep_seed_llm_client.set_api_key("")
+  _tep_seed_llm_client.set_system_prompt("")
 
   # ---------------- DSL ----------------
   # Spinel emits every defined method whether called or not, and
