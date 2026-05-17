@@ -147,6 +147,88 @@ int sphttp_write_str(int fd, const char *s) {
     return 0;
 }
 
+/* Binary write -- explicit length, no strlen. Required for any
+ * caller that needs to send bytes that may contain 0x00 (WebSocket
+ * frames, raw protocol bodies). Returns 0 on success, -1 on send
+ * failure. */
+int sphttp_write_bytes(int fd, const char *data, int n) {
+    size_t total = (n < 0) ? 0 : (size_t)n;
+    size_t off = 0;
+    while (off < total) {
+        ssize_t w = send(fd, data + off, total - off, 0);
+        if (w <= 0) {
+            if (errno == EINTR) continue;
+            return -1;
+        }
+        off += (size_t)w;
+    }
+    return 0;
+}
+
+/* Binary recv accessor pair, mechanically identical to
+ * sphttp_request_buf / _len above but on a separate static buffer
+ * so callers that interleave HTTP request reads with arbitrary
+ * frame reads don't trample each other. Use case: WebSocket frame
+ * codec drives a `recv_into_frame -> _buf + _len` loop.
+ *
+ * The frame buffer is NOT NUL-terminated and may contain arbitrary
+ * bytes including 0x00. Always read exactly `sphttp_recv_frame_len()`
+ * bytes from the buffer; don't rely on strlen-style scanning. */
+static char sphttp_frame_buf[SPHTTP_BUFSIZE];
+static int  sphttp_frame_len = 0;
+
+/* Single non-blocking recv into the frame buffer. Returns the
+ * number of bytes received (also reflected in sphttp_recv_frame_len),
+ * 0 on EOF, -1 on error. Calling this overwrites the prior buffer
+ * contents. For EAGAIN-style "would block" the caller is expected
+ * to have parked on a poll/io_wait beforehand -- this fn does NOT
+ * retry. */
+int sphttp_recv_into_frame(int fd) {
+    sphttp_frame_len = 0;
+    ssize_t n = recv(fd, sphttp_frame_buf, SPHTTP_BUFSIZE, 0);
+    if (n < 0) {
+        if (errno == EINTR) {
+            /* one retry on EINTR for ergonomics; further EINTRs surface */
+            n = recv(fd, sphttp_frame_buf, SPHTTP_BUFSIZE, 0);
+            if (n < 0) return -1;
+        } else {
+            return -1;
+        }
+    }
+    sphttp_frame_len = (int)n;
+    return (int)n;
+}
+
+const char *sphttp_recv_frame_buf(void) {
+    return sphttp_frame_buf;
+}
+
+int sphttp_recv_frame_len(void) {
+    return sphttp_frame_len;
+}
+
+/* Byte-level accessor. Workaround for the spinel `:str` FFI return
+ * shape being NUL-bound (the Ruby-side String stops at the first
+ * 0x00 byte regardless of the buffer's actual length). Callers that
+ * need to walk arbitrary bytes -- WebSocket frame codec, file uploads
+ * with embedded NULs, anything binary -- use this fn in a loop:
+ *
+ *   n = Sock.sphttp_recv_into_frame(fd)
+ *   i = 0
+ *   while i < n
+ *     byte = Sock.sphttp_recv_frame_byte_at(i)
+ *     ...
+ *     i += 1
+ *   end
+ *
+ * Returns the unsigned byte value (0..255), or -1 if `i` is out of
+ * bounds. Slow but correct; replace with a bulk-read variant when
+ * spinel grows a binary-safe FFI return shape. */
+int sphttp_recv_frame_byte_at(int i) {
+    if (i < 0 || i >= sphttp_frame_len) return -1;
+    return (int)(unsigned char)sphttp_frame_buf[i];
+}
+
 /* Send a file's contents straight from disk -- used for static
  * file serving. Returns -1 on open/read failure (caller falls back
  * to 404), 0 on success. */

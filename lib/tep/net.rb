@@ -16,6 +16,20 @@ module Sock
   ffi_func :sphttp_request_len,   [],               :int
   ffi_func :sphttp_drain_body,    [:int, :int],     :str
   ffi_func :sphttp_write_str,     [:int, :str],     :int
+
+  # Binary-safe write + recv pair, used by Tep::WebSocket (and any
+  # other caller that needs to send/receive bytes containing 0x00).
+  # The recv side mirrors the request_buf / _len accessor pattern.
+  # See sphttp.c for the binary-safety contract.
+  ffi_func :sphttp_write_bytes,   [:int, :str, :int], :int
+  ffi_func :sphttp_recv_into_frame, [:int],         :int
+  ffi_func :sphttp_recv_frame_buf, [],              :str
+  ffi_func :sphttp_recv_frame_len, [],              :int
+  # Per-byte accessor -- workaround for spinel's :str FFI return
+  # truncating at the first NUL. The Ruby-side WS frame codec walks
+  # bytes one at a time via this; bulk read returns when spinel
+  # grows a binary-safe FFI shape.
+  ffi_func :sphttp_recv_frame_byte_at, [:int],     :int
   ffi_func :sphttp_sendfile,      [:int, :str],     :int
   ffi_func :sphttp_filesize,      [:str],           :int
   ffi_func :sphttp_close,         [:int],           :int
