@@ -152,3 +152,64 @@ html, body {
   margin: 0 1rem 0.5rem; font-size: 0.85rem; color: #888;
   min-height: 1.5em;
 }
+
+/* ---- compare page ---- */
+.back-link {
+  font-size: 0.85rem; color: #ccc; text-decoration: none;
+  padding: 0.3rem 0.6rem; border: 1px solid #3a3a3f; border-radius: 6px;
+}
+.back-link:hover { background: #2c2c30; color: #fff; }
+.sidebar-section { padding: 0.5rem 1rem; font-size: 0.75rem;
+                   text-transform: uppercase; letter-spacing: 0.05em;
+                   color: #777; }
+.sidebar-blurb { padding: 0 1rem; font-size: 0.85rem; color: #aaa;
+                 line-height: 1.4; }
+.sidebar-blurb code { background: #2c2c30; padding: 0 0.2em;
+                      border-radius: 3px; }
+
+#compare {
+  display: flex; flex-direction: column;
+  height: 100vh; overflow: hidden;
+}
+.compare-prompt {
+  display: flex; gap: 0.5rem; padding: 1rem;
+  background: #fff; border-bottom: 1px solid #e5e5e5;
+}
+.compare-prompt textarea {
+  flex: 1; padding: 0.6rem; border: 1px solid #ccc; border-radius: 8px;
+  font: inherit; resize: vertical;
+}
+.compare-prompt button {
+  padding: 0.6rem 1.2rem; background: #111; color: #fff;
+  border: none; border-radius: 8px; font: inherit; cursor: pointer;
+}
+.compare-prompt button:disabled { background: #888; cursor: wait; }
+
+.compare-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 1rem; padding: 1rem; flex: 1; overflow-y: auto;
+}
+.compare-card {
+  background: #fff; border: 1px solid #e5e5e5; border-radius: 8px;
+  display: flex; flex-direction: column; max-height: 100%;
+}
+.card-head {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 0.5rem 0.75rem; border-bottom: 1px solid #e5e5e5;
+}
+.card-head strong { font-size: 0.9rem; }
+.card-backend { font-family: ui-monospace, monospace;
+                font-size: 0.7rem; color: #666; }
+.card-meta { padding: 0.25rem 0.75rem; font-size: 0.75rem; color: #888; }
+.card-body { padding: 0.75rem; flex: 1; overflow-y: auto;
+             white-space: pre-wrap; word-wrap: break-word;
+             font-size: 0.9rem; }
+.card-body p              { margin: 0 0 0.5rem; }
+.card-body p:last-child   { margin-bottom: 0; }
+.card-body code           { background: #f3f3f3; padding: 0.05em 0.3em;
+                            border-radius: 3px; font-family: ui-monospace, monospace;
+                            font-size: 0.85em; }
+.card-body pre            { background: #f3f3f3; padding: 0.5rem;
+                            border-radius: 4px; overflow-x: auto; }
+.card-empty { color: #aaa; }

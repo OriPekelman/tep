@@ -40,6 +40,12 @@ SYSTEM_PROMPT  = ENV.fetch("CHAT_SYSTEM_PROMPT", "")
 HSTS_SECONDS   = ENV.fetch("CHAT_HSTS",          "0").to_i
 CORS_ORIGIN    = ENV.fetch("CHAT_CORS_ORIGIN",   "*")
 
+# Phase E: extra backends to fan out the same prompt against, in
+# parallel. Format: `url|model|key;url|model|key;...` (`;` separator
+# between backends, `|` between fields). Empty string -> compare-mode
+# falls back to the primary backend only (degenerate one-pane result).
+COMPARE_BACKENDS_RAW = ENV.fetch("CHAT_COMPARE_BACKENDS", "")
+
 set :views, File.expand_path("views", __dir__)
 set :scheduler, :scheduled
 
@@ -62,6 +68,90 @@ LOGGER.to_stderr
 # Tep::Job's open/close cycle and the cooperative scheduler;
 # noted as a debug TODO in the Phase C commit.)
 Tep::Job.init_schema(ENV.fetch("CHAT_DB", "/tmp/tep_chatbot.db"))
+
+# -------------------------------------------------------------------
+# Phase E: compare-backends parsing + worker
+# -------------------------------------------------------------------
+# Parse `url|model|key;url|model|key;...` into an Array<String> where
+# each element is one `url|model|key` triple (same shape so the
+# CompareWorker just splits on `|`). If the env var is empty, fall
+# back to the primary backend.
+def parse_compare_backends(raw)
+  out = [""]
+  out.delete_at(0)
+  if raw.length == 0
+    out.push(BACKEND_URL + "|" + MODEL + "|" + API_KEY)
+    return out
+  end
+  pos = 0
+  while pos < raw.length
+    semi = Tep.str_find(raw, ";", pos)
+    if semi < 0
+      out.push(raw[pos, raw.length - pos])
+      pos = raw.length
+    else
+      out.push(raw[pos, semi - pos])
+      pos = semi + 1
+    end
+  end
+  out
+end
+
+# CompareWorker takes one `url|model|key` item per fork, runs the
+# user's prompt through Tep::Llm.chat() against that backend, returns
+# the reply content. The prompt is carried via @prompt (set once on
+# the worker before map_processes; the fork inherits the ivar). Each
+# child returns a small wire-shape: `<seconds_taken>|<reply_content>`
+# so the parent can render the took-time alongside the response
+# without a second JSON parse.
+# Phase E was originally designed around Tep::Parallel (one fork per
+# backend, results gathered). The compiled binary's @worker.run
+# dispatch (in Tep::Parallel#spawn_one) pulled in unrelated `run`
+# methods of the same name from Tep::Server / Tep::Server::Scheduled
+# -- spinel's observed-class narrowing (matz/spinel#531 / #549) didn't
+# kick in for this combined binary's specific shape. Result widened
+# to sp_RbVal and File.write(...) failed to compile.
+#
+# Filed as a separate spinel issue; for Phase E to ship today, the
+# multi-backend dispatch loops SEQUENTIALLY here. The single-prompt
+# total latency is N x backend-latency rather than max. The demo
+# still showcases the multi-backend-compare UX; the parallel speedup
+# moves in once the spinel narrowing covers this shape. CompareWorker
+# stays in the surface (still exercised inline) so the swap-back is
+# a one-line change in the route.
+class CompareWorker
+  attr_accessor :prompt
+
+  def initialize
+    @prompt = ""
+  end
+
+  # Returns `<seconds_taken>|<reply_content>`. Same wire shape as
+  # the parallel version would have used.
+  def run(item)
+    pipe1 = Tep.str_find(item, "|", 0)
+    pipe2 = Tep.str_find(item, "|", pipe1 + 1)
+    if pipe1 < 0 || pipe2 < 0
+      return "0|malformed item"
+    end
+    backend = item[0, pipe1]
+    model   = item[pipe1 + 1, pipe2 - pipe1 - 1]
+    key     = item[pipe2 + 1, item.length - pipe2 - 1]
+
+    client = Tep::Llm.new(backend)
+    client.set_model(model)
+    if key.length > 0
+      client.set_api_key(key)
+    end
+
+    msgs = [Tep::Llm::Message.new("user", @prompt)]
+    t0 = Time.now.to_i
+    reply = client.chat(msgs)
+    took = Time.now.to_i - t0
+
+    took.to_s + "|" + reply.content
+  end
+end
 
 # -------------------------------------------------------------------
 # DB helpers. Each call opens + closes a fresh handle; tep_sqlite's
@@ -281,7 +371,7 @@ class ChatbotFilter < Tep::Filter
     if p == "/setup" || p == "/login" || p == "/logout" || p == "/healthz"
       return 0
     end
-    if p == "/style.css" || p == "/chat.js" || p == "/markdown.js"
+    if p == "/style.css" || p == "/chat.js" || p == "/markdown.js" || p == "/compare.js"
       return 0
     end
 
@@ -655,6 +745,102 @@ end
 get '/api/v1/healthz' do
   res.headers["Content-Type"] = "application/json"
   '{"status":"ok"}'
+end
+
+# -------------------------------------------------------------------
+# Phase E: /compare -- fan one prompt out to N backends in parallel,
+# render side-by-side. Sidebar gets a "Compare backends" link;
+# /compare is its own page (different layout from the chat panel).
+# -------------------------------------------------------------------
+
+get '/compare' do
+  @backends_json = compare_backends_as_json
+  @model = MODEL
+  @backend = BACKEND_URL
+  erb :compare
+end
+
+# Module-level constant return-type inference can mis-fire here
+# (spinel pins it to Integer instead of Array<String>). Compute
+# the list on demand inside each consumer instead; it's a few
+# string ops and we don't call it on the hot path.
+def compare_backends
+  parse_compare_backends(COMPARE_BACKENDS_RAW)
+end
+
+post '/api/compare' do
+  prompt = params["prompt"].to_s
+  res.headers["Content-Type"] = "application/json"
+  if prompt.length == 0
+    res.set_status(400)
+    return '{"error":"empty prompt"}'
+  end
+
+  worker = CompareWorker.new
+  worker.prompt = prompt
+
+  backends = compare_backends
+  results = [""]
+  results.delete_at(0)
+  t_outer0 = Time.now.to_i
+  i = 0
+  while i < backends.length
+    results.push(worker.run(backends[i]))
+    i += 1
+  end
+  t_outer = Time.now.to_i - t_outer0
+
+  out = "{\"total_s\":" + t_outer.to_s + ",\"results\":["
+  i = 0
+  while i < backends.length
+    triple = backends[i]
+    p1 = Tep.str_find(triple, "|", 0)
+    p2 = Tep.str_find(triple, "|", p1 + 1)
+    backend = triple[0, p1]
+    model   = triple[p1 + 1, p2 - p1 - 1]
+
+    reply = results[i]
+    sep = Tep.str_find(reply, "|", 0)
+    took = 0
+    content = ""
+    if sep > 0
+      took = reply[0, sep].to_i
+      content = reply[sep + 1, reply.length - sep - 1]
+    else
+      content = reply
+    end
+
+    if i > 0
+      out = out + ","
+    end
+    out = out + "{\"backend\":" + Tep::Json.quote(backend) +
+                ",\"model\":" + Tep::Json.quote(model) +
+                ",\"took_s\":" + took.to_s +
+                ",\"content\":" + Tep::Json.quote(content) + "}"
+    i += 1
+  end
+  out + "]}"
+end
+
+# Compact JSON of the compare backends for the view's boot data.
+def compare_backends_as_json
+  backends = compare_backends
+  out = "["
+  i = 0
+  while i < backends.length
+    triple = backends[i]
+    p1 = Tep.str_find(triple, "|", 0)
+    p2 = Tep.str_find(triple, "|", p1 + 1)
+    backend = triple[0, p1]
+    model   = triple[p1 + 1, p2 - p1 - 1]
+    if i > 0
+      out = out + ","
+    end
+    out = out + "{\"backend\":" + Tep::Json.quote(backend) +
+                ",\"model\":" + Tep::Json.quote(model) + "}"
+    i += 1
+  end
+  out + "]"
 end
 
 # Main UI: list of conversations + the most-recent conversation

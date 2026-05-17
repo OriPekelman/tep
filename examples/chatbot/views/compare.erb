@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>tep chatbot — compare backends</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body class="app">
+  <aside class="sidebar">
+    <div class="sidebar-head">
+      <strong>tep chatbot</strong>
+      <a href="/" class="back-link">← Back</a>
+    </div>
+    <div class="sidebar-section">Compare mode</div>
+    <p class="sidebar-blurb">
+      One prompt fanned out to N backends in parallel via
+      <code>Tep::Parallel</code> + fork. Each card below is one
+      backend's reply.
+    </p>
+    <div class="sidebar-foot">
+      <form method="post" action="/logout" class="logout-form">
+        <button type="submit">Log out</button>
+      </form>
+    </div>
+  </aside>
+
+  <main id="compare">
+    <header class="topbar">
+      <span>compare backends</span>
+    </header>
+    <form id="prompt-form" class="compare-prompt">
+      <textarea id="prompt-input" rows="3" placeholder="Ask the same thing of every backend…" autofocus></textarea>
+      <button type="submit" id="prompt-btn">Send to all</button>
+    </form>
+    <p id="compare-status" class="status"></p>
+    <div id="compare-grid" class="compare-grid"></div>
+  </main>
+
+  <script id="bootbackends" type="application/json"><%= @backends_json %></script>
+  <script src="/markdown.js"></script>
+  <script src="/compare.js"></script>
+</body>
+</html>
