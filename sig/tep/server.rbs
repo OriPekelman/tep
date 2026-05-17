@@ -21,4 +21,35 @@ module Tep
 
   # Translates an HTTP status code to its standard reason phrase.
   def self.reason: (Integer status) -> String
+
+  class Server
+    # Falcon-shape fiber-per-connection server. Same prefork worker
+    # shape as the parent Tep::Server, but each worker runs
+    # Tep::Scheduler with one accept fiber + N connection fibers.
+    # Slow clients no longer block their worker.
+    class Scheduled
+      MAX_REQUEST_BYTES: Integer
+      KEEPALIVE_TIMEOUT: Integer
+      HEADER_READ_TIMEOUT: Integer
+
+      attr_accessor app: Tep::App
+
+      def initialize: (Tep::App app) -> void
+
+      # Instance entry point. Reads + dispatches; cmeths below carry
+      # the per-connection work (closure-free for spinel's Fiber.new
+      # codegen workaround).
+      def run: (Integer port, Integer workers, bool quiet) -> Integer
+
+      # Top-level cmeths called from Fiber.new bodies. State arrives
+      # via Tep::APP.pending_* stash slots.
+      def self.run_worker: () -> Integer
+      def self.accept_loop: () -> void
+      def self.handle_pending: () -> Integer
+      def self.handle_connection: (Integer client) -> Integer
+      def self.read_request_blob: (Integer fd, Integer timeout_seconds) -> String
+      def self.write_response: (Integer client, Tep::Request req, Tep::Response res, bool keep_alive) -> Integer
+      def self.send_simple: (Integer client, Integer status, String msg) -> Integer
+    end
+  end
 end

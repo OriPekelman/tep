@@ -29,6 +29,7 @@ require_relative "tep/parser"
 require_relative "tep/router"
 require_relative "tep/app"
 require_relative "tep/server"
+require_relative "tep/server_scheduled"
 require_relative "tep/sqlite"
 require_relative "tep/json"
 require_relative "tep/logger"
@@ -387,8 +388,25 @@ module Tep
 
   # ARGV access only emits `sp_argv` when used at top level, so the
   # translator emits the option-parsing loop itself before calling
-  # `Tep.run!`. This stays a plain three-arg dispatch.
-  def self.run!(port, workers, quiet)
-    Server.new(APP).run(port, workers, quiet)
+  # `Tep.run!`. The `scheduled` flag picks between the prefork
+  # blocking server (default) and the fiber-per-connection
+  # Tep::Server::Scheduled (opt-in via `set :scheduler, :scheduled`
+  # in the app source, or `-s` on the CLI). At the next major tep
+  # release Scheduled becomes the default and Blocking is deleted;
+  # the parallel-classes period exists only to make the rollback
+  # path obvious during the transition.
+  #
+  # Single dispatch method (rather than parallel run! / run_scheduled!)
+  # because spinel's codegen mis-declares heap-cell parameters when
+  # two same-arity sibling methods are called from an if/else --
+  # both branches reference `quiet` as a heap-cell but only the first
+  # path declares it. Bundling the decision inside one method
+  # sidesteps the codegen miss.
+  def self.run!(port, workers, quiet, scheduled)
+    if scheduled
+      Server::Scheduled.new(APP).run(port, workers, quiet)
+    else
+      Server.new(APP).run(port, workers, quiet)
+    end
   end
 end

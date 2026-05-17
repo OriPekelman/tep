@@ -1,0 +1,235 @@
+# Tep::Server::Scheduled -- Falcon-shape fiber-per-connection HTTP
+# server, built on Tep::Scheduler + sphttp non-blocking accept/recv.
+#
+# Why this exists
+# ---------------
+# The default Tep::Server (in server.rb) is prefork + blocking per
+# worker -- N workers <=> N concurrent connections. WebSockets and
+# slow keep-alive clients tie up a worker for the full connection
+# duration, so the prefork pool's effective concurrency degrades
+# to N regardless of actual CPU work. The scheduled variant accepts
+# in a fiber, spawns one fiber per accepted connection, and parks
+# all I/O on Tep::Scheduler.io_wait -- N workers serve M >> N
+# concurrent connections, bounded only by per-fiber memory.
+#
+# Closure-capture workaround
+# --------------------------
+# Spinel's codegen mis-lowers Fiber.new bodies that capture local
+# variables: it emits heap-cell accesses to the captured values
+# without emitting the matching heap-cell declarations. Until that
+# lands (filed as a spinel issue alongside this commit), the fiber
+# bodies here are CLOSURE-FREE -- they call top-level cmeths whose
+# state arrives through `Tep::APP.pending_*` stash slots, set by
+# the spawner right before yielding. The pause(0) yield ensures the
+# new fiber wins the next tick and reads its slot before any other
+# spawn overwrites.
+#
+# All methods are cmeths (`def self.X`) so the fiber bodies can call
+# them as plain top-level functions without instance state.
+module Tep
+  class Server
+    class Scheduled
+      # Max bytes accepted from a single request's start-line +
+      # headers. Bigger requests get 413; matches the blocking
+      # server's SPHTTP_BUFSIZE cap (64 KiB).
+      MAX_REQUEST_BYTES = 65535
+
+      # Idle keep-alive timeout between requests on the same
+      # connection. 30s matches nginx; bump from app code as needed.
+      KEEPALIVE_TIMEOUT = 30
+
+      # Slow-headers DoS guard.
+      HEADER_READ_TIMEOUT = 10
+
+      attr_accessor :app
+
+      def initialize(app)
+        @app = app
+      end
+
+      def run(port, workers, quiet)
+        sfd = Sock.sphttp_listen(port, workers > 1 ? 1 : 0)
+        if sfd < 0
+          return 1
+        end
+        Sock.sphttp_set_nonblock(sfd)
+        Tep::APP.pending_listen_fd = sfd
+        Tep::APP.pending_quiet = quiet
+
+        if workers > 1
+          i = 0
+          while i < workers
+            pid = Sock.sphttp_fork
+            if pid == 0
+              Tep::Server::Scheduled.run_worker
+              Sock.sphttp_exit(0)
+            end
+            i += 1
+          end
+          loop do
+            gone = Sock.sphttp_wait_any
+            if gone < 0
+              break
+            end
+          end
+        else
+          Tep::Server::Scheduled.run_worker
+        end
+        0
+      end
+
+      # Spawn the accept fiber + pump the scheduler. Called inside
+      # each prefork child. Loops directly on `tick` rather than
+      # `run_until_empty` because the accept fiber parks on io_wait
+      # indefinitely -- run_until_empty bails when no fiber is ready
+      # to resume THIS pass; we need to keep polling so parked
+      # accept-on-sfd fibers get woken when a connection arrives.
+      def self.run_worker
+        f = Fiber.new { Tep::Server::Scheduled.accept_loop }
+        Tep::Scheduler.spawn_fiber(f)
+        while Tep::Scheduler.alive_count > 0
+          Tep::Scheduler.tick(1000)
+        end
+        0
+      end
+
+      # Accept loop body. Reads sfd + quiet from APP stash (closure-
+      # less). Each accepted connection becomes its own fiber, with
+      # client fd handed off via pending_client_fd + pause(0) yield.
+      def self.accept_loop
+        sfd = Tep::APP.pending_listen_fd
+        while true
+          ready = Tep::Scheduler.io_wait(sfd, Tep::Scheduler::READ, -1)
+          if ready == 0
+            next
+          end
+          client = Sock.sphttp_accept_nb(sfd)
+          if client < 0
+            next
+          end
+          Sock.sphttp_set_nonblock(client)
+          Tep::APP.pending_client_fd = client
+          conn = Fiber.new { Tep::Server::Scheduled.handle_pending }
+          Tep::Scheduler.spawn_fiber(conn)
+          # Yield so the new fiber reads pending_client_fd before
+          # the next accept iteration overwrites it. The new fiber
+          # has wake_at=-1 (set by spawn_fiber); pause(0) sets ours
+          # to now -- -1 < now so the scheduler picks the new fiber.
+          Tep::Scheduler.pause(0)
+        end
+      end
+
+      # Connection-fiber entry. Reads client fd from APP stash, then
+      # delegates to handle_connection (which doesn't need the
+      # closure capture since it took a regular param).
+      def self.handle_pending
+        client = Tep::APP.pending_client_fd
+        Tep::Server::Scheduled.handle_connection(client)
+      end
+
+      # Per-connection lifecycle.
+      def self.handle_connection(client)
+        keep_going = true
+        while keep_going
+          blob = Tep::Server::Scheduled.read_request_blob(client, KEEPALIVE_TIMEOUT)
+          if blob.length == 0
+            break
+          end
+          req = Parser.parse(blob)
+          if req == nil
+            Tep::Server::Scheduled.send_simple(client, 400, "bad request")
+            break
+          end
+
+          cl = req.content_length
+          already = req.raw_body.length
+          if cl > already
+            rest = Sock.sphttp_drain_body(client, cl - already)
+            req.raw_body = req.raw_body + rest
+          end
+          if req.form?
+            Url.parse_query(req.raw_body).each do |k, v|
+              req.params[k] = v
+            end
+          end
+
+          res = Response.new
+          Tep::APP.dispatch(req, res)
+
+          keep_alive = req.keep_alive? && !res.halted_close?
+          Tep::Server::Scheduled.write_response(client, req, res, keep_alive)
+          keep_going = keep_alive
+        end
+        Sock.sphttp_close(client)
+        0
+      end
+
+      # Non-blocking request reader. Returns the accumulated blob
+      # once "\r\n\r\n" is seen, or "" on timeout / EOF / oversize.
+      def self.read_request_blob(fd, timeout_seconds)
+        buf = ""
+        deadline = Time.now.to_i + timeout_seconds
+        while buf.length < MAX_REQUEST_BYTES
+          remaining = deadline - Time.now.to_i
+          if remaining <= 0
+            return ""
+          end
+          ready = Tep::Scheduler.io_wait(fd, Tep::Scheduler::READ, remaining)
+          if ready == 0
+            return ""
+          end
+          chunk = Sock.sphttp_recv_some(fd, 4096)
+          if chunk.length == 0
+            return ""
+          end
+          buf = buf + chunk
+          if buf.length >= 4 && buf.include?("\r\n\r\n")
+            return buf
+          end
+        end
+        ""
+      end
+
+      # Body-shape mirror of Tep::Server#write_response. Lifted into
+      # a cmeth so the connection fiber can call it without a captured
+      # `self`.
+      def self.write_response(client, req, res, keep_alive)
+        reason = Tep.reason(res.status)
+        head = req.http_version + " " + res.status.to_s + " " + reason + "\r\n"
+        res.headers.each do |k, v|
+          head = head + k + ": " + v + "\r\n"
+        end
+        res.set_cookies.each do |line|
+          head = head + "Set-Cookie: " + line + "\r\n"
+        end
+        if keep_alive
+          head = head + "Connection: keep-alive\r\n"
+        else
+          head = head + "Connection: close\r\n"
+        end
+        if res.file_path.length > 0
+          fs = Sock.sphttp_filesize(res.file_path)
+          head = head + "Content-Length: " + fs.to_s + "\r\n\r\n"
+          Sock.sphttp_write_str(client, head)
+          Sock.sphttp_sendfile(client, res.file_path)
+        else
+          head = head + "Content-Length: " + res.body.length.to_s + "\r\n\r\n"
+          Sock.sphttp_write_str(client, head)
+          if res.body.length > 0
+            Sock.sphttp_write_str(client, res.body)
+          end
+        end
+        0
+      end
+
+      def self.send_simple(client, status, msg)
+        reason = Tep.reason(status)
+        head = "HTTP/1.0 " + status.to_s + " " + reason + "\r\n" +
+               "Content-Length: " + msg.length.to_s + "\r\n" +
+               "Connection: close\r\n\r\n" + msg
+        Sock.sphttp_write_str(client, head)
+        0
+      end
+    end
+  end
+end

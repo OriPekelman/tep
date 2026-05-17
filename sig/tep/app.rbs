@@ -27,6 +27,12 @@ module Tep
     attr_accessor sched_io_mode: Array[Integer]
     attr_accessor sched_io_ready: Array[Integer]
 
+    # Hand-off stash for Tep::Server::Scheduled (closure-capture
+    # workaround; see lib/tep/app.rb).
+    attr_accessor pending_listen_fd: Integer
+    attr_accessor pending_client_fd: Integer
+    attr_accessor pending_quiet: bool
+
     def initialize: () -> void
 
     def add_asset: (String path, String body, String mime) -> String

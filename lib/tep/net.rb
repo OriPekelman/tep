@@ -11,6 +11,10 @@ module Sock
 
   ffi_func :sphttp_listen,        [:int, :int],     :int
   ffi_func :sphttp_accept,        [:int],           :int
+  # Non-blocking accept variant used by Tep::Server::Scheduled.
+  # Listen fd must be in non-blocking mode (sphttp_set_nonblock).
+  # Returns -1 with errno EAGAIN/EWOULDBLOCK if no pending connection.
+  ffi_func :sphttp_accept_nb,     [:int],           :int
   ffi_func :sphttp_read_request,  [:int],           :int
   ffi_func :sphttp_request_buf,   [],               :str
   ffi_func :sphttp_request_len,   [],               :int
