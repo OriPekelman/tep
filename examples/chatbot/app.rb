@@ -32,11 +32,13 @@ require "sinatra"
 # -------------------------------------------------------------------
 DB_PATH        = ENV.fetch("CHAT_DB",            "/tmp/tep_chatbot.db")
 SESSION_SECRET = ENV.fetch("CHAT_SESSION_SECRET","dev-secret-change-me")
+JWT_SECRET     = ENV.fetch("CHAT_JWT_SECRET",    SESSION_SECRET)
 BACKEND_URL    = ENV.fetch("CHAT_BACKEND",       "http://localhost:11434")
 MODEL          = ENV.fetch("CHAT_MODEL",         "llama3")
 API_KEY        = ENV.fetch("CHAT_API_KEY",       "")
 SYSTEM_PROMPT  = ENV.fetch("CHAT_SYSTEM_PROMPT", "")
 HSTS_SECONDS   = ENV.fetch("CHAT_HSTS",          "0").to_i
+CORS_ORIGIN    = ENV.fetch("CHAT_CORS_ORIGIN",   "*")
 
 set :views, File.expand_path("views", __dir__)
 set :scheduler, :scheduled
@@ -251,20 +253,51 @@ end
 
 # -------------------------------------------------------------------
 # Auth: redirect unauthed traffic to /setup (first boot) or /login.
-# Bypasses for /setup / /login / /logout / /healthz / /assets/*.
+# Bypasses for /setup / /login / /logout / /healthz / bundled assets /
+# /api/v1/* (those routes use JwtAuthFilter, not cookie auth).
 # -------------------------------------------------------------------
-class AuthFilter < Tep::Filter
+def jwt_path?(p)
+  p.length >= 8 && p[0, 8] == "/api/v1/"
+end
+
+# CORS instance for the /api/v1/* surface. Configured once; the
+# combined filter delegates to it.
+CORS = Tep::Security::Cors.new
+CORS.set_origin(CORS_ORIGIN)
+CORS.set_allowed_verbs("GET,POST,OPTIONS")
+CORS.set_allowed_headers("Content-Type,Authorization")
+CORS.set_max_age(3600)
+
+# Single combined before-filter. `Tep::App#set_before` is a single
+# slot (the LAST Tep.before call wins), so all per-request gating
+# for the chatbot lives here. Routes are partitioned into:
+#   - bypass (assets, healthz, setup/login/logout)
+#   - JWT-authed (`/api/v1/*`)        -- CORS + Bearer
+#   - cookie-authed (everything else) -- session redirect to /setup or /login
+class ChatbotFilter < Tep::Filter
   def before(req, res)
     p = req.path
+    # Bypass: routes that need no auth at all.
     if p == "/setup" || p == "/login" || p == "/logout" || p == "/healthz"
       return 0
     end
-    # Bundled assets (Tep::Assets) sit at the root, not under /assets/
-    # -- e.g. assets/style.css is served at /style.css. Bypass auth
-    # so the login/setup pages can load their CSS without a redirect.
     if p == "/style.css" || p == "/chat.js" || p == "/markdown.js"
       return 0
     end
+
+    # JWT routes: CORS + Bearer-token check.
+    if jwt_path?(p)
+      CORS.before(req, res)
+      if res.halted
+        # CORS handled OPTIONS preflight; emit the CORS headers and
+        # stop without further auth.
+        return 0
+      end
+      ChatbotFilter.require_bearer(req, res)
+      return 0
+    end
+
+    # Cookie-authed routes.
     if !password_set?
       res.set_status(302)
       res.headers["Location"] = "/setup"
@@ -279,9 +312,32 @@ class AuthFilter < Tep::Filter
     end
     0
   end
+
+  def self.require_bearer(req, res)
+    auth = req.headers["authorization"]
+    if auth.length < 8 || auth[0, 7] != "Bearer "
+      ChatbotFilter.deny(res, "missing or malformed Authorization header")
+      return 0
+    end
+    token = auth[7, auth.length - 7]
+    payload = Tep::Jwt.verify_and_decode(token, JWT_SECRET)
+    if payload.length == 0
+      ChatbotFilter.deny(res, "invalid token")
+      return 0
+    end
+    0
+  end
+
+  def self.deny(res, why)
+    res.set_status(401)
+    res.headers["Content-Type"] = "application/json"
+    res.body = '{"error":"unauthorized","reason":' + Tep::Json.quote(why) + '}'
+    res.halted = true
+    0
+  end
 end
 
-Tep.before AuthFilter.new
+Tep.before ChatbotFilter.new
 
 # -------------------------------------------------------------------
 # Background worker -- TitleJob via Tep::Job
@@ -435,6 +491,170 @@ end
 post '/logout' do
   req.session.clear
   redirect "/login"
+end
+
+# Issue a JWT API token bound to the logged-in session. Caller uses
+# it for /api/v1/* routes (e.g. from a curl / Python client / another
+# tep app). No expiry in v1; rotate JWT_SECRET to invalidate all
+# outstanding tokens.
+post '/api/token' do
+  payload_json = '{"sub":"user","iat":' + Time.now.to_i.to_s + '}'
+  token = Tep::Jwt.encode_hs256(payload_json, JWT_SECRET)
+  res.headers["Content-Type"] = "application/json"
+  '{"token":' + Tep::Json.quote(token) + '}'
+end
+
+# -------------------------------------------------------------------
+# OpenAI-compat /v1/chat/completions passthrough.
+#
+# Accepts the standard OpenAI request shape:
+#   {"model":"...","messages":[{"role":"...","content":"..."}...],
+#    "stream":true|false}
+#
+# Non-streaming: returns a chat.completion object:
+#   {"id":"...","object":"chat.completion","model":"...",
+#    "choices":[{"index":0,"message":{"role":"assistant","content":"..."},
+#                "finish_reason":"..."}]}
+#
+# Streaming: emits the SSE event stream OpenAI clients expect:
+#   data: {"id":"...","choices":[{"index":0,"delta":{"content":"<chunk>"},
+#                                  "finish_reason":null}]}\n\n
+#   ...
+#   data: [DONE]\n\n
+#
+# Backend is whatever the chatbot was configured with (CHAT_BACKEND);
+# the passthrough re-uses the same Tep::Llm client. Conversation
+# persistence is bypassed -- /api/v1 is a stateless passthrough, not
+# a tied-to-this-chatbot transcript.
+# -------------------------------------------------------------------
+
+# Parse the OpenAI request body into a Tep::Llm::Message array.
+# Hand-rolled because Tep::Json's flat decoder doesn't dive into
+# the messages-array shape. Walks `"messages":[{"role":"...","content":"..."},...]`
+# and pulls each role/content pair.
+def parse_openai_messages(body)
+  msgs = [Tep::Llm::Message.new("", "")]
+  msgs.delete_at(0)
+  m_at = Tep.str_find(body, "\"messages\"", 0)
+  if m_at < 0
+    return msgs
+  end
+  # Walk objects between m_at and the matching closing bracket.
+  # Each object starts at `{` and ends at `}`. Use the same
+  # extract_str_field pattern Tep::Llm already exposes.
+  pos = m_at
+  while true
+    obj_start = Tep.str_find(body, "{", pos)
+    if obj_start < 0
+      return msgs
+    end
+    obj_end = Tep.str_find(body, "}", obj_start)
+    if obj_end < 0
+      return msgs
+    end
+    obj = body[obj_start, obj_end - obj_start + 1]
+    role    = Tep::Llm.extract_str_field(obj, "role",    0)
+    content = Tep::Llm.extract_str_field(obj, "content", 0)
+    if role.length > 0
+      msgs.push(Tep::Llm::Message.new(role, content))
+    end
+    pos = obj_end + 1
+    # Stop at the closing ] of the messages array (heuristic:
+    # the next `]` after pos comes before the next `{`).
+    nxt_bracket = Tep.str_find(body, "]", pos)
+    nxt_brace   = Tep.str_find(body, "{", pos)
+    if nxt_bracket >= 0 && (nxt_brace < 0 || nxt_bracket < nxt_brace)
+      return msgs
+    end
+  end
+  msgs
+end
+
+# Build the OpenAI non-streaming response envelope. The unix
+# timestamp + a fixed id keep the shape minimal; clients that
+# care about ids generate their own.
+def openai_envelope(model, content, stop_reason)
+  '{"id":"chatcmpl-tep","object":"chat.completion","created":' +
+    Time.now.to_i.to_s +
+    ',"model":' + Tep::Json.quote(model) +
+    ',"choices":[{"index":0,"message":{"role":"assistant","content":' +
+    Tep::Json.quote(content) +
+    '},"finish_reason":' + Tep::Json.quote(stop_reason) +
+    '}]}'
+end
+
+class PassthroughStreamer < Tep::Streamer
+  attr_accessor :model, :messages
+
+  def initialize
+    @model    = ""
+    @messages = [Tep::Llm::Message.new("", "")]
+    @messages.delete_at(0)
+  end
+
+  def pump(out)
+    client = Tep::Llm.new(BACKEND_URL)
+    client.set_model(@model)
+    if API_KEY.length > 0
+      client.set_api_key(API_KEY)
+    end
+    if SYSTEM_PROMPT.length > 0
+      client.set_system_prompt(SYSTEM_PROMPT)
+    end
+    client.chat_stream(@messages, out)
+    0
+  end
+end
+
+post '/api/v1/chat/completions' do
+  body = req.body
+  if body.length == 0
+    res.set_status(400)
+    res.headers["Content-Type"] = "application/json"
+    return '{"error":"empty body"}'
+  end
+
+  # Extract model + stream flag from the JSON body. Model
+  # falls back to the chatbot's configured default.
+  model = Tep::Json.get_str(body, "model")
+  if model.length == 0
+    model = MODEL
+  end
+  msgs = parse_openai_messages(body)
+  # Local var renamed away from `stream`: bin/tep's Sinatra DSL
+  # rewrites bare `stream X` into `res.start_stream(X)`, which
+  # collides with `stream = ...` LHS assignment too. `is_streaming`
+  # avoids the textual rewrite.
+  is_streaming = Tep.str_find(body, "\"stream\":true",  0) >= 0 ||
+                 Tep.str_find(body, "\"stream\": true", 0) >= 0
+
+  if is_streaming
+    res.headers["Content-Type"]  = "text/event-stream"
+    res.headers["Cache-Control"] = "no-cache"
+    s = PassthroughStreamer.new
+    s.model    = model
+    s.messages = msgs
+    stream s
+  else
+    client = Tep::Llm.new(BACKEND_URL)
+    client.set_model(model)
+    if API_KEY.length > 0
+      client.set_api_key(API_KEY)
+    end
+    if SYSTEM_PROMPT.length > 0
+      client.set_system_prompt(SYSTEM_PROMPT)
+    end
+    reply = client.chat(msgs)
+    res.headers["Content-Type"] = "application/json"
+    openai_envelope(model, reply.content, reply.stop_reason)
+  end
+end
+
+# Tiny health endpoint under /api/v1 so callers can probe
+# without needing a real token (OPTIONS preflight only).
+get '/api/v1/healthz' do
+  res.headers["Content-Type"] = "application/json"
+  '{"status":"ok"}'
 end
 
 # Main UI: list of conversations + the most-recent conversation
