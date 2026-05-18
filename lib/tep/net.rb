@@ -34,6 +34,19 @@ module Sock
   # bytes one at a time via this; bulk read returns when spinel
   # grows a binary-safe FFI shape.
   ffi_func :sphttp_recv_frame_byte_at, [:int],     :int
+
+  # Outbound binary accumulator. Mirrors the recv side -- needed
+  # because Ruby Strings in spinel are NUL-bound at the value level
+  # (0.chr is "", "abc" + 0.chr truncates). WS frame headers contain
+  # 0x00 bytes routinely, so headers are built into the C-side buf
+  # one byte at a time and flushed via send().
+  ffi_func :sphttp_send_clear,         [],               :int
+  ffi_func :sphttp_send_append_byte,   [:int],           :int
+  ffi_func :sphttp_send_append_bytes,  [:str, :int],     :int
+  ffi_func :sphttp_send_byte_at,       [:int],           :int
+  ffi_func :sphttp_send_len_get,       [],               :int
+  ffi_func :sphttp_send_flush,         [:int],           :int
+
   ffi_func :sphttp_sendfile,      [:int, :str],     :int
   ffi_func :sphttp_filesize,      [:str],           :int
   ffi_func :sphttp_close,         [:int],           :int
@@ -74,4 +87,9 @@ module Crypto
   ffi_func :sp_crypto_b64url_decode,        [:str],             :str
   ffi_func :sp_crypto_pbkdf2_sha256_b64url, [:str, :str, :int], :str
   ffi_func :sp_crypto_random_b64url,        [:int],             :str
+  # SHA-1 + WebSocket accept-key compute. SHA-1 is shipped only
+  # because RFC 6455 requires it for the Sec-WebSocket-Accept
+  # derivation; do NOT use it for anything else (collision-broken).
+  ffi_func :sp_crypto_sha1_hex,             [:str],             :str
+  ffi_func :sp_crypto_websocket_accept,     [:str],             :str
 end

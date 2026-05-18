@@ -41,6 +41,7 @@ require_relative "tep/scheduler"
 require_relative "tep/shell"
 require_relative "tep/http"
 require_relative "tep/llm"
+require_relative "tep/websocket"
 require_relative "tep/parallel"
 require_relative "tep/job"
 
@@ -395,6 +396,59 @@ module Tep
   Tep::Llm.dechunk_pass("")
   Tep::Llm.drain_sse_buf("", _tep_seed_llm_stream, "")
   Tep::Llm.hex_to_int("")
+
+  # Tep::WebSocket seeds. Pins frame/handshake/driver/connection
+  # surfaces to concrete typed callsites so the analyzer doesn't
+  # default param types to mrb_int.
+  _tep_seed_ws_frame = Tep::WebSocket::Frame.new(true, 1, "")
+  _tep_seed_ws_frame.fin     = true
+  _tep_seed_ws_frame.opcode  = 1
+  _tep_seed_ws_frame.payload = ""
+  _tep_seed_ws_frame.encode_to_send_buf
+  Tep::WebSocket::Frame.byte_to_chr(0)
+  Tep::WebSocket::Frame.parse_from_buf(0, 0)
+  Tep::WebSocket::Frame.reserved_opcode?(0)
+  Tep::WebSocket::Frame.control_opcode?(0)
+  _tep_seed_ws_pr = Tep::WebSocket::ParseResult.new
+  _tep_seed_ws_pr.outcome    = ""
+  _tep_seed_ws_pr.consumed   = 0
+  _tep_seed_ws_pr.close_code = 0
+  _tep_seed_ws_pr.frame      = _tep_seed_ws_frame
+  _tep_seed_ws_hsres = Tep::WebSocket::Handshake::Result.new
+  _tep_seed_ws_hsres.valid      = false
+  _tep_seed_ws_hsres.reason     = ""
+  _tep_seed_ws_hsres.accept_key = ""
+  Tep::WebSocket::Handshake.build_response("", "")
+  Tep::WebSocket::Handshake.icontains("", "")
+  Tep::WebSocket::Handshake.downcase("")
+  Tep::WebSocket::Handshake.trim("")
+  _tep_seed_ws_csv = Tep::WebSocket::Handshake.split_csv("")
+  _tep_seed_ws_handler = Tep::WebSocket::Handler.new
+  _tep_seed_ws_event   = Tep::WebSocket::Event.new
+  _tep_seed_ws_event.data   = ""
+  _tep_seed_ws_event.code   = 0
+  _tep_seed_ws_event.reason = ""
+  _tep_seed_ws_handler.handle_event(_tep_seed_ws_event)
+  _tep_seed_ws_drv = Tep::WebSocket::Driver.new(0)
+  _tep_seed_ws_drv.set_max_frame_size(0)
+  _tep_seed_ws_drv.set_subprotocol("")
+  _tep_seed_ws_drv.set_on_open(_tep_seed_ws_handler)
+  _tep_seed_ws_drv.set_on_message(_tep_seed_ws_handler)
+  _tep_seed_ws_drv.set_on_close(_tep_seed_ws_handler)
+  _tep_seed_ws_drv.set_on_ping(_tep_seed_ws_handler)
+  _tep_seed_ws_drv.set_on_pong(_tep_seed_ws_handler)
+  _tep_seed_ws_drv.set_on_error(_tep_seed_ws_handler)
+  _tep_seed_ws_drv.text("")
+  _tep_seed_ws_drv.binary("")
+  _tep_seed_ws_drv.ping("")
+  _tep_seed_ws_drv.pong("")
+  _tep_seed_ws_drv.close(1000, "")
+  Tep::WebSocket::Driver.encode_close_payload(0, "")
+  _tep_seed_ws_conn = Tep::WebSocket::Connection.new(_tep_seed_ws_drv)
+  _tep_seed_ws_conn.set_idle_timeout(0)
+  _tep_seed_ws_cs = Tep::WebSocket::ConnectionState.new
+  _tep_seed_ws_cs.start = 0
+  _tep_seed_ws_cs.avail = 0
 
   # ---------------- DSL ----------------
   # Spinel emits every defined method whether called or not, and

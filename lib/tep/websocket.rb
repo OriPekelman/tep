@@ -1,0 +1,65 @@
+# Tep::WebSocket -- RFC 6455 WebSocket support for spinel-AOT'd apps.
+#
+# Phase 2 (this file's directory) lands the protocol substrate:
+#   - Tep::WebSocket::Frame      single-frame codec (parse + emit)
+#   - Tep::WebSocket::Handshake  server-side handshake check + response
+#   - Tep::WebSocket::Driver     state machine + event dispatch + writers
+#   - Tep::WebSocket::Connection fiber-driven recv loop (one fiber per conn)
+#
+# Phase 3 adds the Sinatra-style DSL hook in bin/tep:
+#
+#     websocket '/chat' do |ws|
+#       ws.on(:message) { |evt| ws.send(evt.data) }
+#     end
+#
+# Until Phase 3 lands, apps construct the Driver + Connection
+# manually from a regular `get` / `post` route that flips
+# `res.upgraded = true` after writing the 101 response. See
+# test/test_websocket.rb for the wiring.
+#
+# Compliance posture (per the OriPekelman/tep#8 strict/lenient table):
+#   strict-emit: server NEVER masks; reserved bits 0 on emit
+#   strict-accept (close 1002):
+#     - client frames MUST be masked
+#     - reserved bits RSV1-3 MUST be 0
+#     - reserved opcodes (3-7, B-F) reject
+#     - control frame payload > 125 reject
+#     - control frames MUST NOT fragment
+#     - continuation without prior fragment reject
+#   strict-accept (close 1007): text frames MUST be UTF-8 (deferred to
+#     Phase 2.1 -- the codec ships the structural strictness first;
+#     the UTF-8 validator is its own ~50 LOC).
+#   liberal-accept: close codes, pong payload contents, unsolicited pong.
+module Tep
+  module WebSocket
+    # Standard opcodes.
+    OPCODE_CONTINUATION = 0
+    OPCODE_TEXT         = 1
+    OPCODE_BINARY       = 2
+    OPCODE_CLOSE        = 8
+    OPCODE_PING         = 9
+    OPCODE_PONG         = 10
+
+    # Close codes (RFC 6455 §7.4). Caller-facing ones only -- the
+    # internal-error / protocol-error codes are emitted by the
+    # Driver directly, not exposed.
+    CLOSE_NORMAL          = 1000
+    CLOSE_GOING_AWAY      = 1001
+    CLOSE_PROTOCOL_ERROR  = 1002
+    CLOSE_UNSUPPORTED     = 1003
+    CLOSE_INVALID_UTF8    = 1007
+    CLOSE_POLICY_VIOLATION = 1008
+    CLOSE_MESSAGE_TOO_BIG = 1009
+
+    # Frame-size cap. Configurable via Driver#set_max_frame_size;
+    # default is 16 MiB (large enough for any realistic chat /
+    # Action Cable payload, bounded so an oversized frame can be
+    # closed with 1009 rather than OOM-ing the worker).
+    DEFAULT_MAX_FRAME = 16 * 1024 * 1024
+  end
+end
+
+require_relative "websocket/frame"
+require_relative "websocket/handshake"
+require_relative "websocket/driver"
+require_relative "websocket/connection"
