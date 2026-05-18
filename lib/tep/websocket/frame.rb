@@ -11,7 +11,7 @@
 #
 # Why encode_to_send_buf instead of a String-returning encode_unmasked:
 # Ruby Strings under spinel master are NUL-bound at the value level
-# (0.chr is "", "abc" + 0.chr truncates -- confirmed by probe). WS
+# (0.chr is "", "abc" + 0.chr truncates -- matz/spinel#593). WS
 # frame headers contain 0x00 bytes routinely (16-bit and 64-bit length
 # encodings), so they cannot be built via Ruby String concatenation.
 # Frame.encode_to_send_buf walks the header byte-by-byte into the

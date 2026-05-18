@@ -249,9 +249,9 @@ int sphttp_recv_frame_byte_at(int i) {
  *
  * Ruby Strings in spinel are NUL-bound at the value level: `0.chr`
  * is an empty String, and `"abc" + 0.chr + "def"` truncates at the
- * NUL. That makes WebSocket frame headers -- which routinely contain
- * 0x00 bytes for 16-bit and 64-bit length encodings -- impossible to
- * build via Ruby String concatenation.
+ * NUL (filed as matz/spinel#593). That makes WebSocket frame headers
+ * -- which routinely contain 0x00 bytes for 16-bit and 64-bit length
+ * encodings -- impossible to build via Ruby String concatenation.
  *
  * The fix is to build the bytes into a C-side static buffer one byte
  * at a time via sphttp_send_append_byte, then flush via send(). The
