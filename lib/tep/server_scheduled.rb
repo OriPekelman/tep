@@ -210,6 +210,13 @@ module Tep
           conn.run
           return 0
         end
+        # Default Content-Type for inline-body responses. Matches
+        # Tep::Server#send; without it, the Security::Headers nosniff
+        # default leaves the browser refusing to interpret an erb
+        # response as HTML.
+        if res.file_path.length == 0 && res.body.length > 0 && !res.headers.key?("Content-Type")
+          res.headers["Content-Type"] = "text/html; charset=utf-8"
+        end
         reason = Tep.reason(res.status)
         head = req.http_version + " " + res.status.to_s + " " + reason + "\r\n"
         res.headers.each do |k, v|
