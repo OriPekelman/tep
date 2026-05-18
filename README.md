@@ -110,6 +110,7 @@ through Spinel.
 | `Tep::Scheduler` | cooperative fiber scheduler with timer + I/O parking. |
 | `Tep::Shell`     | popen-based shell-out + small-file reader (`/proc`, `/sys`, `/etc`). |
 | `Tep::Http`      | Faraday-shaped outbound HTTP/1.0 client. |
+| `Tep::Llm`       | ruby-openai-shaped chat-completions client; backends interchangeable via base_url (Ollama / OpenAI / [toy](https://github.com/OriPekelman/toy)). Sync `chat()` + SSE `chat_stream()`. |
 | `Tep::Parallel`  | grosser/parallel-shaped fork fan-out. |
 | `Tep::Job`       | sidekiq-shaped queue over SQLite. |
 
@@ -118,11 +119,16 @@ Per-battery API docs and cookbooks live on the
 Sinatra-compatibility matrix is in
 [SINATRA_COMPAT.md](SINATRA_COMPAT.md).
 
-~180 tests pass `make test`. 9 real-world test apps build and serve
+~200 tests pass `make test`. 9 real-world test apps build and serve
 end-to-end (smoke-tested through `Net::HTTP`), and the bundled
-[`examples/gx10_dashboard/`](examples/gx10_dashboard/app.rb) — an
-operator dashboard for an NVIDIA GB10 server — exercises every
-public Tep feature in ~640 lines.
+[`examples/chatbot/`](examples/chatbot/app.rb) — a minimalistic
+OpenWebUI-style client backed by any OpenAI-compatible endpoint
+(Ollama / OpenAI / [toy](https://github.com/OriPekelman/toy/tree/main/tep_demo)) —
+exercises the full Tep battery surface (`Tep::Server::Scheduled` +
+`Tep::Llm` + `Tep::SQLite` + `Tep::Streamer` + `Tep::Session` +
+`Tep::Password` + `Tep::Jwt` + `Tep::Security::{Cors,Headers}` +
+`Tep::Assets` + `Tep::Json` + `Tep::Job` + `Tep::Logger`) in ~1500
+lines of Ruby + HTML + CSS + JS.
 
 ### Type signatures (RBS)
 

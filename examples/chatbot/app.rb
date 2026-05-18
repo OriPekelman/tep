@@ -104,21 +104,14 @@ end
 # child returns a small wire-shape: `<seconds_taken>|<reply_content>`
 # so the parent can render the took-time alongside the response
 # without a second JSON parse.
-# Phase E was originally designed around Tep::Parallel (one fork per
-# backend, results gathered). The compiled binary's @worker.run
-# dispatch (in Tep::Parallel#spawn_one) pulled in unrelated `run`
-# methods of the same name from Tep::Server / Tep::Server::Scheduled
-# -- spinel's observed-class narrowing (matz/spinel#531 / #549) didn't
-# kick in for this combined binary's specific shape. Result widened
-# to sp_RbVal and File.write(...) failed to compile.
-#
-# Filed as a separate spinel issue; for Phase E to ship today, the
-# multi-backend dispatch loops SEQUENTIALLY here. The single-prompt
-# total latency is N x backend-latency rather than max. The demo
-# still showcases the multi-backend-compare UX; the parallel speedup
-# moves in once the spinel narrowing covers this shape. CompareWorker
-# stays in the surface (still exercised inline) so the swap-back is
-# a one-line change in the route.
+# See matz/spinel#575: under combined tep binaries the @worker.run
+# dispatch in Tep::Parallel still pulls in Tep::Server.run /
+# Tep::Server::Scheduled.run (same name, different arity), widening
+# the result to sp_RbVal and breaking the downstream File.write.
+# Even after pulling spinel master past today's commits the divergence
+# from matz's local synthetic persists -- working on a minimal repro
+# for the issue. Until #575 lands, CompareWorker stays free-standing
+# (no ParallelWorker inheritance) and the route loops sequentially.
 class CompareWorker
   attr_accessor :prompt
 
