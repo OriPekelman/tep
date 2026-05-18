@@ -113,6 +113,14 @@ module Tep
     end
 
     def write_response(client, req, res, keep_alive)
+      # WebSocket upgrade is only supported under Tep::Server::Scheduled
+      # (the recv loop needs cooperative I/O via Tep::Scheduler.io_wait).
+      # Under the prefork-blocking server, fail with 501 so the client
+      # sees a clean refusal instead of a half-installed handshake.
+      if res.upgrading_ws
+        send_simple(client, 501, "WebSocket requires the scheduled server: set :scheduler, :scheduled")
+        return
+      end
       if res.streaming
         # Chunked-encoding stream. Send headers immediately, hand a
         # Stream writer to the user's Streamer.pump, emit terminator.

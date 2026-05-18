@@ -33,18 +33,21 @@ module Tep
       # Idempotent across multiple frames per recv: a single
       # sphttp_recv_into_frame fill may contain several complete
       # frames; Connection consumes them all before parking again.
+      #
+      # The caller (Tep::Server::Scheduled.write_response) owns the
+      # fd lifecycle -- run() never calls sphttp_close. On clean
+      # close OR error the server's handle_connection closes the fd
+      # via its usual exit path.
       def run
         # Synthetic open event before the first recv -- handlers
         # often want to send a welcome message.
         Connection.dispatch_open(@driver)
 
-        accumulated = ""
         while true
           ready = Tep::Scheduler.io_wait(@fd, Tep::Scheduler::READ, @idle_timeout_seconds)
           if ready == 0
             # Timeout: close 1001 going-away.
             @driver.close(Tep::WebSocket::CLOSE_GOING_AWAY, "idle timeout")
-            Sock.sphttp_close(@fd)
             return 0
           end
 
@@ -53,7 +56,6 @@ module Tep
             # EOF or error: dispatch close without sending one back
             # (peer already gone) and exit.
             Connection.dispatch_close(@driver, Tep::WebSocket::CLOSE_GOING_AWAY, "")
-            Sock.sphttp_close(@fd)
             if n == 0
               return 0
             end
@@ -72,7 +74,6 @@ module Tep
             end
             if r.outcome == "close"
               @driver.close(r.close_code, "protocol error")
-              Sock.sphttp_close(@fd)
               return 0
             end
             Connection.dispatch_frame(@driver, r.frame)

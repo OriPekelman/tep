@@ -47,6 +47,15 @@ module Tep
         @max_frame_size = n
       end
 
+      # Reassign the underlying fd. Used by the server-side upgrade
+      # path: the user handler builds the Driver with a placeholder
+      # fd (since the client fd isn't visible at handler-dispatch
+      # time), and the write_response branch sets the real fd here
+      # right before constructing the Connection.
+      def set_fd(new_fd)
+        @fd = new_fd
+      end
+
       def set_subprotocol(name)
         @subprotocol = name
       end

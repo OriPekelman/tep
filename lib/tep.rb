@@ -176,6 +176,7 @@ module Tep
   _tep_seed_res.streamer.pump(_tep_seed_stream)
   _tep_seed_stream.write("")   # pin the parameter type to :str
   Tep.h("")                    # pin Tep.h(s)'s param to :str
+  _tep_seed_res.start_websocket("", Tep::WebSocket::Driver.new(0))
 
   # SQLite type-seeding. Each method below pins a parameter type
   # (or pulls the FFI return into use) so spinel emits the correct

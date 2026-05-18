@@ -46,6 +46,7 @@ SPINEL = locate_spinel
 
 DSL_VERBS = %w[get post put patch delete options head]
 HOOK_NAMES = %w[before after not_found]
+WS_EVENTS  = %w[on_open on_message on_close on_ping on_pong on_error]
 
 def fatal(msg)
   warn "tep: #{msg}"
@@ -66,6 +67,7 @@ def translate(input_path)
 
   prog = parsed.value
   routes        = []
+  websockets    = []
   filters       = { "before" => [], "after" => [] }
   not_founds    = []
   startup_block = nil
@@ -91,7 +93,7 @@ def translate(input_path)
     # `something.frob`) is just user code: pass it through verbatim
     # so spinel sees it at program load.
     if call?(node) && node.receiver.nil?
-      result = handle_top_call(node, routes, filters, not_founds, config, warnings, passthrough)
+      result = handle_top_call(node, routes, websockets, filters, not_founds, config, warnings, passthrough)
       startup_block = result if result.is_a?(Hash) && result[:kind] == :startup
       return
     end
@@ -265,6 +267,61 @@ def translate(input_path)
     n[:cls] = cname
   end
 
+  # WebSocket route synthesis. Each `websocket '/path' do |ws|
+  # on_open { ... }; on_message { ... }; ... end` becomes:
+  #   - one Tep::WebSocket::Handler subclass per on_X event with the
+  #     user's block body as handle_event(evt), with `<ws_name> = @ws`
+  #     bound at the top so the user's references just work.
+  #   - one Tep::Handler subclass for the upgrade route that runs the
+  #     handshake check, wires the per-event callbacks onto a fresh
+  #     Driver, and flips res.start_websocket so the server runs the
+  #     recv loop in lieu of writing a normal response.
+  # WS only works under Tep::Server::Scheduled; the runtime warns
+  # (and the blocking server returns 501) if the route fires there.
+  websockets.each_with_index do |w, i|
+    base = "TepWS_#{i}"
+    cbs  = {}
+    w[:events].each do |ev, info|
+      ev_cls = "#{base}_#{ev}"
+      body = rewrite_block(info[:src], force_string: false)
+      out << "class #{ev_cls} < Tep::WebSocket::Handler"
+      out << "  def initialize"
+      out << "    @ws = Tep::WebSocket::Driver.new(0)"
+      out << "  end"
+      out << "  attr_accessor :ws"
+      out << "  def handle_event(#{info[:evt_param]})"
+      out << "    #{w[:ws_param]} = @ws"
+      out << indent(body, 4)
+      out << "    0"
+      out << "  end"
+      out << "end"
+      out << ""
+      cbs[ev] = ev_cls
+    end
+
+    rt_cls = "#{base}_Route"
+    out << "class #{rt_cls} < Tep::Handler"
+    out << "  def handle(req, res)"
+    out << "    hs = Tep::WebSocket::Handshake.check(req)"
+    out << "    if !hs.valid"
+    out << "      res.set_status(400)"
+    out << "      return \"\""
+    out << "    end"
+    out << "    drv = Tep::WebSocket::Driver.new(0)"
+    cbs.each do |ev, cls|
+      slot = ev.sub("on_", "set_on_")
+      out << "    _cb_#{ev} = #{cls}.new"
+      out << "    _cb_#{ev}.ws = drv"
+      out << "    drv.#{slot}(_cb_#{ev})"
+    end
+    out << "    res.start_websocket(hs.accept_key, drv)"
+    out << "    \"\""
+    out << "  end"
+    out << "end"
+    out << ""
+    w[:cls] = rt_cls
+  end
+
   # Registrations.
   out << Tep_public_dir(config[:public_dir]) if config[:public_dir]
   out << %(Tep.before #{filter_classes["before"]}.new) if filter_classes["before"]
@@ -286,6 +343,9 @@ def translate(input_path)
         out << %(Tep.#{r[:verb].downcase} #{p.inspect}, #{r[:cls]}.new)
       end
     end
+  end
+  websockets.each do |w|
+    out << %(Tep.get #{w[:path].inspect}, #{w[:cls]}.new)
   end
   out << ""
 
@@ -346,8 +406,70 @@ def call?(node)
   node.is_a?(Prism::CallNode)
 end
 
-def handle_top_call(node, routes, filters, not_founds, config, warnings, passthrough)
+def handle_top_call(node, routes, websockets, filters, not_founds, config, warnings, passthrough)
   name = node.name.to_s
+
+  if name == "websocket"
+    args  = node.arguments&.arguments || []
+    block = node.block
+    first = args.first
+    unless block.is_a?(Prism::BlockNode)
+      return warnings << "skipped websocket -- needs a `do |ws| ... end` block"
+    end
+    unless first.is_a?(Prism::StringNode)
+      return warnings << "skipped websocket -- first arg must be a string literal path"
+    end
+
+    # Extract the block parameter name (`do |ws|` -> "ws"). Used to
+    # let the user's on_X bodies reference the driver by their chosen
+    # name -- we bind `<name> = @ws` at the top of every handler.
+    ws_param = "ws"
+    bparams = block.parameters
+    if bparams.is_a?(Prism::BlockParametersNode)
+      pp = bparams.parameters
+      if pp.is_a?(Prism::ParametersNode) && pp.requireds.first.is_a?(Prism::RequiredParameterNode)
+        ws_param = pp.requireds.first.name.to_s
+      end
+    end
+
+    # Walk the block body looking for `on_<event> do |evt| ... end`
+    # calls; collect each event's block body as its own callback class.
+    events = {}
+    body = block.body
+    if body.is_a?(Prism::StatementsNode)
+      body.body.each do |stmt|
+        next unless call?(stmt) && stmt.receiver.nil?
+        ev = stmt.name.to_s
+        unless WS_EVENTS.include?(ev)
+          warnings << "websocket #{first.unescaped}: unrecognised event `#{ev}` -- ignored"
+          next
+        end
+        inner = stmt.block
+        unless inner.is_a?(Prism::BlockNode)
+          warnings << "websocket #{first.unescaped}: `#{ev}` needs a `do |evt| ... end` block"
+          next
+        end
+        # Capture the event-block param name too, so a user who
+        # writes `|message|` instead of `|evt|` keeps their name.
+        evt_param = "evt"
+        ibp = inner.parameters
+        if ibp.is_a?(Prism::BlockParametersNode)
+          ipp = ibp.parameters
+          if ipp.is_a?(Prism::ParametersNode) && ipp.requireds.first.is_a?(Prism::RequiredParameterNode)
+            evt_param = ipp.requireds.first.name.to_s
+          end
+        end
+        events[ev] = { src: block_source(inner), evt_param: evt_param }
+      end
+    end
+
+    websockets << {
+      path:     first.unescaped,
+      ws_param: ws_param,
+      events:   events,
+    }
+    return
+  end
 
   if DSL_VERBS.include?(name)
     args = node.arguments&.arguments || []

@@ -194,6 +194,22 @@ module Tep
       # a cmeth so the connection fiber can call it without a captured
       # `self`.
       def self.write_response(client, req, res, keep_alive)
+        # WebSocket upgrade branch. Set by res.start_websocket in the
+        # user's handler after a successful Handshake.check. Writes
+        # the 101 Switching Protocols head, then assigns the client
+        # fd onto the driver and runs the recv loop. The recv loop
+        # returns when the connection closes (peer EOF, idle timeout,
+        # or a CLOSE frame round-trip). After return, the caller's
+        # handle_connection closes the fd as usual.
+        if res.upgrading_ws
+          head = Tep::WebSocket::Handshake.build_response(
+            res.ws_accept_key, res.ws_driver.subprotocol)
+          Sock.sphttp_write_str(client, head)
+          res.ws_driver.set_fd(client)
+          conn = Tep::WebSocket::Connection.new(res.ws_driver)
+          conn.run
+          return 0
+        end
         reason = Tep.reason(res.status)
         head = req.http_version + " " + res.status.to_s + " " + reason + "\r\n"
         res.headers.each do |k, v|
