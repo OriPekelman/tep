@@ -111,6 +111,7 @@ through Spinel.
 | `Tep::Shell`     | popen-based shell-out + small-file reader (`/proc`, `/sys`, `/etc`). |
 | `Tep::Http`      | Faraday-shaped outbound HTTP/1.0 client. |
 | `Tep::Llm`       | ruby-openai-shaped chat-completions client; backends interchangeable via base_url (Ollama / OpenAI / [toy](https://github.com/OriPekelman/toy)). Sync `chat()` + SSE `chat_stream()`. |
+| `Tep::WebSocket` | RFC 6455 server-side WebSocket. `websocket '/chat' do \|ws\| ... end` DSL lowers to Frame + Handshake + Driver + Connection. Requires `set :scheduler, :scheduled`. |
 | `Tep::Parallel`  | grosser/parallel-shaped fork fan-out. |
 | `Tep::Job`       | sidekiq-shaped queue over SQLite. |
 
@@ -129,6 +130,10 @@ exercises the full Tep battery surface (`Tep::Server::Scheduled` +
 `Tep::Password` + `Tep::Jwt` + `Tep::Security::{Cors,Headers}` +
 `Tep::Assets` + `Tep::Json` + `Tep::Job` + `Tep::Logger`) in ~1500
 lines of Ruby + HTML + CSS + JS.
+[`examples/websocket_echo.rb`](examples/websocket_echo.rb) shows
+`Tep::WebSocket` in isolation; the end-to-end harness in
+`test/test_websocket_echo.rb` performs a real RFC 6455 handshake
+over a raw socket and round-trips a masked TEXT frame.
 
 ### Type signatures (RBS)
 

@@ -3,7 +3,7 @@
 Generated from the curated checklist suite under `test/` plus
 real-world apps under `test/real_world/`. Run `make test` to refresh.
 
-**Headline**: ~160 checklist tests pass + 6 real-world apps build
+**Headline**: ~170 checklist tests pass + 6 real-world apps build
 and serve correctly (smoke-tested through `Net::HTTP`).
 4 documented skips remain. v0.2 brought cookies, sessions,
 streaming, regex routes, modular `Sinatra::Base`, ERB. v0.3 added
@@ -16,6 +16,10 @@ Tep::Logger, Tep::Jwt, Tep::Password, Tep::Security
 bundling), Tep::Scheduler (cooperative fiber scheduler with
 poll(2)-backed `io_wait`), Tep::Shell (popen + small-file
 reader), and Tep::Http (Faraday-shaped outbound HTTP/1.0 client).
+v0.5 added Tep::Llm (chat completions + SSE streaming), Tep::Job
+(sidekiq-shaped SQLite-backed queue), Tep::Parallel (grosser/parallel
+fork fan-out), and Tep::WebSocket (RFC 6455 server-side, Faye-driver
+shape, lowered by the `websocket '/p' do |ws| ... end` DSL hook).
 
 ## Phase A — Curated checklist
 
@@ -71,6 +75,7 @@ reader), and Tep::Http (Faraday-shaped outbound HTTP/1.0 client).
 | **Multiple `before` / `after`**       | ✅ 2    | Translator merges N blocks into one composite Filter subclass |
 | **Optional path segments `(/:foo)`**  | ✅ 5    | Translator expands to the Cartesian product of include/skip; up to N optionals |
 | **Rack::Request-style methods**       | ✅ 6    | `.host`, `.user_agent`, `.referer`/`.referrer`, `.accept`, `.content_type`, `.scheme`/`.ssl?` (via `X-Forwarded-Proto`) |
+| **WebSocket** (`websocket '/p' do \|ws\|`) | ✅ 11   | RFC 6455 server-side. `on_open` / `on_message` / `on_close` / `on_ping` / `on_pong` / `on_error` block events; `ws.text` / `ws.binary` / `ws.ping` / `ws.pong` / `ws.close(code, reason)` writers. 10 codec/handshake unit tests + 1 end-to-end echo round-trip (raw-socket RFC 6455 handshake + masked TEXT → unmasked echo). Requires `set :scheduler, :scheduled` (recv loop parks on `Tep::Scheduler.io_wait`); the blocking server returns 501. Text payload paths are NUL-safe via a C-side send accumulator (`sphttp_send_append_byte` / `_flush`) since spinel Ruby Strings are NUL-bound at the value level; full binary payloads with embedded `0x00` are a follow-up. |
 
 ## Phase B — Real-world apps
 

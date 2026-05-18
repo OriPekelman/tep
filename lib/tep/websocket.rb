@@ -1,21 +1,24 @@
 # Tep::WebSocket -- RFC 6455 WebSocket support for spinel-AOT'd apps.
 #
-# Phase 2 (this file's directory) lands the protocol substrate:
+# Protocol substrate (this file's directory):
 #   - Tep::WebSocket::Frame      single-frame codec (parse + emit)
 #   - Tep::WebSocket::Handshake  server-side handshake check + response
 #   - Tep::WebSocket::Driver     state machine + event dispatch + writers
 #   - Tep::WebSocket::Connection fiber-driven recv loop (one fiber per conn)
 #
-# Phase 3 adds the Sinatra-style DSL hook in bin/tep:
+# Sinatra-style DSL (lowered by bin/tep):
 #
+#     set :scheduler, :scheduled
 #     websocket '/chat' do |ws|
-#       ws.on(:message) { |evt| ws.send(evt.data) }
+#       on_open    { |evt| ws.text("welcome") }
+#       on_message { |evt| ws.text("echo: " + evt.data) }
+#       on_close   { |evt| ... }
 #     end
 #
-# Until Phase 3 lands, apps construct the Driver + Connection
-# manually from a regular `get` / `post` route that flips
-# `res.upgraded = true` after writing the 101 response. See
-# test/test_websocket.rb for the wiring.
+# Requires the scheduled server (the recv loop parks on
+# Tep::Scheduler.io_wait); the blocking server returns 501 on a WS
+# upgrade attempt. See examples/websocket_echo.rb for a full app and
+# test/test_websocket_echo.rb for the end-to-end smoke harness.
 #
 # Compliance posture (per the OriPekelman/tep#8 strict/lenient table):
 #   strict-emit: server NEVER masks; reserved bits 0 on emit

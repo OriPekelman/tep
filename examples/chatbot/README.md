@@ -57,12 +57,13 @@ talks to all three identically via `Tep::Llm`.
 
 ## Tep batteries this exercises
 
-Phase A (this version):
+Phases A–E are shipped (per [tep#10](https://github.com/OriPekelman/tep/issues/10),
+closed):
 
 | Battery | Where |
 |---|---|
 | `Tep::Server::Scheduled` | `set :scheduler, :scheduled` -- fiber-per-connection serving |
-| `Tep::Llm` | `Tep::Llm.new(BACKEND_URL).chat(history)` in `POST /api/send` |
+| `Tep::Llm` | `Tep::Llm.new(BACKEND_URL).chat(history)` + `.chat_stream(history)` |
 | `Tep::Http` | (under `Tep::Llm`) the actual HTTP transport |
 | `Tep::SQLite` | conversations + messages + app_config tables |
 | `Tep::Json` | response payloads, manual encoding for nested arrays |
@@ -70,17 +71,20 @@ Phase A (this version):
 | `Tep::Session` | signed cookie + `authed` flag |
 | `Tep::Assets` | bundled CSS / JS / markdown renderer (served at `/style.css`, `/chat.js`, `/markdown.js` — Tep::Assets paths-relative-to-assets/) |
 | `Tep::Security::Headers` | HSTS + X-Content-Type-Options + X-Frame-Options |
+| `Tep::Security::Cors` | API surface CORS preflight (`/api/v1/...`) |
+| `Tep::Jwt` | API bearer-token auth on `/api/v1/chat/completions` |
+| `Tep::Streamer` | SSE streaming of LLM chunks back to the browser |
+| `Tep::Job` | background conversation-title summarisation |
+| `Tep::Parallel` | multi-backend compare endpoint (sequential dispatch today; the genuine fork fan-out is blocked on [matz/spinel#575](https://github.com/matz/spinel/issues/575)) |
 | `Tep::Logger` | per-request trace to stderr |
 
-Coming in later phases per [tep#10](https://github.com/OriPekelman/tep/issues/10):
-
-| Phase | Battery |
-|---|---|
-| B (SSE streaming) | `Tep::Streamer` |
-| C (sidebar + multi-conv) | `Tep::Job` (background title summarisation) |
-| D (API token) | `Tep::Jwt`, `Tep::Security::Cors` |
-| E (multi-backend compare) | `Tep::Parallel` |
-| F (WS streaming) | `Tep::WebSocket` (waits for `matz/spinel#564`) |
+Phase F (migrate the live-chat transport from SSE to
+`Tep::WebSocket`) tracks inside
+[tep#8](https://github.com/OriPekelman/tep/issues/8). The
+`Tep::WebSocket` battery itself shipped in v0.5 -- see
+[`examples/websocket_echo.rb`](../websocket_echo.rb) for the DSL
+surface and `test/test_websocket_echo.rb` for an end-to-end
+handshake + frame round-trip.
 
 ## Source layout
 
