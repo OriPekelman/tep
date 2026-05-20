@@ -9,6 +9,7 @@ examples/pg_hello
 examples/.*.tep.rb
 bench/hello_bench
 bench/api_bench
+bench/pg_bench
 bench/.*.tep.rb
 bench/Gemfile.lock
 test/real_world/0[0-9]_*

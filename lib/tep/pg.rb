@@ -222,17 +222,17 @@ module PG
     end
 
     # Run a no-params query. Returns a PG::Result. On error the
-    # result's `ok?` is false and `result_error_message` /
-    # `result_error_field(5)` (SQLSTATE) describe the failure;
-    # error context is also mirrored to the conn's `last_*`
-    # accessors so AR-style "rescue + read conn state" code is
-    # one step away.
+    # result's `ok?` is false and `error_message` / `sql_state`
+    # describe the failure; SQLSTATE + message are also mirrored
+    # to `conn.last_sqlstate` / `#last_error_message`.
     #
-    # v1 does NOT raise on error -- spinel's rescue dispatch can't
-    # match module-namespaced classes today (matz/spinel#627), so
-    # `rescue PG::Error => e` would skip the rescue and crash the
-    # handler. Returning a Result keeps the user in control until
-    # spinel grows the class-hierarchy match.
+    # v1 returns Result-on-error instead of raising because
+    # spinel's `rescue Module::Klass` doesn't resolve the
+    # constant path (top-level-class rescue is fixed but the
+    # module-namespaced case lags; tracking comment on
+    # matz/spinel#627). The PG::Error subclass tree is defined
+    # below so future code that wants to introspect / subclass
+    # has it; raising flips on once the namespace fix lands.
     def exec(sql)
       rh = Pg.tep_pg_exec(@pgh, sql)
       r = PG::Result.new(rh)
@@ -241,9 +241,8 @@ module PG
     end
 
     # Parameterised query with positional binds ($1, $2, ...).
-    # `params` is an Array of String / Integer / nil. Integers and
-    # other to_s-able values are stringified; nil becomes SQL NULL.
-    # Same return / error model as `exec`.
+    # `params` is an Array of String / Integer / nil. Same
+    # Result-on-error model as `exec`.
     def exec_params(sql, params)
       Pg.tep_pg_param_clear
       i = 0
@@ -292,12 +291,10 @@ module PG
       Pg.tep_pg_escape_identifier(0, s)
     end
 
-    # If the Result is in an error state, mirror its SQLSTATE +
-    # message onto the conn so callers can read them after
-    # `if !r.ok?`. The Result itself also carries the same info
-    # via `r.error_field(5)` / `r.error_message`; the conn-side
-    # mirror is the v1.5+ rescue-PG::Error landing pad once
-    # matz/spinel#627 lands.
+    # If the Result is in an error state, mirror SQLSTATE +
+    # message + result-handle onto the conn so post-rescue (or
+    # post-`if !r.ok?`) callers can read them via `conn.last_*`.
+    # No raise here -- see the docstring on `exec` for why.
     def self.record_error_if_any(conn, r)
       st = r.status
       if st == Pg::RES_TUPLES || st == Pg::RES_COMMAND || st == Pg::RES_EMPTY
@@ -518,34 +515,54 @@ module PG
   # subset). Adding a leaf is one class definition + one line in
   # error_class_for_sqlstate.
 
-  # PG::Error -- the single exception class for v1.
+  # PG::Error hierarchy -- ruby-pg-shape, SQLSTATE-keyed. AR's
+  # pg adapter does `e.is_a?(PG::UniqueViolation)` to translate
+  # libpq errors; the class identity has to match. Live since
+  # matz/spinel#627 (rescue ParentClass + is_a?(ParentClass) walk
+  # the class hierarchy).
   #
-  # ruby-pg ships a class hierarchy (PG::UniqueViolation <
-  # PG::IntegrityConstraintViolation < PG::ServerError < PG::Error
-  # < StandardError) and AR's adapter does `e.is_a?(PG::UniqueViolation)`
-  # to translate libpq errors. That pattern depends on `rescue ParentClass`
-  # walking the class hierarchy of the raised exception -- which
-  # spinel doesn't do (matz/spinel#627: `rescue ParentClass` and
-  # `is_a?(ParentClass)` are exact-class matches only).
-  #
-  # Until #627 lands, the leaf classes would be unrescuable in
-  # practice -- `rescue PG::Error => e` would skip a raised
-  # `PG::UniqueViolation`. So v1 ships only `PG::Error`. SQLSTATE
-  # discrimination is via `conn.last_sqlstate` after rescue:
-  #
-  #     begin
-  #       conn.exec_params(sql, params)
-  #     rescue PG::Error => e
-  #       if conn.last_sqlstate == "23505"
-  #         # PG::UniqueViolation equivalent
-  #       elsif conn.last_sqlstate.start_with?("42")
-  #         # syntax / undefined column / table family
-  #       end
-  #     end
-  #
-  # Once #627 ships, this file regrows the leaf classes (already
-  # designed; the v1.5 PR is mechanical) and the `if
-  # conn.last_sqlstate == ...` ladder collapses back to the
-  # AR-shaped `rescue PG::UniqueViolation`.
+  # Raised by Connection#exec / #exec_params via the two-arg
+  # `raise PG::Klass, msg` form (spinel can't lower `raise
+  # X.new(msg, ...)` for custom Exception initializers --
+  # matz/spinel#622). SQLSTATE / result-handle context lives on
+  # `conn.last_sqlstate` / `#last_error_message` / `#last_result_rh`
+  # for callers who need them post-rescue.
   class Error < StandardError; end
+
+  class ConnectionBad < Error; end
+  class UnableToSend  < Error; end
+  class ServerError   < Error; end
+
+  # SQLSTATE class 23 -- integrity constraint violation
+  class IntegrityConstraintViolation < ServerError; end
+  class NotNullViolation     < IntegrityConstraintViolation; end   # 23502
+  class ForeignKeyViolation  < IntegrityConstraintViolation; end   # 23503
+  class UniqueViolation      < IntegrityConstraintViolation; end   # 23505
+  class CheckViolation       < IntegrityConstraintViolation; end   # 23514
+  class ExclusionViolation   < IntegrityConstraintViolation; end   # 23P01
+
+  # SQLSTATE class 25 -- invalid transaction state
+  class InFailedSqlTransaction < ServerError; end                  # 25P02
+  class ReadOnlySqlTransaction < ServerError; end                  # 25006
+
+  # SQLSTATE class 40 -- transaction rollback
+  class SerializationFailure   < ServerError; end                  # 40001
+  class DeadlockDetected       < ServerError; end                  # 40P01
+
+  # SQLSTATE class 42 -- syntax / access rule violation
+  class SyntaxError            < ServerError; end                  # 42601
+  class UndefinedColumn        < ServerError; end                  # 42703
+  class UndefinedFunction      < ServerError; end                  # 42883
+  class UndefinedTable         < ServerError; end                  # 42P01
+  class DuplicateColumn        < ServerError; end                  # 42701
+  class DuplicateTable         < ServerError; end                  # 42P07
+  class InsufficientPrivilege  < ServerError; end                  # 42501
+
+  # SQLSTATE class 57 -- operator intervention
+  class QueryCanceled          < ServerError; end                  # 57014
+  class AdminShutdown          < ServerError; end                  # 57P01
+
+  # SQLSTATE class 08 -- connection exception
+  class ConnectionException    < ServerError; end                  # 08000
+  class ConnectionDoesNotExist < ServerError; end                  # 08003
 end

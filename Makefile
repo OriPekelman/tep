@@ -68,6 +68,7 @@ bench: bench-tep
 bench-tep: helper
 	$(TEP) build bench/hello_bench.rb
 	$(TEP) build bench/api_bench.rb
+	$(TEP) build bench/pg_bench.rb
 
 bench-sinatra:
 	cd bench && bundle _2.7.2_ install --quiet

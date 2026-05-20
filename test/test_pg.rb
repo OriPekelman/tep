@@ -260,19 +260,16 @@ class TestPg < TepTest
     # GET /unique_violation -- INSERT duplicate primary key.
     get '/unique_violation' do
       c = PG.connect(PG_URL)
-      # First INSERT picks an id far above any seeded id.
       r1 = c.exec_params("INSERT INTO " + TBL + " (id, body) VALUES ($1, $2)",
                          ["99001", "duplicate"])
       ok1 = r1.ok?
       r1.clear
-      # Second INSERT with the same id triggers 23505.
       r2 = c.exec_params("INSERT INTO " + TBL + " (id, body) VALUES ($1, $2)",
                         ["99001", "duplicate"])
       out = "first_ok=" + (ok1 ? "yes" : "no") +
             " second_ok=" + (r2.ok? ? "yes" : "no") +
             " sqlstate=" + c.last_sqlstate
       r2.clear
-      # Cleanup so re-run is idempotent.
       r3 = c.exec_params("DELETE FROM " + TBL + " WHERE id = $1", ["99001"])
       r3.clear
       c.close
