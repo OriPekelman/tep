@@ -162,10 +162,13 @@ class TestPg < TepTest
       out
     end
 
-    # GET /null -- find the row with opt IS NULL via getisnull.
+    # GET /null -- find the seeded row with opt IS NULL via
+    # getisnull. The seeded "beta" row (id <= 3 by construction)
+    # is the canonical NULL holder; other tests may insert more
+    # NULL-opt rows so we filter by id to keep this deterministic.
     get '/null' do
       c = PG.connect(PG_URL)
-      r = c.exec("SELECT body, opt FROM " + TBL + " ORDER BY id")
+      r = c.exec("SELECT body, opt FROM " + TBL + " WHERE id <= 3 ORDER BY id")
       found = "none"
       n = r.ntuples
       i = 0
@@ -347,6 +350,60 @@ class TestPg < TepTest
       c.close
       "sum=" + sum.to_s
     end
+
+    # -------- PG::Pool routes --------
+    POOL = PG::Pool.new(PG_URL, 4)
+
+    # GET /pool_size -- pool was constructed with 4 conns; all
+    # should be open + healthy.
+    get '/pool_size' do
+      "size=" + POOL.size.to_s +
+        " available=" + POOL.available.to_s +
+        " healthy=" + (POOL.healthy? ? "yes" : "no")
+    end
+
+    # GET /pool_query -- checkout, run a query, checkin. Verifies
+    # the pool conns are usable.
+    get '/pool_query' do
+      c = POOL.checkout
+      r = c.exec("SELECT 1 AS one, 'pool' AS src")
+      out = r.getvalue(0, 0) + "/" + r.getvalue(0, 1)
+      r.clear
+      POOL.checkin(c)
+      "val=" + out
+    end
+
+    # GET /pool_drain_refill -- checkout 2, observe drained
+    # count, checkin both, observe refilled count.
+    get '/pool_drain_refill' do
+      n = POOL.size
+      c1 = POOL.checkout
+      c2 = POOL.checkout
+      drained_avail = POOL.available
+      POOL.checkin(c2)
+      POOL.checkin(c1)
+      refilled_avail = POOL.available
+      "size=" + n.to_s +
+        " drained=" + drained_avail.to_s +
+        " refilled=" + refilled_avail.to_s
+    end
+
+    # GET /pool_reusable -- a conn returned to the pool is
+    # actually usable again. checkout, exec, checkin, checkout,
+    # exec -- verify the second exec works.
+    get '/pool_reusable' do
+      c1 = POOL.checkout
+      r1 = c1.exec("SELECT 1")
+      v1 = r1.getvalue(0, 0)
+      r1.clear
+      POOL.checkin(c1)
+      c2 = POOL.checkout
+      r2 = c2.exec("SELECT 2")
+      v2 = r2.getvalue(0, 0)
+      r2.clear
+      POOL.checkin(c2)
+      "first=" + v1 + " second=" + v2
+    end
   RB
 
   def test_connect_succeeds
@@ -484,5 +541,28 @@ class TestPg < TepTest
     res = get("/many_results")
     # 20 rows numbered 0..19; sum is 190.
     assert_equal "sum=190", res.body
+  end
+
+  # -------- PG::Pool tests --------
+
+  def test_pool_starts_healthy_with_full_free_list
+    res = get("/pool_size")
+    assert_equal "size=4 available=4 healthy=yes", res.body
+  end
+
+  def test_pool_checkout_returns_usable_connection
+    res = get("/pool_query")
+    assert_equal "val=1/pool", res.body
+  end
+
+  def test_pool_drains_and_refills
+    res = get("/pool_drain_refill")
+    # 2 checkouts -> drained=2; 2 checkins -> refilled=4 (back to size).
+    assert_equal "size=4 drained=2 refilled=4", res.body
+  end
+
+  def test_pool_returned_connection_is_reusable
+    res = get("/pool_reusable")
+    assert_equal "first=1 second=2", res.body
   end
 end

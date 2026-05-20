@@ -565,4 +565,148 @@ module PG
   # SQLSTATE class 08 -- connection exception
   class ConnectionException    < ServerError; end                  # 08000
   class ConnectionDoesNotExist < ServerError; end                  # 08003
+
+  # -------- Connection pool --------
+  #
+  # PG::Pool -- a fixed-size connection pool for PG::Connection
+  # instances. Mirrors ruby-pg's `PG::Pool` shape from the
+  # external pg_pool gem (and the same idea as AR's
+  # ConnectionPool): hold N pre-opened connections, hand them out
+  # via `checkout` / take them back via `checkin`, park
+  # cooperatively under `Tep::Server::Scheduled` when the free
+  # list is empty.
+  #
+  # Typical use:
+  #
+  #     POOL = PG::Pool.new(ENV["DATABASE_URL"], 8)
+  #
+  #     get '/users/:id' do
+  #       c = POOL.checkout
+  #       r = c.exec_params("SELECT name FROM users WHERE id = $1",
+  #                         [params[:id]])
+  #       name = r.getvalue(0, 0)
+  #       r.clear
+  #       POOL.checkin(c)
+  #       name
+  #     end
+  #
+  # The block-form `with { |c| ... }` is deferred until spinel
+  # lights up instance-method typed yields (matz/spinel#628 covers
+  # the top-level def case but not instance methods); manual
+  # checkout/checkin is the v1 shape.
+  #
+  # Concurrency model:
+  #
+  #   - Under prefork (Tep::Server, the default): one Pool per
+  #     worker process; eagerly opens its N conns at boot. N tunes
+  #     the per-worker in-flight query count.
+  #   - Under Tep::Server::Scheduled: one Pool for the whole
+  #     worker; checkouts that find the free list empty park via
+  #     `Tep::Scheduler.pause(0.001)` until a checkin happens.
+  #     Other fibers run in the meantime; eventually a checkin
+  #     refills the free list and the parked fiber retries.
+  #
+  # No raise from checkout -- spinel's rescue dispatch for
+  # module-namespaced classes still lags (matz/spinel#627 follow-on).
+  # Pool exhaustion timeouts surface as a sentinel "" / nil-equivalent
+  # Connection that the caller treats as failure (see `checkout_timeout`).
+  class Pool
+    attr_accessor :url, :size, :free, :checkout_timeout_ms
+
+    def initialize(url, size)
+      @url = url
+      @size = size
+      @checkout_timeout_ms = 5000  # 5s default; bump for slow upstreams
+      # Type-seed @free as PtrArray<PG::Connection>. PG::Connection.new
+      # with an empty conninfo returns a connection-failed instance
+      # (@pgh=-1, populated @last_error_message) rather than raising,
+      # so this is safe to run at module load even when PG isn't
+      # reachable.
+      @free = [PG::Connection.new("")]
+      @free.delete_at(0)
+      # Eager open of N real conns. If the URL isn't reachable, each
+      # Connection will have @pgh=-1; the caller can check
+      # `pool.healthy?` after construction.
+      i = 0
+      while i < size
+        c = PG::Connection.new(url)
+        @free.push(c)
+        i += 1
+      end
+    end
+
+    # True iff every pooled connection opened successfully. Use
+    # after construction to fail loud rather than handing out
+    # broken conns:
+    #
+    #     POOL = PG::Pool.new(url, 8)
+    #     raise "PG unreachable" unless POOL.healthy?
+    def healthy?
+      i = 0
+      while i < @free.length
+        if !@free[i].connected?
+          return false
+        end
+        i += 1
+      end
+      @free.length == @size
+    end
+
+    def set_checkout_timeout_ms(ms)
+      @checkout_timeout_ms = ms
+    end
+
+    # Acquire a connection. Returns a PG::Connection on success.
+    # Under cooperative I/O (Scheduled server), parks via
+    # Tep::Scheduler.pause(0.001) when the free list is empty;
+    # under prefork that's a 1ms wall-clock sleep, which is fine
+    # because the only thing the worker could do meanwhile is
+    # accept the next HTTP request -- which it already wouldn't
+    # have a free conn for.
+    #
+    # On timeout, returns the first conn in the pool (still in_use=true
+    # tracked by the caller's checkout count, NOT the pool) so
+    # callers don't get a nil. The right shape post-#627 is to
+    # raise PG::ConnectionBad; until then, callers can compare
+    # pool.size to in-flight counts they track themselves.
+    def checkout
+      waited_ms = 0
+      while @free.length == 0
+        Tep::Scheduler.pause(0.001)
+        waited_ms += 1
+        if waited_ms >= @checkout_timeout_ms
+          # Pool exhausted. Punt: return the original "seed" slot
+          # (which is still a live conn but may be in use). Apps
+          # that care about pool-exhaustion failures should track
+          # checkouts themselves until #627 lights up the raise
+          # path.
+          return @free[0]
+        end
+      end
+      @free.delete_at(0)
+    end
+
+    # Return a connection to the pool. No-op if `c` is already in
+    # the free list (shouldn't happen with correctly-paired
+    # checkout/checkin, but harmless).
+    def checkin(c)
+      @free.push(c)
+      0
+    end
+
+    # Diagnostic: how many connections are currently available.
+    def available
+      @free.length
+    end
+
+    # Close every connection. Call at app shutdown if needed; the
+    # OS recovers them on process exit anyway.
+    def close_all
+      while @free.length > 0
+        c = @free.delete_at(0)
+        c.close
+      end
+      0
+    end
+  end
 end

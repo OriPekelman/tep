@@ -206,6 +206,56 @@ module Tep
     _tep_seed_db.close
   end
 
+  # PG type-seeding. PG::Connection.new("") returns a connection-
+  # failed instance (@pgh=-1) rather than raising, so this is safe
+  # at module load regardless of whether libpq has a reachable
+  # server. The point is to pin parameter / return types on every
+  # public Connection / Result method so apps that don't exercise
+  # one method still compile cleanly.
+  _tep_seed_pg_conn = PG::Connection.new("")
+  _tep_seed_pg_conn.connected?
+  _tep_seed_pg_conn.status
+  _tep_seed_pg_conn.transaction_status
+  _tep_seed_pg_conn.server_version
+  _tep_seed_pg_conn.error_message
+  _tep_seed_pg_conn.escape_string("")
+  _tep_seed_pg_conn.escape_identifier("")
+  _tep_seed_pg_conn.escape_literal("")
+  _tep_seed_pg_conn.last_sqlstate = ""
+  _tep_seed_pg_conn.last_error_message = ""
+  _tep_seed_pg_conn.last_result_rh = -1
+  _tep_seed_pg_res = PG::Result.new(-1)
+  _tep_seed_pg_res.ntuples
+  _tep_seed_pg_res.nfields
+  _tep_seed_pg_res.fname(0)
+  _tep_seed_pg_res.fnumber("")
+  _tep_seed_pg_res.ftype(0)
+  _tep_seed_pg_res.fformat(0)
+  _tep_seed_pg_res.fmod(0)
+  _tep_seed_pg_res.getvalue(0, 0)
+  _tep_seed_pg_res.getisnull(0, 0)
+  _tep_seed_pg_res.getlength(0, 0)
+  _tep_seed_pg_res.value(0, 0)
+  _tep_seed_pg_res.error_field(67)
+  _tep_seed_pg_res.cmd_status
+  _tep_seed_pg_res.cmd_tuples
+  _tep_seed_pg_res.error_message
+  _tep_seed_pg_res.sql_state
+  _tep_seed_pg_res.fields
+  _tep_seed_pg_res.values
+  _tep_seed_pg_res.column_values(0)
+  _tep_seed_pg_res.clear
+  _tep_seed_pg_conn.close
+  # Pool seed -- size 0 so we don't try to open real conns at load.
+  _tep_seed_pg_pool = PG::Pool.new("", 0)
+  _tep_seed_pg_pool.healthy?
+  _tep_seed_pg_pool.available
+  _tep_seed_pg_pool.size
+  _tep_seed_pg_pool.set_checkout_timeout_ms(0)
+  _tep_seed_pg_pool.close_all
+  # NB: don't checkout/checkin against the size-0 seed pool; it'd
+  # spin until timeout. The seed has @free.length=0 forever.
+
   # Tep::Json type-seeding. Pin every public method's parameter
   # types so an app that uses one method but not another still
   # compiles cleanly. Calls have no side effects beyond producing

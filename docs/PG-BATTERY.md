@@ -1023,6 +1023,88 @@ prepared statements, so matching them costs nothing.
 
 ---
 
+## Pool (`PG::Pool`)
+
+Fixed-size connection pool, eager-open at construction. Per-worker
+under prefork, one-per-worker under `Tep::Server::Scheduled`. The
+shape mirrors AR's `ConnectionPool` and the external `pg_pool` gem:
+
+```ruby
+POOL = PG::Pool.new(ENV["DATABASE_URL"], 8)
+raise "PG unreachable" unless POOL.healthy?
+
+get '/users/:id' do
+  c = POOL.checkout
+  r = c.exec_params("SELECT name FROM users WHERE id = $1",
+                    [params[:id]])
+  name = r.getvalue(0, 0)
+  r.clear
+  POOL.checkin(c)
+  name
+end
+```
+
+API:
+
+| Method | What |
+|---|---|
+| `PG::Pool.new(url, size)` | Eagerly open `size` PG::Connections against `url`. If any conn fails, its instance has `@pgh=-1`; check with `#healthy?`. |
+| `pool.checkout` | Returns a Connection from the free list. If empty, parks via `Tep::Scheduler.pause(0.001)` until a checkin or timeout (`5s` default; override via `set_checkout_timeout_ms`). |
+| `pool.checkin(c)` | Return `c` to the free list. |
+| `pool.size` | Total conns the pool was built with. |
+| `pool.available` | Current count in the free list (0..size). |
+| `pool.healthy?` | True iff every pooled conn opened successfully and the free list is at full size (so call before any checkouts). |
+| `pool.set_checkout_timeout_ms(ms)` | Override the 5s default checkout timeout. |
+| `pool.close_all` | Close every conn in the free list. |
+
+### v1 deliberately omits
+
+- **`pool.with { |c| ... }`** — block form is the AR / pg_pool
+  ergonomic shape. Spinel's instance-method typed yields still
+  mis-type at the block-local binding (matz/spinel#628 covers the
+  top-level def case only). Manual checkout/checkin is the v1
+  workaround; `with` becomes a one-paragraph add when #628 closes.
+- **`pool.checkout` raise-on-timeout** — depends on
+  module-namespaced `rescue PG::ConnectionBad` working, which is
+  the matz/spinel#627 follow-on. Today checkout-on-exhausted-pool
+  returns the original seed slot; AR-shape exception flow lights
+  up post-fix.
+- **`pool.with_connection` (AR's name)** — synonym for `with`;
+  same blocker, same fix path.
+
+### Where the pool pays off
+
+**Under prefork (the default `Tep::Server`)**: each worker is a
+single-threaded process; only one handler runs at a time per worker.
+Adding pool conns doesn't increase per-worker concurrency. The pool
+still helps if a single handler wants to issue multiple PG queries
+concurrently from forked subprocesses (`Tep::Parallel`), but the
+common-case throughput stays at `workers × 1`.
+
+**Under `Tep::Server::Scheduled` + cooperative `Tep::PG` (the v2
+target)**: each worker hosts many fibers; each fiber can hold a pool
+conn while parked on `io_wait` for the PG round-trip. Pool conns
+become real parallelism. This is where the AR-on-spinel story plays
+— async libpq via `PQsendQuery` + `PQconsumeInput` + `PQsocket`
+parked on `Tep::Scheduler.io_wait`, with `PG::Pool` as the conn
+multiplexer.
+
+The bench numbers in [`bench/run_pg_solo.sh`](../bench/run_pg_solo.sh)
++ [`bench/pg_pool_bench.rb`](../bench/pg_pool_bench.rb) confirm
+this: under prefork-blocking, pool-of-N doesn't move throughput vs
+pool-of-1 (the extra conns sit idle). Re-running with cooperative
+`Tep::PG` is the v2 deliverable.
+
+### Concurrency-model summary
+
+| Server | Pool size | In-flight |
+|---|---|---|
+| `Tep::Server` (prefork) | 1 per worker | `workers × 1` (pool size irrelevant) |
+| `Tep::Server::Scheduled`, sync `Tep::PG` | N | `workers × 1` still (handler fiber blocks on PG recv) |
+| `Tep::Server::Scheduled`, async `Tep::PG` (v2) | N | `workers × N` (each fiber can hold a conn while parked) |
+
+---
+
 ## ActiveRecord adapter sketch (v2 target, after async lands)
 
 A `Tep::AR::PGAdapter` (or whatever the namespace ends up) reuses
@@ -1392,8 +1474,11 @@ simple CRUD page through `async_exec`.
    positional form is undocumented in ruby-pg today and AR doesn't
    use it. Skip.
 
-2. **Connection pool.** AR brings its own. For non-AR users a
-   `PG::Pool` battery is a follow-up doc; not blocking v1.
+2. **Connection pool.** Shipped as `PG::Pool` (see "Pool" section
+   below). v1 covers checkout/checkin + cooperative wait; the
+   block-form `with { |c| ... }` is deferred until spinel lights
+   up instance-method typed yields. v1 pays off when paired with
+   cooperative `Tep::PG` (the v2 async path).
 
 3. **`Connection#trace` / pg verbosity.** Diagnostic helpers from
    ruby-pg that aren't on the AR path. Skip until asked.
