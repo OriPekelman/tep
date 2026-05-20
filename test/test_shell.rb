@@ -17,8 +17,9 @@ class TestShell < TepTest
     end
 
     get '/file' do
-      # /etc/hostname is small, ASCII, present on Linux + macOS.
-      Tep::Shell.read("/etc/hostname").length.to_s
+      # /etc/hosts ships on Linux + macOS + BSDs; /etc/hostname is
+      # Linux-only (macOS keeps the hostname in scutil instead).
+      Tep::Shell.read("/etc/hosts").length.to_s
     end
 
     get '/missing' do
@@ -41,7 +42,7 @@ class TestShell < TepTest
   def test_read_returns_bytes_for_real_file
     res = get("/file")
     assert_equal "200", res.code
-    # /etc/hostname is at least 1 byte (the name + newline).
+    # /etc/hosts is always non-empty on any sane Unix.
     assert_operator res.body.strip.to_i, :>=, 1
   end
 

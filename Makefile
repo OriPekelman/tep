@@ -16,12 +16,22 @@ export SPINEL
 
 # libpq cflags / libs. pkg-config is the preferred path (libpq ships
 # a .pc file on Linux + Homebrew); pg_config is the fallback for
-# stripped-down hosts. Either lookup quietly produces empty strings
-# if libpq isn't installed -- the compile then fails at link time
-# with a clear "cannot find -lpq" message, which is the right loud
-# failure for "you wanted Tep::PG but didn't install libpq".
-TEP_PG_CFLAGS ?= $(shell pkg-config --cflags libpq 2>/dev/null || pg_config --cflags 2>/dev/null)
-TEP_PG_LIBS   ?= $(shell pkg-config --libs libpq 2>/dev/null || echo "-lpq")
+# stripped-down hosts.
+#
+# NB: `pg_config --cflags` returns the cflags PostgreSQL itself was
+# built with (warning flags, -O2, ...), NOT the cflags a libpq
+# CONSUMER needs. We want -I<includedir>; the consumer cflags are
+# constructed from `pg_config --includedir`. Same for -L from
+# `--libdir`. If neither lookup finds libpq, both vars stay empty
+# and the compile fails at link time with "cannot find -lpq" --
+# the right loud failure for "you wanted Tep::PG but didn't install
+# libpq".
+TEP_PG_CFLAGS ?= $(shell \
+    pkg-config --cflags libpq 2>/dev/null || \
+    pg_config --includedir 2>/dev/null | sed -e 's|^|-I|')
+TEP_PG_LIBS   ?= $(shell \
+    pkg-config --libs libpq 2>/dev/null || \
+    (pg_config --libdir 2>/dev/null | sed -e 's|^|-L|' ; echo "-lpq") | tr '\n' ' ')
 export TEP_PG_CFLAGS TEP_PG_LIBS
 
 .PHONY: all clean helper hello sinatra_style bench bench-tep bench-sinatra demo test spinel-fresh test-pg
