@@ -100,9 +100,42 @@ module Tep
       Tep.str_hash
     end
 
+    # Per-recv timeout in the cooperative path. Bounds how long a
+    # parked fiber will wait for the next chunk from the peer before
+    # giving up and returning status=0. 30s matches the scheduled
+    # server's KEEPALIVE_TIMEOUT; loud failure beats a wedged fiber.
+    COOP_RECV_TIMEOUT = 30
+
+    # Hard cap on total response bytes accumulated by the cooperative
+    # path. Mirrors sphttp_recv_all's static-buffer cap (~64 KiB) so
+    # the two paths impose the same upper bound. Bigger responses
+    # need streaming, which v1 doesn't ship.
+    COOP_RESPONSE_MAX = 65535
+
     # The workhorse. Returns a Tep::Http::Response in all cases --
     # on connect or send failure, `.status` is 0 and `.body` is "".
+    #
+    # When called from inside a Tep::Scheduler fiber (i.e. running
+    # under Tep::Server::Scheduled), routes through `send_req_coop`,
+    # which parks on `Tep::Scheduler.io_wait` between recv calls so
+    # the worker fiber doesn't hog the scheduler while waiting for
+    # peer bytes. Outside scheduler context the call falls through to
+    # `send_req_blocking`, which is the original sphttp_recv_all path.
+    #
+    # Why split rather than always-async: outside a scheduled context
+    # (the default Tep::Server prefork model, scripts, REPL), io_wait
+    # falls back to a single-shot poll per call which would add an
+    # extra poll(2) round per chunk for no benefit. Keeping the
+    # blocking path keeps the cheap case cheap.
     def self.send_req(verb, url, body, headers)
+      if Tep::Scheduler.scheduled_context?
+        Http.send_req_coop(verb, url, body, headers)
+      else
+        Http.send_req_blocking(verb, url, body, headers)
+      end
+    end
+
+    def self.send_req_blocking(verb, url, body, headers)
       out = Tep::Http::Response.new
       parts = Tep::Url.split_url(url)
       if parts["scheme"] != "http"
@@ -121,7 +154,10 @@ module Tep
         return out
       end
 
-      # Request: VERB path HTTP/1.0\r\nHost: ...\r\n(headers)\r\nContent-Length: N\r\n\r\nBODY
+      # Request head inlined (not extracted to a helper): spinel's
+      # cross-method type inference picks one type per param name
+      # across the whole file, and `path`/`host` collide with
+      # int-typed uses elsewhere, breaking the build.
       head = verb + " " + path + " HTTP/1.0\r\n" +
              "Host: " + host + "\r\n" +
              "Connection: close\r\n"
@@ -147,6 +183,88 @@ module Tep
       raw = Sock.sphttp_recv_all(fd, 0)  # 0 -> cap at sphttp internal max
       Sock.sphttp_close(fd)
 
+      Http.parse_response(raw)
+    end
+
+    # Cooperative variant. Same wire shape, same parse, but:
+    #   * flips the fd to non-blocking after connect, and
+    #   * replaces the synchronous sphttp_recv_all with a parked
+    #     io_wait(READ) + sphttp_recv_some loop that yields the
+    #     worker fiber back to the scheduler between recvs.
+    #
+    # This is what closes the macOS self-call deadlock: while the
+    # outer handler fiber is parked here, the worker's accept fiber
+    # can run, accept the inner request, dispatch its handler, and
+    # write the response -- which unblocks our io_wait. See
+    # docs/MACOS-CONCURRENCY.md for the why.
+    def self.send_req_coop(verb, url, body, headers)
+      out = Tep::Http::Response.new
+      parts = Tep::Url.split_url(url)
+      if parts["scheme"] != "http"
+        return out
+      end
+      host = parts["host"]
+      port = parts["port"].to_i
+      path = parts["path"]
+      if parts["query"].length > 0
+        path = path + "?" + parts["query"]
+      end
+
+      fd = Sock.sphttp_connect(host, port)
+      if fd < 0
+        return out
+      end
+      Sock.sphttp_set_nonblock(fd)
+
+      # Same head shape as send_req_blocking; inlined for the same
+      # spinel-type-inference reason (see that path's comment).
+      head = verb + " " + path + " HTTP/1.0\r\n" +
+             "Host: " + host + "\r\n" +
+             "Connection: close\r\n"
+      headers.each do |k, v|
+        head = head + k + ": " + v + "\r\n"
+      end
+      if body.length > 0
+        head = head + "Content-Length: " + body.length.to_s + "\r\n"
+      end
+      head = head + "\r\n"
+
+      # send(2) on a non-blocking localhost socket with a small
+      # request (start line + few headers, well under the kernel's
+      # ~16 KiB socket buffer) returns immediately. If it ever
+      # surfaces EAGAIN we'll need a write-side park; for v1 the
+      # bounded request size makes that path dead code.
+      if Sock.sphttp_write_str(fd, head) < 0
+        Sock.sphttp_close(fd)
+        return out
+      end
+      if body.length > 0
+        if Sock.sphttp_write_str(fd, body) < 0
+          Sock.sphttp_close(fd)
+          return out
+        end
+      end
+
+      raw = ""
+      while raw.length < COOP_RESPONSE_MAX
+        ready = Tep::Scheduler.io_wait(fd, Tep::Scheduler::READ, COOP_RECV_TIMEOUT)
+        if ready == 0
+          # Timeout -- bail with whatever we have so far. An
+          # incomplete response will surface as status=0 from
+          # parse_response if the status line never arrived.
+          break
+        end
+        chunk = Sock.sphttp_recv_some(fd, 4096)
+        if chunk.length == 0
+          # EOF (or transient EAGAIN that recv_some swallows). For
+          # HTTP/1.0 + Connection: close that's the end-of-response
+          # signal.
+          break
+        end
+        raw = raw + chunk
+      end
+
+      Sock.sphttp_close(fd)
       Http.parse_response(raw)
     end
 

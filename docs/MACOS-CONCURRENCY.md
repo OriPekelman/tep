@@ -105,35 +105,44 @@ between each recv. The bones already exist:
 
 ## Phased plan
 
-### Phase 1 — `Tep::Http::Async` (sketch)
+### Phase 1 — runtime-detected cooperative `Tep::Http` (shipped)
 
-Add a parallel async path that mirrors `Tep::Http`'s public API but
-parks on `io_wait` between recv calls. Either:
-
-- **A separate class** (`Tep::Http::Async`) — clearest split, but
-  forks the API surface (callers have to choose).
-- **A single class that runtime-detects scheduler context** —
-  `Tep::Http.get(...)` checks `Tep::Scheduler.in_scheduled_context?`
-  (or equivalent) and routes through the cooperative path when
-  available, the blocking path otherwise. Same API, contextual
-  behavior. Sketch:
+`Tep::Http.send_req` now checks `Tep::Scheduler.scheduled_context?`
+and routes through `send_req_coop` when running inside a scheduled
+fiber; otherwise it falls through to `send_req_blocking` (the
+original `sphttp_recv_all` path). Same public API — Sinatra-shaped
+apps don't have to think about which server is underneath.
 
 ```ruby
-def self.get(url)
+def self.send_req(verb, url, body, headers)
   if Tep::Scheduler.scheduled_context?
-    Async.get(url)
+    Http.send_req_coop(verb, url, body, headers)
   else
-    Blocking.get(url)
+    Http.send_req_blocking(verb, url, body, headers)
   end
 end
 ```
 
-The second shape is cleaner for the user; the first is cleaner for
-the implementation. Tentatively going with the runtime-detect
-form — Sinatra-shaped apps don't think about which server they're
-running under for their Tep::Http calls. The detection predicate
-is straightforward: track "current scheduler fiber" in App-state and
-ask if it's set.
+`send_req_coop` mirrors the wire shape exactly, but after
+`sphttp_connect` it flips the fd to non-blocking and replaces the
+synchronous `sphttp_recv_all` with a `Tep::Scheduler.io_wait(fd, READ)`
++ `sphttp_recv_some` loop. While the outer fiber is parked here,
+the accept fiber on the same worker can run, accept the inner
+connection, and dispatch its handler — which is the only shape that
+unblocks the macOS self-call deadlock.
+
+Scope shipped alongside Phase 1:
+
+- `Tep::Scheduler.scheduled_context?` predicate (true when a fiber
+  is currently running under tick()).
+- A scheduler latency fix in `Tep::Scheduler.tick`: when any fiber
+  is already time-due (wake_at <= now), poll(2)'s timeout collapses
+  to 0 instead of blocking for the caller's `poll_timeout_ms`.
+  Without this, each `pause(0)` handoff between fibers cost a full
+  poll-timeout's worth of wall time — 1s on the default
+  `Tep::Server::Scheduled` tick — which would have made the
+  cooperative round-trip *correct* but ~3s slower than the
+  blocking path it replaces.
 
 ### Phase 2 — accept-loop in the cooperative path
 
@@ -141,9 +150,9 @@ Already done. `Tep::Server::Scheduled.accept_loop` parks on
 `io_wait(sfd, READ, -1)` and spawns one fiber per accepted
 connection. The pieces are in `lib/tep/server_scheduled.rb`.
 
-### Phase 3 — opt-in for TestHttp
+### Phase 3 — opt-in for TestHttp (shipped)
 
-With (1) and (2) in place, the TestHttp app declares:
+With (1) and (2) in place, `test/test_http.rb` declares:
 
 ```ruby
 set :scheduler, :scheduled
@@ -151,17 +160,8 @@ set :workers, 1
 ```
 
 — and the self-call tests work end-to-end on Linux AND macOS. No
-SO_REUSEPORT magic, no per-platform skips.
-
-Until Phase 1 ships, the test file applies a darwin guard:
-
-- `set :workers, 1` (matches the host's behavior without
-  SO_REUSEPORT distribution).
-- The 5 self-call tests `skip "macOS: needs cooperative Tep::Http
-  (see docs/MACOS-CONCURRENCY.md)"`.
-
-The 2 non-self-call tests (`test_https_or_unknown_scheme_returns_zero`,
-`test_connect_failure_returns_zero`) run normally.
+SO_REUSEPORT magic, no per-platform skips. The 5 darwin `skip` calls
+that previously guarded the cluster have been removed.
 
 ### Phase 4 — flip the default
 

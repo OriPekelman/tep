@@ -58,8 +58,22 @@ module Tep
     # poll set, run poll(2) for up to `poll_timeout_ms`, and mark
     # ready ones. Then resume the soonest-due fiber whose wake_at
     # is <= now. Returns true if it resumed something.
+    #
+    # If a fiber is already time-due (wake_at <= now -- e.g. a newly
+    # spawned fiber with wake_at=-1, or a fiber that just called
+    # pause(0)), poll() must NOT block: we have runnable work and
+    # any wait is wasted wall time. This matters for the cooperative
+    # request path -- when an outer handler parks on io_wait and
+    # the accept fiber spawns an inner connection-fiber, the next
+    # tick has a wake_at=-1 fiber ready; without this short-circuit
+    # each "hand off to the freshly-spawned fiber" step costs a full
+    # poll-timeout's worth of latency.
     def self.tick(poll_timeout_ms)
-      Scheduler.poll_round(poll_timeout_ms)
+      ms = poll_timeout_ms
+      if Scheduler.any_time_ready
+        ms = 0
+      end
+      Scheduler.poll_round(ms)
 
       now  = Time.now.to_i
       best = -1
@@ -204,6 +218,23 @@ module Tep
       false
     end
 
+    # Is any alive fiber's wake_at already <= now? Used by tick() to
+    # decide whether poll() can block: if anyone is time-due, the
+    # poll timeout collapses to 0 (non-blocking peek) so we don't
+    # waste wall time idling when there's runnable work.
+    def self.any_time_ready
+      now = Time.now.to_i
+      i = 0
+      n = Tep::APP.sched_fibers.length
+      while i < n
+        if Tep::APP.sched_fibers[i].f.alive? && Tep::APP.sched_wake_at[i] <= now
+          return true
+        end
+        i += 1
+      end
+      false
+    end
+
     # Called from within a fiber's body to suspend until at-or-
     # after `seconds` from now. Named `pause` rather than `sleep`
     # to keep the semantics distinct from `Kernel#sleep`: this is
@@ -278,6 +309,15 @@ module Tep
         i += 1
       end
       n
+    end
+
+    # True iff a Tep::Scheduler-managed fiber is currently executing.
+    # Set by tick() right before f.resume and reset right after, so
+    # this is the canonical "am I in cooperative context?" check for
+    # callers that want to pick a blocking vs. fiber-yielding path
+    # (e.g. Tep::Http -- see lib/tep/http.rb#send_req).
+    def self.scheduled_context?
+      Tep::APP.sched_current >= 0
     end
   end
 end

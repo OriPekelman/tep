@@ -6,27 +6,22 @@ require_relative "helper"
 # server. The test passes its bound port to the handler via path
 # capture, which side-steps the test harness's lack of "tell the
 # handler its own port" plumbing.
+#
+# Runs under Tep::Server::Scheduled with workers=1. The handlers do
+# outbound HTTP back to the same server -- under cooperative I/O the
+# outer fiber parks on io_wait while the accept fiber accepts the
+# inner connection, which is the only shape that works on macOS
+# (SO_REUSEPORT doesn't load-balance on Darwin). See
+# docs/MACOS-CONCURRENCY.md.
 class TestHttp < TepTest
-  # macOS doesn't load-balance SO_REUSEPORT (see docs/MACOS-CONCURRENCY.md);
-  # 4 workers + self-calling handlers deadlocks. Drop to 1 worker on
-  # darwin -- the 5 self-call tests still need to skip (workers=1
-  # serializes the outer handler, and Tep::Http isn't cooperative-aware
-  # yet -- Phase 1 in MACOS-CONCURRENCY.md). The 2 non-self-call
-  # tests run cleanly with workers=1.
-  TEST_WORKERS = RUBY_PLATFORM =~ /darwin/ ? 1 : 4
-
   app_source <<~RB
     require 'sinatra'
 
-    # #{RUBY_PLATFORM =~ /darwin/ ? '1 worker on macOS' : '4 workers on Linux'}:
-    # the test handlers make outbound HTTP back to the same server.
-    # On Linux SO_REUSEPORT distributes by 4-tuple hash, so the
-    # inner call lands on a free worker; on Darwin SO_REUSEPORT
-    # doesn't load-balance and any pool >1 collapses to a single
-    # hot worker. workers=1 on Mac makes the deadlock loud +
-    # deterministic; the self-call tests skip there pending a
-    # cooperative Tep::Http (see docs/MACOS-CONCURRENCY.md).
-    set :workers, #{TEST_WORKERS}
+    # Cooperative server + single worker. The two-fiber dance is
+    # what unblocks self-calling handlers; see
+    # docs/MACOS-CONCURRENCY.md for the full path.
+    set :scheduler, :scheduled
+    set :workers, 1
 
     get '/ping' do
       "pong"
@@ -99,23 +94,13 @@ class TestHttp < TepTest
     end
   RB
 
-  # Skip the self-calling subset on macOS: the outer handler blocks
-  # waiting for the inner request, which can't be accepted because
-  # workers=1 on darwin (and even >1 doesn't help thanks to
-  # SO_REUSEPORT not load-balancing). Closes once Tep::Http grows a
-  # cooperative path under Tep::Server::Scheduled -- see
-  # docs/MACOS-CONCURRENCY.md.
-  MAC_SELFCALL_SKIP = "macOS: self-call deadlocks; needs cooperative Tep::Http (docs/MACOS-CONCURRENCY.md)"
-
   def test_selfcall_returns_pong
-    skip MAC_SELFCALL_SKIP if RUBY_PLATFORM =~ /darwin/
     res = get("/selfcall/#{@port}")
     assert_equal "200", res.code
     assert_equal "status=200 body=pong", res.body
   end
 
   def test_instance_sends_default_header
-    skip MAC_SELFCALL_SKIP if RUBY_PLATFORM =~ /darwin/
     res = get("/instance/#{@port}")
     assert_equal "200", res.code
     # The target's /headers_back echoes the X-Custom header it saw.
@@ -123,21 +108,18 @@ class TestHttp < TepTest
   end
 
   def test_post_body_round_trips
-    skip MAC_SELFCALL_SKIP if RUBY_PLATFORM =~ /darwin/
     res = get("/post_echo/#{@port}")
     assert_equal "200", res.code
     assert_equal "status=200 body=round trip body", res.body
   end
 
   def test_non_2xx_status_propagates
-    skip MAC_SELFCALL_SKIP if RUBY_PLATFORM =~ /darwin/
     res = get("/teapot_from/#{@port}")
     assert_equal "200", res.code
     assert_equal "status=418 body=i'm a teapot", res.body
   end
 
   def test_response_headers_parsed
-    skip MAC_SELFCALL_SKIP if RUBY_PLATFORM =~ /darwin/
     res = get("/header_parse/#{@port}")
     assert_equal "200", res.code
     assert_equal "echo_header=hi", res.body
