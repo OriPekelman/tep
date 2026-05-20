@@ -69,6 +69,25 @@ module Tep
     # each "hand off to the freshly-spawned fiber" step costs a full
     # poll-timeout's worth of latency.
     def self.tick(poll_timeout_ms)
+      # Reclaim trailing dead slots. Without this, the parallel
+      # arrays grow once per accepted connection and never shrink --
+      # a slow leak and per-tick iteration tax in a long-running
+      # Scheduled server. Tail-only (stop at first alive) is
+      # deliberate: it keeps every surviving slot's index stable,
+      # so external captures of sched_current held across Fiber.yield
+      # (e.g. pg.rb's PG::Pool @waiter_idxs) stay valid. Middle
+      # dead slots aren't reclaimed until the tail catches up; for
+      # FIFO request lifecycles that's the common case.
+      i = Tep::APP.sched_fibers.length - 1
+      while i >= 0 && !Tep::APP.sched_fibers[i].f.alive?
+        Tep::APP.sched_fibers.delete_at(i)
+        Tep::APP.sched_wake_at.delete_at(i)
+        Tep::APP.sched_io_fd.delete_at(i)
+        Tep::APP.sched_io_mode.delete_at(i)
+        Tep::APP.sched_io_ready.delete_at(i)
+        i -= 1
+      end
+
       ms = poll_timeout_ms
       if Scheduler.any_time_ready
         ms = 0
