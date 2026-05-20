@@ -5,6 +5,7 @@ lib/tep/*.o
 examples/hello
 examples/sinatra_style
 examples/websocket_echo
+examples/pg_hello
 examples/.*.tep.rb
 bench/hello_bench
 bench/api_bench

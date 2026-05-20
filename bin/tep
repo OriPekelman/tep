@@ -1018,9 +1018,11 @@ end
 # the require lines stripped. Used to inline the framework into a
 # build-temp file so spinel doesn't have to resolve any requires.
 #
-# Also substitutes `@TEP_SPHTTP_O@` / `@TEP_SQLITE_O@` with the
-# absolute paths to the built .o files. Override via TEP_SPHTTP_O /
-# TEP_SQLITE_O env vars; defaults live under `<LIB_DIR>/tep/`.
+# Also substitutes `@TEP_SPHTTP_O@` / `@TEP_SQLITE_O@` / `@TEP_PG_O@`
+# with the absolute paths to the built .o files; `@TEP_PG_CFLAGS@`
+# carries the libpq cflags+libs (pkg-config / pg_config output).
+# Override via TEP_SPHTTP_O / TEP_SQLITE_O / TEP_PG_O / TEP_PG_CFLAGS
+# env vars; defaults live under `<LIB_DIR>/tep/`.
 # Crypto symbols (sp_crypto_*) live in spinel's libspinel_rt.a since
 # matz/spinel#514, so the spinel driver auto-links them and no
 # separate placeholder is needed.
@@ -1043,8 +1045,13 @@ def inlined_tep_library
   combined = loaded.map { |l| "# --- inlined: " + relative_to_lib(l[:path]) + " ---\n" + l[:body] }.join("\n")
   sphttp_o = ENV.fetch("TEP_SPHTTP_O", File.join(LIB_DIR, "tep", "sphttp.o"))
   sqlite_o = ENV.fetch("TEP_SQLITE_O", File.join(LIB_DIR, "tep", "tep_sqlite.o"))
+  pg_o     = ENV.fetch("TEP_PG_O",     File.join(LIB_DIR, "tep", "tep_pg.o"))
+  pg_cflg  = ENV.fetch("TEP_PG_CFLAGS", "")
+  pg_libs  = ENV.fetch("TEP_PG_LIBS",  "-lpq")
   combined = combined.gsub("@TEP_SPHTTP_O@", sphttp_o)
   combined = combined.gsub("@TEP_SQLITE_O@", sqlite_o)
+  combined = combined.gsub("@TEP_PG_O@",     pg_o)
+  combined = combined.gsub("@TEP_PG_CFLAGS@", pg_cflg + " " + pg_libs)
   combined
 end
 

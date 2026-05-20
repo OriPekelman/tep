@@ -1,11 +1,45 @@
 # Tep::PG -- libpq battery for spinel-AOT'd Tep apps
 
-Status: design doc, pre-implementation. Target shape: a Tep battery
-that mirrors **the `pg` gem's public surface** as closely as
-spinel allows, lets a `tep build` app talk to PostgreSQL via libpq
-with no CRuby gem in the loop, and stays close enough to the upstream
-shape that an eventual ActiveRecord port reuses the existing pg
-adapter with minimal divergence.
+Status: v1 shipped (2026-05-20). The `Tep::PG` battery mirrors the
+`pg` gem's public surface where spinel allows, lets a `tep build` app
+talk to PostgreSQL via libpq with no CRuby gem in the loop, and stays
+close enough to the upstream shape that an eventual ActiveRecord port
+reuses the existing pg adapter with minimal divergence.
+
+v1 shipped surface: `PG.connect`, `PG::Connection` (status / exec /
+exec_params / escape_* / close), `PG::Result` (status / ok? / fields
+/ values / each / each_row / getvalue / getisnull / fnumber / ftype /
+cmd_tuples / clear / sql_state), `PG::Error` (single class for now),
+named diagnostic-field constants. Files: `lib/tep/tep_pg.c` (libpq
+C shim, ~430 LoC), `lib/tep/pg.rb` (Ruby surface, ~470 LoC),
+`examples/pg_hello.rb` (smoke).
+
+### v1 deviation from the design
+
+The design doc anticipated a 20-class `PG::Error` hierarchy keyed by
+SQLSTATE (`PG::UniqueViolation`, `PG::UndefinedTable`, ...) so AR's
+`e.is_a?(PG::UniqueViolation)` would translate. Building the battery
+surfaced **two spinel limitations** that defer that hierarchy:
+
+1. **matz/spinel#622** — `raise X.new(msg, ...)` doesn't lower
+   (custom `initialize` on an Exception subclass widens to a type
+   mismatch into `sp_raise`).
+2. **matz/spinel#627** — `rescue ParentClass => e` doesn't catch a
+   subclass instance, and even `rescue Module::Klass => e` skips an
+   exact-match raised `Module::Klass`. Class hierarchy and module
+   namespacing are both invisible to spinel's rescue dispatch today.
+   `is_a?` has the same gap.
+
+Workable subset given those: **single `PG::Error` class**, raised
+via the two-arg `raise PG::Error, msg` form, and rescue via the bare
+`rescue => e` (which spinel does walk for StandardError-rooted
+classes). For AR-shaped use, v1 sidesteps `raise` entirely and
+**returns a Result on error** (`r.ok?` false). The leaf-class
+hierarchy comes back in v1.5 once #627 lands.
+
+The doc body below describes the v1 surface that actually shipped;
+the AR-portability sections describe the v1.5+ target. The two
+spinel issues track upstream progress.
 
 > **Why mirror `pg`?** Two reasons, in order:
 >

@@ -6,6 +6,12 @@ FROM ruby:3.4-slim
 #                              tep_sqlite.o helper (and the tests
 #                              + blog showcase exercise it)
 #   sqlite3                 -- handy CLI for poking test DBs
+#   libpq-dev               -- Tep::PG links against libpq via the
+#                              tep_pg.o helper. ships pkg-config .pc
+#                              file used by the Makefile.
+#   postgresql-client       -- psql + pg_isready for the optional
+#                              `make test-pg` target's startup probe.
+#   pkg-config              -- libpq cflags / libs lookup.
 #   git / curl / wrk        -- git for any in-container clones,
 #                              curl for ad-hoc HTTP probing,
 #                              wrk for the bench harness
@@ -16,6 +22,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     make \
     libsqlite3-dev \
     sqlite3 \
+    libpq-dev \
+    postgresql-client \
+    pkg-config \
     git \
     curl \
     wrk \

@@ -4,15 +4,27 @@ SPINEL    ?= spinel
 TEP       := $(TEP_ROOT)/bin/tep
 
 # Exported so bin/tep injects the right path into the @TEP_SPHTTP_O@
-# / @TEP_SQLITE_O@ placeholders inside net.rb / sqlite.rb. Override
-# either env var to point at a pre-built .o (useful when the source
-# tree isn't writable). Crypto symbols (sp_crypto_*) live in spinel's
-# libspinel_rt.a since matz/spinel#514, no separate .o needed.
+# / @TEP_SQLITE_O@ / @TEP_PG_O@ placeholders inside net.rb / sqlite.rb /
+# pg.rb. Override either env var to point at a pre-built .o (useful
+# when the source tree isn't writable). Crypto symbols (sp_crypto_*)
+# live in spinel's libspinel_rt.a since matz/spinel#514, no separate
+# .o needed.
 export TEP_SPHTTP_O := $(LIB_DIR)/sphttp.o
 export TEP_SQLITE_O := $(LIB_DIR)/tep_sqlite.o
+export TEP_PG_O     := $(LIB_DIR)/tep_pg.o
 export SPINEL
 
-.PHONY: all clean helper hello sinatra_style bench bench-tep bench-sinatra demo test spinel-fresh
+# libpq cflags / libs. pkg-config is the preferred path (libpq ships
+# a .pc file on Linux + Homebrew); pg_config is the fallback for
+# stripped-down hosts. Either lookup quietly produces empty strings
+# if libpq isn't installed -- the compile then fails at link time
+# with a clear "cannot find -lpq" message, which is the right loud
+# failure for "you wanted Tep::PG but didn't install libpq".
+TEP_PG_CFLAGS ?= $(shell pkg-config --cflags libpq 2>/dev/null || pg_config --cflags 2>/dev/null)
+TEP_PG_LIBS   ?= $(shell pkg-config --libs libpq 2>/dev/null || echo "-lpq")
+export TEP_PG_CFLAGS TEP_PG_LIBS
+
+.PHONY: all clean helper hello sinatra_style bench bench-tep bench-sinatra demo test spinel-fresh test-pg
 
 # Always check that the local spinel checkout is on tip-of-master
 # before we build / test against it -- spinel moves quickly and a
@@ -24,13 +36,16 @@ spinel-fresh:
 
 all: spinel-fresh helper hello sinatra_style bench
 
-helper: spinel-fresh $(LIB_DIR)/sphttp.o $(LIB_DIR)/tep_sqlite.o
+helper: spinel-fresh $(LIB_DIR)/sphttp.o $(LIB_DIR)/tep_sqlite.o $(LIB_DIR)/tep_pg.o
 
 $(LIB_DIR)/sphttp.o: $(LIB_DIR)/sphttp.c
 	cc -O2 -c $< -o $@
 
 $(LIB_DIR)/tep_sqlite.o: $(LIB_DIR)/tep_sqlite.c
 	cc -O2 -c $< -o $@
+
+$(LIB_DIR)/tep_pg.o: $(LIB_DIR)/tep_pg.c
+	cc -O2 -c $(TEP_PG_CFLAGS) $< -o $@
 
 hello: helper
 	$(TEP) build examples/hello.rb
