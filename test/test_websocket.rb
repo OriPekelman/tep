@@ -14,15 +14,14 @@ class TestWebSocket < TepTest
   app_source <<~'RB'
     require "sinatra"
 
-    # Walk the C-side send accumulator and format each byte as two
-    # hex digits. The buffer is populated by Frame#encode_to_send_buf;
-    # going through sphttp_send_byte_at sidesteps the spinel Ruby
-    # String NUL-truncation that would mangle a header like 0x817e00c8.
-    def buf_hex(n)
+    # Encode a small text frame and dump it as a hex string so the
+    # MRI test can check byte-by-byte. Server frames are unmasked
+    # so byte 0 = 0x81 (FIN + opcode 1), byte 1 = payload length.
+    def hex_of(s)
       out = ""
       i = 0
-      while i < n
-        b = Sock.sphttp_send_byte_at(i) & 0xff
+      while i < s.length
+        b = s[i].ord & 0xff
         out = out + ((b / 16) < 10 ? (b / 16 + 48).chr : (b / 16 + 87).chr)
         out = out + ((b % 16) < 10 ? (b % 16 + 48).chr : (b % 16 + 87).chr)
         i += 1
@@ -32,14 +31,12 @@ class TestWebSocket < TepTest
 
     get '/frame/text_small' do
       f = Tep::WebSocket::Frame.new(true, Tep::WebSocket::OPCODE_TEXT, "Hello")
-      n = f.encode_to_send_buf
-      buf_hex(n)
+      hex_of(f.encode_unmasked)
     end
 
     get '/frame/binary_short' do
       f = Tep::WebSocket::Frame.new(true, Tep::WebSocket::OPCODE_BINARY, "abc")
-      n = f.encode_to_send_buf
-      buf_hex(n)
+      hex_of(f.encode_unmasked)
     end
 
     get '/frame/text_extended_16' do
@@ -50,17 +47,15 @@ class TestWebSocket < TepTest
         i += 1
       end
       f = Tep::WebSocket::Frame.new(true, Tep::WebSocket::OPCODE_TEXT, payload)
-      f.encode_to_send_buf
-      # First 4 header bytes only (0x81 0x7e 0x00 0xc8) -- FIN+text,
-      # 126 marker, 200 in 16-bit big-endian.
-      buf_hex(4)
+      # First 4 bytes only -- enough to verify the 16-bit length
+      # encoding (0x81 0x7e 0x00 0xc8 = FIN+text, 126 marker, 200 in 16-bit).
+      hex_of(f.encode_unmasked[0, 4])
     end
 
     get '/frame/close_with_code' do
       body = Tep::WebSocket::Driver.encode_close_payload(1000, "bye")
       f = Tep::WebSocket::Frame.new(true, Tep::WebSocket::OPCODE_CLOSE, body)
-      n = f.encode_to_send_buf
-      buf_hex(n)
+      hex_of(f.encode_unmasked)
     end
 
     # Handshake accept key for the RFC 6455 §1.3 worked example.

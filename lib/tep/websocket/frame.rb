@@ -1,29 +1,13 @@
 # Tep::WebSocket::Frame -- single-frame codec.
 #
-# Phase 2 surface:
+# Surface:
 #   - Frame.new(fin, opcode, payload)             build for emit
-#   - frame.encode_to_send_buf -> Integer (len)   fill sphttp_send_buf
+#   - frame.encode_unmasked -> String             server-side emit bytes
 #   - Frame.parse_from_buf(bytes_at, bytes_len)   parse a recv'd frame
 #       returns a ParseResult (frame + bytes_consumed, OR an error code).
 #
 # Server-side emit: never masks (RFC 6455 §5.3 -- server MUST NOT
 # mask). Client-side emit isn't shipped here; tep is server-shaped.
-#
-# Why encode_to_send_buf instead of a String-returning encode_unmasked:
-# Ruby Strings under spinel master are NUL-bound at the value level
-# (0.chr is "", "abc" + 0.chr truncates -- matz/spinel#593). WS
-# frame headers contain 0x00 bytes routinely (16-bit and 64-bit length
-# encodings), so they cannot be built via Ruby String concatenation.
-# Frame.encode_to_send_buf walks the header byte-by-byte into the
-# sphttp send accumulator (a C-side static buffer), then appends the
-# payload via sphttp_send_append_bytes. Driver.send_frame finishes
-# with sphttp_send_flush(fd). Tests read back via sphttp_send_byte_at.
-#
-# Payload caveat: the payload pass-through still goes through :str FFI
-# which is NUL-bound, so binary frames whose payload contains 0x00 are
-# truncated at the first NUL on the wire. Server-side TEXT/PING/PONG/
-# CLOSE in tep don't currently emit NULs; full binary payload support
-# is Phase 3 (requires a Ruby-side ByteArray or similar).
 #
 # Parse handles three length encodings (7-bit / 16-bit / 64-bit),
 # the 4-byte mask key, and applies the mask to recover the plaintext
@@ -45,48 +29,32 @@ module Tep
         @payload = payload
       end
 
-      # Build the unmasked server-side wire bytes into sphttp_send_buf
-      # (the C-side static accumulator). Clears the buffer first, then
-      # appends header bytes one-at-a-time (so 0x00 bytes in the
-      # length-encoding don't get truncated by spinel's NUL-bound
-      # Ruby Strings) and finally appends the payload via the bulk
-      # :str path. Returns the total byte count written to the buffer
-      # (matches sphttp_send_len_get afterwards). Caller flushes via
-      # Sock.sphttp_send_flush(fd).
-      def encode_to_send_buf
-        Sock.sphttp_send_clear
+      # Build the unmasked server-side wire bytes. Length-encoding
+      # picks the smallest form that fits the payload. No mask.
+      def encode_unmasked
+        head = ""
         b0 = (@fin ? 0x80 : 0x00) | (@opcode & 0x0f)
-        Sock.sphttp_send_append_byte(b0)
+        head = head + Frame.byte_to_chr(b0)
 
         plen = @payload.length
         if plen <= 125
-          Sock.sphttp_send_append_byte(plen)
+          head = head + Frame.byte_to_chr(plen)
         elsif plen <= 65535
-          Sock.sphttp_send_append_byte(126)
-          Sock.sphttp_send_append_byte((plen >> 8) & 0xff)
-          Sock.sphttp_send_append_byte(plen & 0xff)
+          head = head + Frame.byte_to_chr(126)
+          head = head + Frame.byte_to_chr((plen >> 8) & 0xff)
+          head = head + Frame.byte_to_chr(plen & 0xff)
         else
-          Sock.sphttp_send_append_byte(127)
+          head = head + Frame.byte_to_chr(127)
           i = 7
           while i >= 0
-            Sock.sphttp_send_append_byte((plen >> (i * 8)) & 0xff)
+            head = head + Frame.byte_to_chr((plen >> (i * 8)) & 0xff)
             i -= 1
           end
         end
-        # Payload through :str FFI is NUL-bound (binary payloads with
-        # embedded 0x00 truncate at the NUL). Acceptable for the WS
-        # surface tep ships today (TEXT / PING / PONG / CLOSE with
-        # no-NUL payloads). Full binary support is Phase 3.
-        if plen > 0
-          Sock.sphttp_send_append_bytes(@payload, plen)
-        end
-        Sock.sphttp_send_len_get
+        head + @payload
       end
 
-      # Convert a single byte value (0..255) to a 1-char String. NB:
-      # under spinel master, 0.chr returns an empty String -- callers
-      # that need a NUL byte must go via Sock.sphttp_send_append_byte
-      # instead of String concat (see encode_to_send_buf).
+      # Convert a single byte value (0..255) to a 1-char String.
       def self.byte_to_chr(n)
         (n & 0xff).chr
       end

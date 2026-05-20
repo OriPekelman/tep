@@ -405,7 +405,7 @@ module Tep
   _tep_seed_ws_frame.fin     = true
   _tep_seed_ws_frame.opcode  = 1
   _tep_seed_ws_frame.payload = ""
-  _tep_seed_ws_frame.encode_to_send_buf
+  _tep_seed_ws_frame.encode_unmasked
   Tep::WebSocket::Frame.byte_to_chr(0)
   Tep::WebSocket::Frame.parse_from_buf(0, 0)
   Tep::WebSocket::Frame.reserved_opcode?(0)

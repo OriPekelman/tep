@@ -95,40 +95,23 @@ module Tep
         Driver.send_frame(@fd, Tep::WebSocket::OPCODE_CLOSE, body)
       end
 
-      # Build the frame into the sphttp send accumulator and flush
-      # to the fd. Frame.encode_to_send_buf handles the NUL-byte
-      # gauntlet (see frame.rb for why we can't just String-concat
-      # and call sphttp_write_bytes here).
+      # Build the frame bytes (unmasked, server-side) and write via
+      # sphttp_write_bytes (binary-safe, explicit length).
       def self.send_frame(fd, opcode, payload)
         frame = Tep::WebSocket::Frame.new(true, opcode, payload)
-        frame.encode_to_send_buf
-        Sock.sphttp_send_flush(fd)
+        bytes = frame.encode_unmasked
+        Sock.sphttp_write_bytes(fd, bytes, bytes.length)
       end
 
-      # Close payload: 2-byte big-endian code + UTF-8 reason.
-      #
-      # CLOSE has the same NUL-binding constraint -- 0x03e8 (1000) is
-      # fine, but e.g. 0x0064 (100, hypothetical extension code) would
-      # truncate at the high-byte NUL via String concat. So we route
-      # the 2 code bytes through the send buffer too, then read them
-      # back as a String via per-byte query.
-      #
-      # This is a transitional shape: as long as ALL close-payload
-      # construction stays inside Driver.encode_close_payload, callers
-      # can keep treating it as a String (which Frame then writes via
-      # sphttp_send_append_bytes -- :str NUL-bound, same as text). For
-      # the close codes RFC 6455 §7.4.1 defines (1000-1015, all with
-      # nonzero high byte), this round-trip is lossless.
+      # Close payload: 2-byte big-endian code + UTF-8 reason. Per
+      # §5.5.1 the payload may be omitted (close with no body); if
+      # `code == 0` we emit an empty payload.
       def self.encode_close_payload(code, reason)
         if code == 0
           return ""
         end
-        hi = (code >> 8) & 0xff
-        lo = code & 0xff
-        # All RFC-defined close codes have hi != 0. Future extension
-        # codes < 256 would hit the NUL truncation in the return
-        # String; revisit when we add an extension that needs it.
-        out = hi.chr + lo.chr
+        out = Tep::WebSocket::Frame.byte_to_chr((code >> 8) & 0xff) +
+              Tep::WebSocket::Frame.byte_to_chr(code & 0xff)
         if reason.length > 123
           out + reason[0, 123]
         else
