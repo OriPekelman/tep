@@ -1444,18 +1444,20 @@ Followups:
   * Pool checkout-on-empty waiter queue (shipped Phase 2.5; see
     "Pool" section above).
   * **High-concurrency cooperative-server scaling (Phase 2.6,
-    open)**: under wrk at conn >= 4, both pool-bench and
-    no-pool-single-conn-per-request scenarios collapse to 0-100
-    req/s instead of climbing past the prefork baseline.
-    Single-conn (`wrk -c1`) hits ~2.5k req/s correctly, so the
-    async path itself works. Suspect shared global state in
-    `tep_pg.c` under concurrent fibers: `tep_pg_param_buf`
-    (single global accumulator), the rotating return-string
-    slots, the conn / result slot tables. Diagnostic next:
-    instrument the shim to detect interleaved param-push from
-    multiple in-flight async_exec calls. The single-conn-per-
-    fiber pool design assumes thread-local-like per-fiber state
-    in the shim, which isn't there yet.
+    upstream-blocked on matz/spinel#636)**: under sustained
+    burst HTTP/1.1 keep-alive on Tep::Server::Scheduled, the
+    server segfaults around request 60-80 with SIGSEGV
+    (SEGV_ACCERR). Strace shows the crash happens right after a
+    normal-looking recvfrom returns -- the fault is between recv
+    and the response write, inside Ruby/spinel land. Repro is
+    standalone (no PG) -- a plain "hello world" route is enough
+    -- so the bug isn't tep_pg.c's static accumulators; it's in
+    the scheduler / recv-string / GC interaction.
+    `test/spinel_scheduled_burst_segv_repro.rb` carries the
+    minimal repro. Until #636 lands, the PG battery's
+    high-concurrency story stays parked. The single-fiber
+    concurrency case (wrk -c1 ~2.5k req/s) confirms the
+    cooperative path is correct under bounded load.
 
 ### Phase 2 — original notes (kept for reference; superseded by above)
 
