@@ -230,6 +230,10 @@ module Tep
   _tep_seed_pg_seed_arr = [""]
   _tep_seed_pg_seed_arr.delete_at(0)
   _tep_seed_pg_conn.async_exec_params("", _tep_seed_pg_seed_arr)
+  # Async connect cmeth. Returns -1 for empty conninfo from a
+  # non-scheduled context (the shim's PQconnectStart-then-FAILED
+  # path), which is type-equivalent to the success path.
+  PG::Connection.async_connect("")
   _tep_seed_pg_res = PG::Result.new(-1)
   _tep_seed_pg_res.ntuples
   _tep_seed_pg_res.nfields

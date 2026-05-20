@@ -1071,17 +1071,15 @@ API:
   up post-fix.
 - **`pool.with_connection` (AR's name)** — synonym for `with`;
   same blocker, same fix path.
-- **Proper waiter queue on `checkout` under Scheduled**. v1's
-  checkout-on-empty calls `Tep::Scheduler.pause(0.001)` and
-  retries. Because `pause`'s wake_at is stored as an `mrb_int`
-  (integer seconds), sub-second values round to 0 -- the parked
-  fiber wakes on the next tick immediately, with the same
-  empty-pool result. Under high concurrency this becomes a busy
-  spin that starves the accept loop. The right shape is a per-pool
-  `Array<FiberSlot>` of waiters that `checkin` resumes one of via
-  the scheduler's wake_at = -1 trick. Filed as a Phase 2.5 follow-
-  up; until then, size the pool to match expected concurrency
-  rather than rely on cooperative wait.
+- **Waiter queue on `checkout` under Scheduled** (shipped Phase
+  2.5): `pool.checkout` parks the current fiber via
+  `@waiter_idxs.push(sched_current); Fiber.yield` (with a
+  far-future wake_at sentinel) instead of the prior spin-via-
+  pause shape. `pool.checkin` wakes the oldest waiter by setting
+  `Tep::APP.sched_wake_at[widx] = -1`, which the scheduler picks
+  as "earliest due" on the next tick. Outside scheduled context
+  the fallback is a 1s pause-and-retry (the worker's single-
+  threaded under prefork so no fiber starvation concern).
 
 ### Where the pool pays off
 
@@ -1436,14 +1434,28 @@ The Ruby loop lives in PG::Connection.drain_send /
 .wait_for_result_ready / .drain_remaining_results. async_exec
 + async_exec_params are the public methods.
 
-Followups still open:
+Followups:
 
-  * Async connect (PQconnectStartParams + PQconnectPoll) -- AR's
-    adapter uses this for pool warmup. Currently Connection.new
-    blocks the worker fiber for connect latency under Scheduled.
-    Small lift, similar shape to async exec.
-  * Pool checkout-on-empty waiter queue (Phase 2.5; see "Pool"
-    section above).
+  * **Async connect** (shipped Phase 2.5): `Connection.new`
+    under scheduled context routes through `Connection.async_connect`
+    which drives `PQconnectStart` + `PQconnectPoll` parked on
+    io_wait. PG::Pool's eager open at construction now warms N
+    connections in parallel under Scheduled.
+  * Pool checkout-on-empty waiter queue (shipped Phase 2.5; see
+    "Pool" section above).
+  * **High-concurrency cooperative-server scaling (Phase 2.6,
+    open)**: under wrk at conn >= 4, both pool-bench and
+    no-pool-single-conn-per-request scenarios collapse to 0-100
+    req/s instead of climbing past the prefork baseline.
+    Single-conn (`wrk -c1`) hits ~2.5k req/s correctly, so the
+    async path itself works. Suspect shared global state in
+    `tep_pg.c` under concurrent fibers: `tep_pg_param_buf`
+    (single global accumulator), the rotating return-string
+    slots, the conn / result slot tables. Diagnostic next:
+    instrument the shim to detect interleaved param-push from
+    multiple in-flight async_exec calls. The single-conn-per-
+    fiber pool design assumes thread-local-like per-fiber state
+    in the shim, which isn't there yet.
 
 ### Phase 2 — original notes (kept for reference; superseded by above)
 

@@ -75,6 +75,15 @@ module Pg
   ffi_func :tep_pg_escape_literal,         [:int, :str],       :str
   ffi_func :tep_pg_escape_identifier,      [:int, :str],       :str
 
+  # Async connect (libpq PQconnectStart + PQconnectPoll). Used by
+  # Connection#initialize when called inside a scheduled fiber, so
+  # the connect's TCP handshake + auth round-trip parks via
+  # Tep::Scheduler.io_wait instead of blocking the worker fiber.
+  # PG::Pool's eager open at construction benefits when N
+  # connections warm up in parallel under Scheduled.
+  ffi_func :tep_pg_connect_start,          [:str],             :int
+  ffi_func :tep_pg_connect_poll,           [:int],             :int
+
   # Async exec (libpq non-blocking surface). Used by
   # Connection#async_exec to park the fiber on Tep::Scheduler.io_wait
   # between PG round-trips under Tep::Server::Scheduled, so other
@@ -163,11 +172,17 @@ module PG
       @last_error_message = ""
       @last_result_rh = -1
       if opts.is_a?(String)
-        h = Pg.tep_pg_connect(opts)
+        if Tep::Scheduler.scheduled_context?
+          h = Connection.async_connect(opts)
+        else
+          h = Pg.tep_pg_connect(opts)
+        end
       else
         # Hash form. Pack keys and values into parallel \0-delimited
         # buffers; the shim splits them apart and calls
-        # PQconnectdbParams.
+        # PQconnectdbParams. (No async-connect path for the Hash
+        # form yet -- AR uses the String form for connect, so the
+        # Scheduled-context shortcut points only at conninfo.)
         keys = ""
         vals = ""
         n = 0
@@ -346,6 +361,45 @@ module PG
       Connection.drain_remaining_results(@pgh)
       Connection.record_error_if_any(self, r)
       r
+    end
+
+    # --- Async connect helper ---
+
+    # Drive PQconnectStart + PQconnectPoll, parking on io_wait
+    # between poll calls. Returns the conn slot (>=1) on success
+    # or -1 on failure. The C shim's tep_pg_connect_poll stashes
+    # the libpq error message on a FAILED return so
+    # `Pg.tep_pg_error_message(0)` still surfaces the diagnostic
+    # for the Connection.new "connect failed" branch.
+    #
+    # libpq's PostgresPollingStatusType:
+    #   0 = PGRES_POLLING_FAILED
+    #   1 = PGRES_POLLING_READING    (wait for fd READ-ready)
+    #   2 = PGRES_POLLING_WRITING    (wait for fd WRITE-ready)
+    #   3 = PGRES_POLLING_OK         (connected; stop polling)
+    def self.async_connect(conninfo)
+      h = Pg.tep_pg_connect_start(conninfo)
+      if h < 0
+        return -1
+      end
+      fd = Pg.tep_pg_socket(h)
+      while true
+        state = Pg.tep_pg_connect_poll(h)
+        if state == 3
+          # PGRES_POLLING_OK
+          Pg.tep_pg_set_client_encoding(h, "UTF8")
+          return h
+        end
+        if state == 0
+          # PGRES_POLLING_FAILED. The shim has already stashed the
+          # error message; we PQfinish the slot.
+          Pg.tep_pg_finish(h)
+          return -1
+        end
+        mode = state == 1 ? Tep::Scheduler::READ : Tep::Scheduler::WRITE
+        Tep::Scheduler.io_wait(fd, mode, 10)
+      end
+      -1
     end
 
     # --- Internal helpers for the async loop ---
@@ -770,7 +824,7 @@ module PG
   # Pool exhaustion timeouts surface as a sentinel "" / nil-equivalent
   # Connection that the caller treats as failure (see `checkout_timeout`).
   class Pool
-    attr_accessor :url, :size, :free, :checkout_timeout_ms
+    attr_accessor :url, :size, :free, :waiter_idxs, :checkout_timeout_ms
 
     def initialize(url, size)
       @url = url
@@ -783,6 +837,12 @@ module PG
       # reachable.
       @free = [PG::Connection.new("")]
       @free.delete_at(0)
+      # Waiter queue: IntArray of fiber indices into Tep::APP.sched_fibers.
+      # `checkout` parks the current fiber here when @free is empty
+      # (under Scheduled); `checkin` resumes the oldest waiter by
+      # setting its wake_at = -1. Type-seed with an int + delete.
+      @waiter_idxs = [0]
+      @waiter_idxs.delete_at(0)
       # Eager open of N real conns. If the URL isn't reachable, each
       # Connection will have @pgh=-1; the caller can check
       # `pool.healthy?` after construction.
@@ -816,41 +876,76 @@ module PG
     end
 
     # Acquire a connection. Returns a PG::Connection on success.
-    # Under cooperative I/O (Scheduled server), parks via
-    # Tep::Scheduler.pause(0.001) when the free list is empty;
-    # under prefork that's a 1ms wall-clock sleep, which is fine
-    # because the only thing the worker could do meanwhile is
-    # accept the next HTTP request -- which it already wouldn't
-    # have a free conn for.
     #
-    # On timeout, returns the first conn in the pool (still in_use=true
-    # tracked by the caller's checkout count, NOT the pool) so
-    # callers don't get a nil. The right shape post-#627 is to
-    # raise PG::ConnectionBad; until then, callers can compare
-    # pool.size to in-flight counts they track themselves.
+    # Two paths:
+    #
+    #   - Under Tep::Server::Scheduled: park the current fiber in
+    #     the pool's waiter queue (via Fiber.yield with a far-future
+    #     wake_at sentinel). `checkin` wakes the oldest waiter by
+    #     setting its wake_at=-1, which marks it as due on the next
+    #     scheduler tick. No busy-spin -- the scheduler runs other
+    #     fibers (handlers, accept loop, async-exec parkers) until
+    #     a checkin happens.
+    #
+    #   - Outside scheduled context (prefork-blocking or top-level
+    #     code): fall back to a small-step pause-and-retry. Each
+    #     worker is single-threaded in prefork, so a busy
+    #     checkout-on-empty only happens if user code holds two
+    #     checkouts inside one handler. Document; rarely matters.
     def checkout
+      if @free.length > 0
+        return @free.delete_at(0)
+      end
+      if !Tep::Scheduler.scheduled_context?
+        return checkout_spin_fallback
+      end
+      # Cooperative wait. Stash our fiber index, park, wait for
+      # checkin to set wake_at=-1.
+      idx = Tep::APP.sched_current
+      @waiter_idxs.push(idx)
+      # Far-future sentinel: the scheduler won't pick us as
+      # time-due until checkin lowers our wake_at. Tep::Scheduler's
+      # int-second resolution means "not soon enough to matter"
+      # = a few hours.
+      Tep::APP.sched_wake_at[idx] = Time.now.to_i + 86400
+      Fiber.yield
+      # When we resume, checkin pushed a conn to @free + woke us.
+      # Pop it.
+      @free.delete_at(0)
+    end
+
+    # Return a connection to the pool. If there's a parked waiter,
+    # wake it (push to @free + set wake_at=-1 on the waiter's
+    # fiber index). Otherwise just push to @free.
+    def checkin(c)
+      @free.push(c)
+      if @waiter_idxs.length > 0
+        widx = @waiter_idxs.delete_at(0)
+        # wake_at = -1 makes the fiber the "earliest due" in the
+        # next tick's pick (the tick comparator chooses the lowest
+        # wake_at among the time-due set, so -1 always wins).
+        Tep::APP.sched_wake_at[widx] = -1
+      end
+      0
+    end
+
+    # Pause-and-retry fallback for non-scheduled callers. Used by
+    # checkout when called outside a fiber. Since pause's seconds
+    # arg is stored as an mrb_int (rounds sub-second values to 0),
+    # this actually busy-spins under the scheduler -- but the
+    # branch is only taken outside scheduled context, so there's
+    # no fiber starvation concern: the worker is single-threaded
+    # and either has a free conn or doesn't.
+    def checkout_spin_fallback
       waited_ms = 0
       while @free.length == 0
-        Tep::Scheduler.pause(0.001)
-        waited_ms += 1
+        Tep::Scheduler.pause(1)   # full-second pause; non-scheduled fallback
+        waited_ms += 1000
         if waited_ms >= @checkout_timeout_ms
-          # Pool exhausted. Punt: return the original "seed" slot
-          # (which is still a live conn but may be in use). Apps
-          # that care about pool-exhaustion failures should track
-          # checkouts themselves until #627 lights up the raise
-          # path.
           return @free[0]
         end
       end
       @free.delete_at(0)
-    end
-
-    # Return a connection to the pool. No-op if `c` is already in
-    # the free list (shouldn't happen with correctly-paired
-    # checkout/checkin, but harmless).
-    def checkin(c)
-      @free.push(c)
-      0
     end
 
     # Diagnostic: how many connections are currently available.

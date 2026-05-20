@@ -468,6 +468,74 @@ const char *tep_pg_escape_identifier(int h, const char *s) {
  * is reserved for "slot table full" type errors.
  */
 
+/* Async connect.
+ *
+ * tep_pg_connect_start mirrors PQconnectStart: returns a conn slot
+ * whose connection is mid-handshake (CONNECTION_STARTED). The
+ * caller drives the state machine with tep_pg_connect_poll, parking
+ * the fiber on Tep::Scheduler.io_wait between calls. After
+ * tep_pg_connect_poll returns 0 (PGRES_POLLING_OK), the caller
+ * should PQsetClientEncoding(c, "UTF8") -- same step the sync path
+ * does. On PGRES_POLLING_FAILED (3) the caller PQfinishes the
+ * conn.
+ *
+ * The poll loop accepts these return values:
+ *
+ *   0 = PGRES_POLLING_OK       connected; stop polling
+ *   1 = PGRES_POLLING_READING  park on fd READ
+ *   2 = PGRES_POLLING_WRITING  park on fd WRITE
+ *   3 = PGRES_POLLING_FAILED   connect failed; PQfinish
+ *
+ * The libpq enum has these specific values so the int casts are
+ * stable.
+ */
+
+int tep_pg_connect_start(const char *conninfo) {
+    int slot = tep_pg_alloc_conn_slot();
+    if (slot == 0) {
+        snprintf(tep_pg_last_connect_err, TEP_PG_LAST_CONNECT_ERR_SIZE,
+                 "tep_pg_connect_start: no free connection slot (max %d)",
+                 TEP_PG_MAX_CONNS);
+        return -1;
+    }
+    PGconn *c = PQconnectStart(conninfo ? conninfo : "");
+    if (c == NULL) {
+        snprintf(tep_pg_last_connect_err, TEP_PG_LAST_CONNECT_ERR_SIZE,
+                 "tep_pg_connect_start: PQconnectStart returned NULL (OOM)");
+        return -1;
+    }
+    /* PQconnectStart can return non-NULL but CONNECTION_BAD on an
+     * unparseable conninfo string. Surface the error message and
+     * return -1 in that case so the Ruby side knows not to bother
+     * polling. */
+    if (PQstatus(c) == CONNECTION_BAD) {
+        const char *m = PQerrorMessage(c);
+        size_t n = m ? strlen(m) : 0;
+        if (n >= TEP_PG_LAST_CONNECT_ERR_SIZE) n = TEP_PG_LAST_CONNECT_ERR_SIZE - 1;
+        if (m) memcpy(tep_pg_last_connect_err, m, n);
+        tep_pg_last_connect_err[n] = '\0';
+        PQfinish(c);
+        return -1;
+    }
+    tep_pg_conns[slot - 1] = c;
+    return slot;
+}
+
+int tep_pg_connect_poll(int h) {
+    PGconn *c = tep_pg_conn_for(h);
+    if (c == NULL) return 0; /* PGRES_POLLING_FAILED for missing slot */
+    int state = (int)PQconnectPoll(c);
+    if (state == 0) {
+        /* PGRES_POLLING_FAILED -- stash error before caller PQfinishes. */
+        const char *m = PQerrorMessage(c);
+        size_t n = m ? strlen(m) : 0;
+        if (n >= TEP_PG_LAST_CONNECT_ERR_SIZE) n = TEP_PG_LAST_CONNECT_ERR_SIZE - 1;
+        if (m) memcpy(tep_pg_last_connect_err, m, n);
+        tep_pg_last_connect_err[n] = '\0';
+    }
+    return state;
+}
+
 int tep_pg_socket(int h) {
     PGconn *c = tep_pg_conn_for(h);
     if (c == NULL) return -1;
