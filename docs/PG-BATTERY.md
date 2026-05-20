@@ -1071,6 +1071,17 @@ API:
   up post-fix.
 - **`pool.with_connection` (AR's name)** — synonym for `with`;
   same blocker, same fix path.
+- **Proper waiter queue on `checkout` under Scheduled**. v1's
+  checkout-on-empty calls `Tep::Scheduler.pause(0.001)` and
+  retries. Because `pause`'s wake_at is stored as an `mrb_int`
+  (integer seconds), sub-second values round to 0 -- the parked
+  fiber wakes on the next tick immediately, with the same
+  empty-pool result. Under high concurrency this becomes a busy
+  spin that starves the accept loop. The right shape is a per-pool
+  `Array<FiberSlot>` of waiters that `checkin` resumes one of via
+  the scheduler's wake_at = -1 trick. Filed as a Phase 2.5 follow-
+  up; until then, size the pool to match expected concurrency
+  rather than rely on cooperative wait.
 
 ### Where the pool pays off
 
@@ -1395,7 +1406,46 @@ Acceptance: tests pass against a real local PG. AR's
 
 Acceptance: AR adapter runs with prepared statements on.
 
-### Phase 2 — async + Tep::Scheduler integration (3-5 days)
+### Phase 2 — async + Tep::Scheduler integration (shipped 2026-05-20)
+
+Connection#async_exec / async_exec_params drive the libpq non-
+blocking surface (PQsendQuery + PQflush + PQconsumeInput +
+PQisBusy + PQgetResult), parking the fiber on
+`Tep::Scheduler.io_wait(fd, READ|WRITE)` between recv calls. Under
+prefork the io_wait falls back to a single-shot poll(2), so the
+same code is correct under either server -- the cross-fiber
+concurrency win only materialises under Tep::Server::Scheduled.
+
+`Connection#exec` / `#exec_params` runtime-detect the scheduler
+context (`Tep::Scheduler.scheduled_context?`) and auto-route through
+the async path when called inside a scheduled fiber. Apps don't
+have to choose between sync and async at the call site.
+
+C shim additions in lib/tep/tep_pg.c:
+
+  * tep_pg_socket(h)             -> PQsocket fd
+  * tep_pg_set_nonblocking(h, b) -> PQsetnonblocking
+  * tep_pg_send_query(h, sql)
+  * tep_pg_send_query_params(h, sql)
+  * tep_pg_flush(h)
+  * tep_pg_consume_input(h)
+  * tep_pg_is_busy(h)
+  * tep_pg_get_result(h)
+
+The Ruby loop lives in PG::Connection.drain_send /
+.wait_for_result_ready / .drain_remaining_results. async_exec
++ async_exec_params are the public methods.
+
+Followups still open:
+
+  * Async connect (PQconnectStartParams + PQconnectPoll) -- AR's
+    adapter uses this for pool warmup. Currently Connection.new
+    blocks the worker fiber for connect latency under Scheduled.
+    Small lift, similar shape to async exec.
+  * Pool checkout-on-empty waiter queue (Phase 2.5; see "Pool"
+    section above).
+
+### Phase 2 — original notes (kept for reference; superseded by above)
 
 (Detail unchanged from earlier draft.)
 

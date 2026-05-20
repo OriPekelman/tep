@@ -43,6 +43,16 @@ class TestPg < TepTest
   app_source <<~RB
     require 'sinatra'
 
+    # The PG test app runs under the default prefork server. We
+    # exercise the async surface explicitly via /async_exec and
+    # /async_params routes (which call Connection#async_exec
+    # directly); io_wait falls back to single-shot poll(2)
+    # outside scheduled context so async correctness is
+    # measurable here regardless of server choice. The
+    # multi-fiber concurrency win that scheduled gives is
+    # measured in bench/pg_pool_bench.rb (which DOES boot under
+    # Scheduled).
+
     PG_URL = "#{PG_URL}"
     TBL    = "#{TBL}"
 
@@ -388,6 +398,28 @@ class TestPg < TepTest
         " refilled=" + refilled_avail.to_s
     end
 
+    # GET /async_exec -- explicit async path. Under Scheduled
+    # this exercises PQsendQuery + io_wait; under prefork it's
+    # still correct (io_wait falls back to a single-shot poll).
+    get '/async_exec' do
+      c = POOL.checkout
+      r = c.async_exec("SELECT 'async-hello'")
+      out = r.getvalue(0, 0)
+      r.clear
+      POOL.checkin(c)
+      "val=" + out
+    end
+
+    # GET /async_params -- async with $1 bind.
+    get '/async_params/:n' do
+      c = POOL.checkout
+      r = c.async_exec_params("SELECT $1::int * 7", [params[:n]])
+      out = r.getvalue(0, 0)
+      r.clear
+      POOL.checkin(c)
+      "val=" + out
+    end
+
     # GET /pool_reusable -- a conn returned to the pool is
     # actually usable again. checkout, exec, checkin, checkout,
     # exec -- verify the second exec works.
@@ -564,5 +596,17 @@ class TestPg < TepTest
   def test_pool_returned_connection_is_reusable
     res = get("/pool_reusable")
     assert_equal "first=1 second=2", res.body
+  end
+
+  # --- async exec ---
+
+  def test_async_exec_returns_same_result_as_sync
+    res = get("/async_exec")
+    assert_equal "val=async-hello", res.body
+  end
+
+  def test_async_exec_params_round_trip
+    res = get("/async_params/6")
+    assert_equal "val=42", res.body
   end
 end

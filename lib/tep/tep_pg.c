@@ -439,6 +439,101 @@ const char *tep_pg_escape_identifier(int h, const char *s) {
     return out;
 }
 
+/* --- Async exec (libpq non-blocking surface) --- */
+/*
+ * The async primitives mirror libpq's PQsend* / PQconsumeInput /
+ * PQisBusy / PQgetResult family. Tep::PG::Connection#async_exec
+ * on the Ruby side drives this loop:
+ *
+ *     PQsetnonblocking(c, 1)
+ *     PQsendQuery(c, sql)             // queue the request
+ *     loop { PQflush(c); io_wait(WRITE) until done }   // drain send buf
+ *     loop {                          // wait for response
+ *         PQconsumeInput(c)
+ *         break unless PQisBusy(c)
+ *         io_wait(fd, READ)
+ *     }
+ *     r = PQgetResult(c)              // first result is the data
+ *     while PQgetResult(c) != NULL { } // drain any trailing results
+ *
+ * The fd to park on comes from PQsocket(c); io_wait yields the
+ * fiber under Tep::Server::Scheduled, blocks-for-fd-ready under
+ * the prefork server (both end up correct, just different
+ * concurrency profile).
+ *
+ * Result handling reuses the existing slot table -- get_result
+ * stashes the returned PGresult into a slot and returns the
+ * 1-indexed handle, same as sync exec. -1 means "no result"
+ * (NULL from PQgetResult, the terminator that says "done"). 0
+ * is reserved for "slot table full" type errors.
+ */
+
+int tep_pg_socket(int h) {
+    PGconn *c = tep_pg_conn_for(h);
+    if (c == NULL) return -1;
+    return PQsocket(c);
+}
+
+int tep_pg_set_nonblocking(int h, int arg) {
+    PGconn *c = tep_pg_conn_for(h);
+    if (c == NULL) return -1;
+    return PQsetnonblocking(c, arg);
+}
+
+int tep_pg_send_query(int h, const char *sql) {
+    PGconn *c = tep_pg_conn_for(h);
+    if (c == NULL) return 0;
+    return PQsendQuery(c, sql);   /* 1 = ok, 0 = error */
+}
+
+int tep_pg_send_query_params(int h, const char *sql) {
+    PGconn *c = tep_pg_conn_for(h);
+    if (c == NULL) return 0;
+    return PQsendQueryParams(
+        c, sql,
+        tep_pg_param_count,
+        NULL,
+        tep_pg_param_ptrs,
+        NULL,
+        NULL,
+        0
+    );
+}
+
+/* PQflush: 0 = done, 1 = more, -1 = error. */
+int tep_pg_flush(int h) {
+    PGconn *c = tep_pg_conn_for(h);
+    if (c == NULL) return -1;
+    return PQflush(c);
+}
+
+/* PQconsumeInput: 1 = ok, 0 = error. Non-blocking by contract. */
+int tep_pg_consume_input(int h) {
+    PGconn *c = tep_pg_conn_for(h);
+    if (c == NULL) return 0;
+    return PQconsumeInput(c);
+}
+
+/* PQisBusy: 1 = need more input, 0 = ready for PQgetResult. */
+int tep_pg_is_busy(int h) {
+    PGconn *c = tep_pg_conn_for(h);
+    if (c == NULL) return 0;
+    return PQisBusy(c);
+}
+
+/* PQgetResult. Returns 1-indexed result slot, or -1 if NULL
+ * (libpq's "no more results" terminator). The caller's
+ * async_exec loop calls this once for the data result and again
+ * to read the NULL terminator -- doing so leaves the conn in a
+ * state where the next async_exec can start cleanly. */
+int tep_pg_get_result(int h) {
+    PGconn *c = tep_pg_conn_for(h);
+    if (c == NULL) return -1;
+    PGresult *r = PQgetResult(c);
+    if (r == NULL) return -1;
+    return tep_pg_stash_result(r, h);
+}
+
 /* --- Version --- */
 
 const char *tep_pg_libpq_version(void) {

@@ -75,6 +75,19 @@ module Pg
   ffi_func :tep_pg_escape_literal,         [:int, :str],       :str
   ffi_func :tep_pg_escape_identifier,      [:int, :str],       :str
 
+  # Async exec (libpq non-blocking surface). Used by
+  # Connection#async_exec to park the fiber on Tep::Scheduler.io_wait
+  # between PG round-trips under Tep::Server::Scheduled, so other
+  # fibers in the same worker can run while the query is in flight.
+  ffi_func :tep_pg_socket,                 [:int],             :int
+  ffi_func :tep_pg_set_nonblocking,        [:int, :int],       :int
+  ffi_func :tep_pg_send_query,             [:int, :str],       :int
+  ffi_func :tep_pg_send_query_params,      [:int, :str],       :int
+  ffi_func :tep_pg_flush,                  [:int],             :int
+  ffi_func :tep_pg_consume_input,          [:int],             :int
+  ffi_func :tep_pg_is_busy,                [:int],             :int
+  ffi_func :tep_pg_get_result,             [:int],             :int
+
   # Version
   ffi_func :tep_pg_libpq_version,          [],                 :str
 end
@@ -226,6 +239,13 @@ module PG
     # describe the failure; SQLSTATE + message are also mirrored
     # to `conn.last_sqlstate` / `#last_error_message`.
     #
+    # Under `Tep::Server::Scheduled` this routes through the libpq
+    # async surface (PQsendQuery + PQflush + PQconsumeInput parked
+    # on Tep::Scheduler.io_wait), so other fibers in the same
+    # worker can run while the query is in flight. Under prefork
+    # it routes through the blocking PQexec. Both produce
+    # identical Result shapes.
+    #
     # v1 returns Result-on-error instead of raising because
     # spinel's `rescue Module::Klass` doesn't resolve the
     # constant path (top-level-class rescue is fixed but the
@@ -234,6 +254,9 @@ module PG
     # below so future code that wants to introspect / subclass
     # has it; raising flips on once the namespace fix lands.
     def exec(sql)
+      if Tep::Scheduler.scheduled_context?
+        return async_exec(sql)
+      end
       rh = Pg.tep_pg_exec(@pgh, sql)
       r = PG::Result.new(rh)
       Connection.record_error_if_any(self, r)
@@ -242,7 +265,7 @@ module PG
 
     # Parameterised query with positional binds ($1, $2, ...).
     # `params` is an Array of String / Integer / nil. Same
-    # Result-on-error model as `exec`.
+    # Result-on-error model + auto-routing as `exec`.
     def exec_params(sql, params)
       Pg.tep_pg_param_clear
       i = 0
@@ -256,10 +279,146 @@ module PG
         end
         i += 1
       end
+      if Tep::Scheduler.scheduled_context?
+        return async_exec_params_after_clear(sql)
+      end
       rh = Pg.tep_pg_exec_params(@pgh, sql)
       r = PG::Result.new(rh)
       Connection.record_error_if_any(self, r)
       r
+    end
+
+    # Explicit async exec. Same shape as `exec` but doesn't
+    # context-detect -- always uses the libpq async surface. If
+    # called outside Tep::Server::Scheduled, Tep::Scheduler.io_wait
+    # falls back to a single-shot poll(2), so this still works
+    # under prefork (just without the cross-fiber concurrency
+    # win).
+    def async_exec(sql)
+      Pg.tep_pg_set_nonblocking(@pgh, 1)
+      ok = Pg.tep_pg_send_query(@pgh, sql)
+      if ok != 1
+        return Connection.make_send_failure_result(self)
+      end
+      Connection.drain_send(@pgh)
+      Connection.wait_for_result_ready(@pgh)
+      rh = Pg.tep_pg_get_result(@pgh)
+      r = PG::Result.new(rh)
+      # Drain trailing NULL terminator (libpq requires reading
+      # until PQgetResult returns NULL to mark the conn ready for
+      # the next send_query).
+      Connection.drain_remaining_results(@pgh)
+      Connection.record_error_if_any(self, r)
+      r
+    end
+
+    # Parameterised async exec. `params` is an Array of
+    # String / Integer / nil; same conversion as exec_params.
+    def async_exec_params(sql, params)
+      Pg.tep_pg_param_clear
+      i = 0
+      n = params.length
+      while i < n
+        p = params[i]
+        if p == nil
+          Pg.tep_pg_param_push_null
+        else
+          Pg.tep_pg_param_push_str(p.to_s)
+        end
+        i += 1
+      end
+      async_exec_params_after_clear(sql)
+    end
+
+    # Internal: param accumulator has already been populated by
+    # the caller (either exec_params routing here on context
+    # detect, or async_exec_params after its own push loop).
+    def async_exec_params_after_clear(sql)
+      Pg.tep_pg_set_nonblocking(@pgh, 1)
+      ok = Pg.tep_pg_send_query_params(@pgh, sql)
+      if ok != 1
+        return Connection.make_send_failure_result(self)
+      end
+      Connection.drain_send(@pgh)
+      Connection.wait_for_result_ready(@pgh)
+      rh = Pg.tep_pg_get_result(@pgh)
+      r = PG::Result.new(rh)
+      Connection.drain_remaining_results(@pgh)
+      Connection.record_error_if_any(self, r)
+      r
+    end
+
+    # --- Internal helpers for the async loop ---
+
+    # PQsendQuery returned 0 (immediate failure -- bad SQL syntax
+    # at the libpq level, conn already closed, etc.). Mirror the
+    # error onto the conn's last_* and return a "synthetic"
+    # Result-with-rh=-1 so the same Result-shape contract holds.
+    def self.make_send_failure_result(conn)
+      conn.last_sqlstate = ""
+      conn.last_error_message = conn.error_message
+      conn.last_result_rh = -1
+      PG::Result.new(-1)
+    end
+
+    # Drain libpq's send buffer. PQflush returns 0 when done; 1
+    # when the kernel send-buffer is full and we should park on
+    # WRITE-ready; -1 on error. Timeout is generous (10s); a
+    # genuinely-stuck PG is the rare case worth bailing on.
+    def self.drain_send(pgh)
+      fd = Pg.tep_pg_socket(pgh)
+      while true
+        rc = Pg.tep_pg_flush(pgh)
+        if rc == 0
+          return 0
+        end
+        if rc < 0
+          return -1
+        end
+        # rc == 1: send buffer full, park on writability.
+        Tep::Scheduler.io_wait(fd, Tep::Scheduler::WRITE, 10)
+      end
+      0
+    end
+
+    # Wait until PQisBusy returns 0 (PQgetResult won't block).
+    # Pumps PQconsumeInput in between io_wait calls so the
+    # libpq state machine advances. Timeout is generous (30s)
+    # since the query itself can take that long; the io_wait
+    # timeout is per-iteration, not cumulative.
+    def self.wait_for_result_ready(pgh)
+      fd = Pg.tep_pg_socket(pgh)
+      while true
+        if Pg.tep_pg_consume_input(pgh) != 1
+          return -1
+        end
+        if Pg.tep_pg_is_busy(pgh) == 0
+          return 0
+        end
+        Tep::Scheduler.io_wait(fd, Tep::Scheduler::READ, 30)
+      end
+      0
+    end
+
+    # After the first PQgetResult returned a real Result, libpq
+    # requires the conn be drained via additional PQgetResult
+    # calls until NULL is returned. This is a fast in-memory drain
+    # (no network), but it has to happen between async_exec calls
+    # or the next send_query will fail. Each tep_pg_get_result
+    # call that produces a non-NULL result stashes it in the slot
+    # table; we PQclear those immediately since they're trailing
+    # status results we don't expose.
+    def self.drain_remaining_results(pgh)
+      while true
+        rh = Pg.tep_pg_get_result(pgh)
+        if rh < 0
+          return 0
+        end
+        # A trailing result -- shouldn't normally happen for
+        # single-statement queries, but defensively free.
+        Pg.tep_pg_clear(rh)
+      end
+      0
     end
 
     def escape_string(s)

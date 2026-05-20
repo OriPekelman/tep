@@ -224,6 +224,12 @@ module Tep
   _tep_seed_pg_conn.last_sqlstate = ""
   _tep_seed_pg_conn.last_error_message = ""
   _tep_seed_pg_conn.last_result_rh = -1
+  # Async surface seed -- calling these on a failed-conn instance
+  # is harmless (the C shim short-circuits on conn slot < 1).
+  _tep_seed_pg_conn.async_exec("")
+  _tep_seed_pg_seed_arr = [""]
+  _tep_seed_pg_seed_arr.delete_at(0)
+  _tep_seed_pg_conn.async_exec_params("", _tep_seed_pg_seed_arr)
   _tep_seed_pg_res = PG::Result.new(-1)
   _tep_seed_pg_res.ntuples
   _tep_seed_pg_res.nfields

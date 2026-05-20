@@ -13,6 +13,16 @@
 #   wrk -t8 -c256 -d10s 'http://127.0.0.1:4567/users/42'
 require 'sinatra'
 
+# Note: this bench currently boots under the default prefork
+# server. Pool-under-Scheduled is its own follow-up: the
+# checkout-on-empty path needs a proper waiter queue (an
+# io_wait-style park-and-wake) rather than the spin-via-pause
+# v1 ships. Tracked in docs/PG-BATTERY.md's "Pool" section.
+# Until then, prefork with one PG conn per worker (the existing
+# bench/pg_bench.rb) is the apples-to-apples comparison; this
+# pool bench measures the per-worker multi-conn cost which is
+# the wrong axis for the SO_REUSEPORT-distributed workload.
+
 PG_URL = ENV["PG_URL"] != nil && ENV["PG_URL"].length > 0 ? ENV["PG_URL"] : "postgresql:///postgres"
 POOL_SIZE = ENV["POOL_SIZE"] != nil && ENV["POOL_SIZE"].length > 0 ? ENV["POOL_SIZE"].to_i : 8
 
