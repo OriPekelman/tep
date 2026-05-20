@@ -69,6 +69,23 @@ test: helper
 	@pkill -f tep-test 2>/dev/null; true
 	ruby test/run_all.rb
 
+# `make test-pg` -- runs test/test_pg.rb against a real PostgreSQL.
+# Reads PG_TEST_URL from the environment if set; otherwise expects
+# the caller to have a PG reachable at the default libpq path.
+# Without PG_TEST_URL the test class skips cleanly (so `make test`
+# is unaffected by Postgres availability).
+#
+# Recipe to spin up a throwaway PG via docker:
+#
+#   docker run -d --rm --name tep_test_pg -p 54329:5432 \
+#     -e POSTGRES_PASSWORD=postgres postgres:16
+#   until docker exec tep_test_pg pg_isready -U postgres | grep -q accepting; do sleep 1; done
+#   PG_TEST_URL='postgresql://postgres:postgres@127.0.0.1:54329/postgres' make test-pg
+#   docker stop tep_test_pg
+test-pg: helper
+	@pkill -f tep-test 2>/dev/null; true
+	ruby test/test_pg.rb
+
 clean:
 	rm -f $(LIB_DIR)/*.o
 	rm -f examples/hello examples/sinatra_style examples/diag

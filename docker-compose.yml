@@ -27,3 +27,29 @@ services:
       TEP_SKIP_SPINEL_FRESH: "1"
       # Quieter shell output when iterating.
       RUBYOPT: "-W:no-deprecated"
+
+  # Optional throwaway PostgreSQL for `make test-pg`. Pin to 16
+  # (well-aged LTS-style; AR's pg adapter compat surface is stable
+  # across 14+). The data lives in an anonymous volume so a
+  # `docker compose down` wipes everything.
+  #
+  # Usage:
+  #   docker compose up -d pg
+  #   PG_TEST_URL='postgresql://postgres:postgres@pg/postgres' \
+  #     docker compose run --rm -e PG_TEST_URL dev make test-pg
+  #   docker compose stop pg
+  pg:
+    image: postgres:16
+    environment:
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_USER: postgres
+      POSTGRES_DB: postgres
+    # Exposed on a non-standard host port so we don't fight a
+    # local PG install if one exists.
+    ports:
+      - "54329:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d postgres"]
+      interval: 1s
+      timeout: 5s
+      retries: 30

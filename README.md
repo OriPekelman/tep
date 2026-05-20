@@ -114,6 +114,7 @@ through Spinel.
 | `Tep::WebSocket` | RFC 6455 server-side WebSocket. `websocket '/chat' do \|ws\| ... end` DSL lowers to Frame + Handshake + Driver + Connection. Requires `set :scheduler, :scheduled`. |
 | `Tep::Parallel`  | grosser/parallel-shaped fork fan-out. |
 | `Tep::Job`       | sidekiq-shaped queue over SQLite. |
+| `PG`             | ruby-pg-shape libpq client: `PG::Connection`, `PG::Result`, `PG::Error`; surface mirrors the `pg` gem (`exec` / `exec_params` / `escape_*` / `fields` / `values` / `getvalue` / `sql_state`). Designed so an eventual ActiveRecord-on-spinel port reuses the existing AR adapter with minimal divergence — see `docs/PG-BATTERY.md`. |
 
 Per-battery API docs and cookbooks live on the
 [wiki](https://github.com/OriPekelman/tep/wiki). The full
