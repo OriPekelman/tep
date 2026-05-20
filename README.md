@@ -89,7 +89,11 @@ expected to come in higher. Reproduce with `bench/run_all.sh`.
 > balance new connections across prefork workers — a single long-
 > running response on the busy worker blocks every other request on
 > the same listener. On Linux 3.9+ the kernel distributes accepts
-> correctly, so prefork scales as the table above.
+> correctly, so prefork scales as the table above. The path forward
+> for tep apps that need real concurrency on macOS is
+> `Tep::Server::Scheduled` (one worker, fibers per connection) + a
+> cooperative `Tep::Http` — design + phases in
+> [`docs/MACOS-CONCURRENCY.md`](docs/MACOS-CONCURRENCY.md).
 
 ## What's in the box
 
