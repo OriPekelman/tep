@@ -19,6 +19,8 @@
 require_relative "tep/version"
 require_relative "tep/url"
 require_relative "tep/net"
+require_relative "tep/agent_delegation"
+require_relative "tep/identity"
 require_relative "tep/session"
 require_relative "tep/request"
 require_relative "tep/response"
