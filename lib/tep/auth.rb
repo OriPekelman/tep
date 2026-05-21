@@ -35,8 +35,17 @@ module Tep
     # Walk the provider chain. First provider that returns a non-nil
     # Identity wins. Returns nil if no provider matched -- caller is
     # responsible for substituting Tep::Identity.anonymous.
+    #
+    # Order: BearerToken first (an explicit Authorization header is
+    # a stronger signal of caller intent than a passively-replayed
+    # cookie), then SessionCookie. Apps that want cookie-wins-bearer
+    # semantics can post-process req.identity in a before-filter.
     def self.identify(req)
       ident = Tep::AuthBearerToken.try(req)
+      if ident != nil
+        return ident
+      end
+      ident = Tep::AuthSessionCookie.try(req)
       if ident != nil
         return ident
       end

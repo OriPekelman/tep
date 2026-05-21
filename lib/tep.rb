@@ -36,6 +36,7 @@ require_relative "tep/app"
 # because the references are inside method bodies (resolved at
 # runtime), not class-body literals (resolved at load time).
 require_relative "tep/auth_bearer_token"
+require_relative "tep/auth_session_cookie"
 require_relative "tep/auth"
 require_relative "tep/server"
 require_relative "tep/server_scheduled"
