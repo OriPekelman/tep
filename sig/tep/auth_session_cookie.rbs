@@ -1,0 +1,29 @@
+# Signed-session-cookie auth provider. Reads identity fields off
+# req.session (which Tep::App#dispatch already loads from the
+# tep.session cookie + verifies the HMAC on). See
+# lib/tep/auth_session_cookie.rb + docs/BATTERIES-DESIGN.md.
+module Tep
+  class AuthSessionCookie
+    # Write `identity` into req.session under the canonical
+    # identity_* keys. `exp` is unix epoch seconds for the identity's
+    # validity window; pass 0 to disable identity-level expiry (the
+    # cookie itself still expires per browser session / Max-Age).
+    def self.set: (Tep::Request req, Tep::Identity identity, Integer exp) -> Integer
+
+    # Drop the identity fields from req.session. Subsequent try()
+    # calls return nil. The underlying session cookie keeps round-
+    # tripping.
+    def self.clear: (Tep::Request req) -> Integer
+
+    # Recover an Identity from req.session. Returns nil if no
+    # identity is present (no prior set, or post-clear) or the
+    # stored identity has expired.
+    def self.try: (Tep::Request req) -> Tep::Identity?
+
+    # Format helpers used by `set` to encode caps + delegation into
+    # the session's string/string store. Inverse of
+    # Tep::AuthBearerToken.parse_caps / parse_delegate.
+    def self.format_caps: (Array[Symbol] caps) -> String
+    def self.format_delegate: (Tep::AgentDelegation deleg) -> String
+  end
+end
