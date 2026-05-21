@@ -1,0 +1,18 @@
+# Entry point for the Auth battery. Sets req.identity on every
+# request via a fixed provider chain (v1: bearer-token only).
+# See lib/tep/auth.rb + docs/BATTERIES-DESIGN.md.
+module Tep
+  module Auth
+    CORE_CAPABILITIES: Array[Symbol]
+
+    def self.identify: (Tep::Request req) -> Tep::Identity?
+    def self.install!: () -> Integer
+  end
+
+  # The before-filter that runs the provider chain. Installed onto
+  # Tep::App#auth_filter by Tep::Auth.install!. Runs before the
+  # user-installed before-filter; populates req.identity.
+  class AuthFilter < Filter
+    def before: (Tep::Request req, Tep::Response res) -> Integer
+  end
+end
