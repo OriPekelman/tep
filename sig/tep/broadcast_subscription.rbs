@@ -5,7 +5,10 @@ module Tep
   class BroadcastSubscription
     attr_reader topic: String
     attr_reader fd: Integer
+    # Delivery mode: 0 = raw bytes, 1 = WS TEXT frame, 2 = WS BINARY.
+    # Modes 1/2 double as the WS opcode at send_frame call time.
+    attr_reader mode: Integer
 
-    def initialize: (String topic, Integer fd) -> void
+    def initialize: (String topic, Integer fd, Integer mode) -> void
   end
 end

@@ -222,6 +222,7 @@ module Tep
   # types so compile units that don't otherwise exercise pub/sub
   # still get correct signatures.
   _tep_seed_broadcast_sub = Tep::Broadcast.subscribe("_seed", -1)
+  Tep::Broadcast.subscribe_ws("_seed", -1)
   Tep::Broadcast.publish("_seed", "")
   Tep::Broadcast.subscribers_for("_seed")
   Tep::Broadcast.unsubscribe(_tep_seed_broadcast_sub)

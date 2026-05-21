@@ -37,10 +37,35 @@
 module Tep
   module Broadcast
     # Register a subscription for `fd` on `topic`. Returns an
-    # opaque sub_id for later unsubscribe.
+    # opaque sub_id for later unsubscribe. The fd receives raw
+    # bytes on publish -- suits SSE / log fan-out / anything that
+    # doesn't need WebSocket framing. For WS connections, prefer
+    # subscribe_ws.
     def self.subscribe(topic, fd)
       subs = Tep::APP.broadcast_subs
-      sub = Tep::BroadcastSubscription.new(topic, fd)
+      sub = Tep::BroadcastSubscription.new(topic, fd, 0)
+      subs.push(sub)
+      subs.length - 1
+    end
+
+    # WebSocket-bridged variant of subscribe. The fd is expected
+    # to be an established WS connection (typically a
+    # Tep::WebSocket::Connection's #fd). On publish, payload is
+    # wrapped in a WS TEXT frame via Tep::WebSocket::Driver
+    # before delivery -- the peer sees a well-formed WS message,
+    # not raw bytes that would close the connection.
+    #
+    # Apps unsubscribe in their WS close handler:
+    #
+    #   conn.on(:close) { Tep::Broadcast.unsubscribe_fd(conn.fd) }
+    #
+    # v1 keeps this explicit; an auto-unsubscribe hook on
+    # Tep::WebSocket::Connection lands as a follow-up once we've
+    # used it in a real app and seen what the right shape is.
+    def self.subscribe_ws(topic, fd)
+      subs = Tep::APP.broadcast_subs
+      sub = Tep::BroadcastSubscription.new(
+        topic, fd, Tep::WebSocket::OPCODE_TEXT)
       subs.push(sub)
       subs.length - 1
     end
@@ -212,13 +237,24 @@ module Tep
     # internally by poll_pg_once when delivering a cross-worker
     # message that already came in via PG -- re-NOTIFY would cause
     # an infinite loop.
+    #
+    # Branches on each subscription's `mode`:
+    #   * mode 0 -> raw bytes via Sock.sphttp_write_str (default,
+    #     for SSE / log fan-out / non-framed consumers).
+    #   * mode != 0 -> WebSocket frame via Tep::WebSocket::Driver.send_frame,
+    #     using the mode value as the WS opcode (1=TEXT, 2=BINARY).
     def self.publish_local_only(topic, payload)
       subs = Tep::APP.broadcast_subs
       matched = 0
       i = 0
       while i < subs.length
         if subs[i].topic == topic
-          Sock.sphttp_write_str(subs[i].fd, payload)
+          if subs[i].mode == 0
+            Sock.sphttp_write_str(subs[i].fd, payload)
+          else
+            Tep::WebSocket::Driver.send_frame(
+              subs[i].fd, subs[i].mode, payload)
+          end
           matched += 1
         end
         i += 1

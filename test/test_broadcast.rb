@@ -27,6 +27,12 @@ class TestBroadcast < TepTest
       Tep::Broadcast.subscribe(topic, fd).to_s
     end
 
+    get '/subscribe_ws' do
+      topic = params[:topic]
+      fd    = params[:fd].to_i
+      Tep::Broadcast.subscribe_ws(topic, fd).to_s
+    end
+
     get '/unsubscribe' do
       sub_id = params[:sub_id].to_i
       Tep::Broadcast.unsubscribe(sub_id).to_s
@@ -151,6 +157,33 @@ class TestBroadcast < TepTest
     subscribe("room:lobby", -1)
     dropped = get("/unsubscribe_fd?fd=-999").body.to_i
     assert_equal 0, dropped
+  end
+
+  # ---- subscribe_ws (WebSocket frame mode) ----
+
+  def test_subscribe_ws_grows_registry
+    get("/subscribe_ws?topic=room:lobby&fd=-1")
+    assert_equal 1, subscriber_count
+    assert_equal 1, subscribers_for("room:lobby")
+  end
+
+  def test_subscribe_ws_publish_match_count
+    # Subscribe two WS, one raw -- all three should match a publish
+    # to that topic (delivery mode doesn't affect match counting).
+    get("/subscribe_ws?topic=room:lobby&fd=-1")
+    get("/subscribe_ws?topic=room:lobby&fd=-2")
+    get("/subscribe?topic=room:lobby&fd=-3")
+    assert_equal 3, publish("room:lobby", "hi")
+  end
+
+  def test_subscribe_ws_unsubscribe_fd_drops
+    # Mixed-mode subscriptions for one fd: subscribe_ws on a
+    # different topic + subscribe on the same fd. unsubscribe_fd
+    # drops both.
+    get("/subscribe_ws?topic=room:lobby&fd=-1")
+    get("/subscribe?topic=room:other&fd=-1")
+    dropped = get("/unsubscribe_fd?fd=-1").body.to_i
+    assert_equal 2, dropped
   end
 
   # ---- clear ----
