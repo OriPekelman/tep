@@ -97,6 +97,17 @@ module Pg
   ffi_func :tep_pg_is_busy,                [:int],             :int
   ffi_func :tep_pg_get_result,             [:int],             :int
 
+  # LISTEN / NOTIFY. Used by Tep::Broadcast's PG backend
+  # (Battery 2 chunk 2.2) for cross-worker pub/sub. Channel names
+  # are SQL identifiers (caller's responsibility to keep safe);
+  # payloads are escaped server-side via PQescapeLiteral.
+  ffi_func :tep_pg_listen,                 [:int, :str],       :int
+  ffi_func :tep_pg_unlisten,               [:int, :str],       :int
+  ffi_func :tep_pg_notify,                 [:int, :str, :str], :int
+  ffi_func :tep_pg_poll_notification,      [:int, :int],       :int
+  ffi_func :tep_pg_notify_channel,         [],                 :str
+  ffi_func :tep_pg_notify_payload,         [],                 :str
+
   # Version
   ffi_func :tep_pg_libpq_version,          [],                 :str
 end
@@ -247,6 +258,44 @@ module PG
 
     def error_message
       @pgh < 0 ? "" : Pg.tep_pg_error_message(@pgh)
+    end
+
+    # LISTEN / NOTIFY (Battery 2 chunk 2.2). Used by
+    # Tep::Broadcast's PG backend for cross-worker pub/sub.
+    # Channel names must be safe SQL identifiers (no caller-
+    # controlled interpolation -- use a hard-coded constant).
+    # Payload max size is 8000 bytes per PG default.
+    def listen(channel)
+      return -1 if @pgh < 0
+      Pg.tep_pg_listen(@pgh, channel)
+    end
+
+    def unlisten(channel)
+      return -1 if @pgh < 0
+      Pg.tep_pg_unlisten(@pgh, channel)
+    end
+
+    def notify(channel, payload)
+      return -1 if @pgh < 0
+      Pg.tep_pg_notify(@pgh, channel, payload)
+    end
+
+    # Block up to `timeout_ms` waiting for one notification on the
+    # connection. Returns 1 on receipt (caller then reads
+    # #last_notify_channel + #last_notify_payload), 0 on timeout,
+    # -1 on connection error. Connection must already be in LISTEN
+    # mode for the channel of interest.
+    def poll_notification(timeout_ms)
+      return -1 if @pgh < 0
+      Pg.tep_pg_poll_notification(@pgh, timeout_ms)
+    end
+
+    def last_notify_channel
+      Pg.tep_pg_notify_channel
+    end
+
+    def last_notify_payload
+      Pg.tep_pg_notify_payload
     end
 
     # Run a no-params query. Returns a PG::Result. On error the

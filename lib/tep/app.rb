@@ -29,9 +29,16 @@ module Tep
     attr_accessor :auth_oauth2_codes
     # Per-process Broadcast subscriber registry. Each entry pairs a
     # topic with an output fd; publish iterates + writes the payload
-    # to every matching fd. Cross-worker pub-sub (PG LISTEN/NOTIFY)
-    # is a follow-up chunk -- see docs/BATTERIES-DESIGN.md.
+    # to every matching fd.
     attr_accessor :broadcast_subs
+    # PG-backed cross-worker pub/sub state. `broadcast_pg_enabled`
+    # is 0 when off, 1 when on. The dedicated LISTEN connection
+    # lives in `broadcast_pg_conn`; channel name in
+    # `broadcast_pg_channel`. Configured by
+    # Tep::Broadcast.enable_pg_backend.
+    attr_accessor :broadcast_pg_enabled
+    attr_accessor :broadcast_pg_channel
+    attr_accessor :broadcast_pg_conn
     attr_accessor :asset_bodies, :asset_mimes
     attr_accessor :sched_fibers, :sched_wake_at, :sched_current
     attr_accessor :sched_io_fd, :sched_io_mode, :sched_io_ready
@@ -65,6 +72,12 @@ module Tep
       # Same type-seed pattern for the Broadcast subscriber registry.
       @broadcast_subs = [Tep::BroadcastSubscription.new("_", -1)]
       @broadcast_subs.delete_at(0)
+      @broadcast_pg_enabled = 0
+      @broadcast_pg_channel = ""
+      # Seed broadcast_pg_conn later via lib/tep.rb's setter seed
+      # (APP.set_broadcast_pg_conn(PG::Connection.new(""))) -- module
+      # load order means PG::Connection isn't safely callable from
+      # App#initialize when this is loaded before pg.rb's full surface.
       @nf_handler     = Handler.new
       @asset_bodies   = Tep.str_hash # path -> bytes (filled at boot
       @asset_mimes    = Tep.str_hash # by Tep::Assets._add lines
@@ -115,6 +128,9 @@ module Tep
     def set_after(f);             @after_filter = f; end
     def set_auth_filter(f);       @auth_filter = f; end
     def set_auth_bearer_secret(s); @auth_bearer_secret = s; end
+    def set_broadcast_pg_enabled(v); @broadcast_pg_enabled = v; end
+    def set_broadcast_pg_channel(s); @broadcast_pg_channel = s; end
+    def set_broadcast_pg_conn(c);    @broadcast_pg_conn    = c; end
     def set_not_found(h);         @nf_handler = h; end
 
     def dispatch(req, res)
