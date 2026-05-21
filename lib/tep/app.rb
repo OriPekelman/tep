@@ -27,6 +27,11 @@ module Tep
     # store. See Tep::AuthOAuth2 for the issuance flow.
     attr_accessor :auth_oauth2_clients
     attr_accessor :auth_oauth2_codes
+    # Per-process Broadcast subscriber registry. Each entry pairs a
+    # topic with an output fd; publish iterates + writes the payload
+    # to every matching fd. Cross-worker pub-sub (PG LISTEN/NOTIFY)
+    # is a follow-up chunk -- see docs/BATTERIES-DESIGN.md.
+    attr_accessor :broadcast_subs
     attr_accessor :asset_bodies, :asset_mimes
     attr_accessor :sched_fibers, :sched_wake_at, :sched_current
     attr_accessor :sched_io_fd, :sched_io_mode, :sched_io_ready
@@ -57,6 +62,9 @@ module Tep
       @auth_oauth2_clients.delete_at(0)
       @auth_oauth2_codes = [Tep::AuthOAuth2Code.new("_", "", "", "", 0)]
       @auth_oauth2_codes.delete_at(0)
+      # Same type-seed pattern for the Broadcast subscriber registry.
+      @broadcast_subs = [Tep::BroadcastSubscription.new("_", -1)]
+      @broadcast_subs.delete_at(0)
       @nf_handler     = Handler.new
       @asset_bodies   = Tep.str_hash # path -> bytes (filled at boot
       @asset_mimes    = Tep.str_hash # by Tep::Assets._add lines

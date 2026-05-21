@@ -1,0 +1,31 @@
+# In-process pub-sub topic broker. Foundation of the Broadcast
+# battery; Presence and LiveView layer on top. See
+# lib/tep/broadcast.rb + docs/BATTERIES-DESIGN.md.
+module Tep
+  module Broadcast
+    # Subscribe `fd` to `topic`. Returns an opaque sub_id usable
+    # for later #unsubscribe (a single-sub drop).
+    def self.subscribe: (String topic, Integer fd) -> Integer
+
+    # Drop the subscription at `sub_id`. Returns 0.
+    def self.unsubscribe: (Integer sub_id) -> Integer
+
+    # Drop every subscription whose fd matches. Used by the WS
+    # on-close hook. Returns the count dropped.
+    def self.unsubscribe_fd: (Integer fd) -> Integer
+
+    # Write `payload` to every fd subscribed to `topic`. Returns
+    # the matched count (NOT successful-write count -- bad fds
+    # fail silently at sphttp_write_str).
+    def self.publish: (String topic, String payload) -> Integer
+
+    # Total subscription count across all topics.
+    def self.subscriber_count: () -> Integer
+
+    # Count for a specific topic.
+    def self.subscribers_for: (String topic) -> Integer
+
+    # Drop every subscription. Returns the count dropped.
+    def self.clear: () -> Integer
+  end
+end

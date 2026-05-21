@@ -1,0 +1,131 @@
+# Tep::Broadcast -- in-process pub-sub topic broker.
+#
+# Foundation of the Broadcast battery (Battery 2 in
+# docs/BATTERIES-DESIGN.md). Apps + later batteries (Presence,
+# LiveView) layer on top: WebSocket connections subscribe to
+# topics; publish(topic, payload) writes payload to every
+# subscribed fd.
+#
+# Public API:
+#
+#   sub_id = Tep::Broadcast.subscribe(topic, fd)
+#   Tep::Broadcast.publish(topic, payload)
+#   Tep::Broadcast.unsubscribe(sub_id)
+#   Tep::Broadcast.unsubscribe_fd(fd)    # drop ALL subs for an fd
+#
+# Subscription model is fd-based rather than block/callback-based
+# (spinel can't reliably round-trip blocks-as-values across module
+# boundaries, see memory [[spinel_widening_dispatch]]). The
+# concrete v1 use case is "deliver to a WS connection" -- the WS
+# layer keeps its accepted-socket fd, calls subscribe, and
+# Tep::Broadcast.publish writes the payload bytes to that fd.
+# Apps that need a different delivery surface (HTTP SSE, log
+# fan-out) use the same subscribe-fd shape with a different fd.
+#
+# Storage scope is per-process: subscriptions live on Tep::APP,
+# which under prefork is per-worker. Cross-worker pub-sub (via PG
+# LISTEN/NOTIFY) is a follow-up chunk -- subscribers will still
+# register fd-local, but publish() will route through the database
+# so other workers see the message too.
+#
+# `subscribe` returns an opaque subscription id (the registry
+# index at insertion time). Callers can pass it back to
+# `unsubscribe` for a single-sub drop. For WS connections that
+# subscribe to multiple topics, `unsubscribe_fd(fd)` drops every
+# subscription tied to that fd in one call -- the right shape for
+# the WS on-close hook.
+module Tep
+  module Broadcast
+    # Register a subscription for `fd` on `topic`. Returns an
+    # opaque sub_id for later unsubscribe.
+    def self.subscribe(topic, fd)
+      subs = Tep::APP.broadcast_subs
+      sub = Tep::BroadcastSubscription.new(topic, fd)
+      subs.push(sub)
+      subs.length - 1
+    end
+
+    # Drop the subscription at `sub_id`. Note that ids are
+    # registry indexes; subsequent drops shift everything past it
+    # downward. For multi-sub drop, prefer `unsubscribe_fd`.
+    def self.unsubscribe(sub_id)
+      subs = Tep::APP.broadcast_subs
+      if sub_id < 0 || sub_id >= subs.length
+        return 0
+      end
+      subs.delete_at(sub_id)
+      0
+    end
+
+    # Drop every subscription whose fd matches. Returns the count
+    # dropped. Used by WS on-close to clean up everything a closing
+    # connection had subscribed to. Back-to-front so delete_at
+    # indices stay valid mid-loop.
+    def self.unsubscribe_fd(fd)
+      subs = Tep::APP.broadcast_subs
+      dropped = 0
+      i = subs.length - 1
+      while i >= 0
+        if subs[i].fd == fd
+          subs.delete_at(i)
+          dropped += 1
+        end
+        i -= 1
+      end
+      dropped
+    end
+
+    # Write `payload` to every subscribed fd for `topic`. Returns
+    # the number of subscriptions matched (NOT the number of
+    # successful writes -- a closed / bad fd still counts as
+    # matched; the underlying sphttp_write_str returns -1 silently
+    # on that fd). Apps that need delivery confirmation should
+    # track their own ack channel.
+    def self.publish(topic, payload)
+      subs = Tep::APP.broadcast_subs
+      matched = 0
+      i = 0
+      while i < subs.length
+        if subs[i].topic == topic
+          Sock.sphttp_write_str(subs[i].fd, payload)
+          matched += 1
+        end
+        i += 1
+      end
+      matched
+    end
+
+    # Total subscription count across all topics. Useful for
+    # diagnostics and the v1 test surface.
+    def self.subscriber_count
+      Tep::APP.broadcast_subs.length
+    end
+
+    # Count of subscribers for one topic. O(n) over the registry;
+    # acceptable for v1 (n is typically small per worker).
+    def self.subscribers_for(topic)
+      subs = Tep::APP.broadcast_subs
+      n = 0
+      i = 0
+      while i < subs.length
+        if subs[i].topic == topic
+          n += 1
+        end
+        i += 1
+      end
+      n
+    end
+
+    # Drop every subscription. Used by tests between fixtures, and
+    # available to apps that need to fully reset (e.g. during
+    # graceful shutdown). Returns the count dropped.
+    def self.clear
+      subs = Tep::APP.broadcast_subs
+      n = subs.length
+      while subs.length > 0
+        subs.delete_at(0)
+      end
+      n
+    end
+  end
+end

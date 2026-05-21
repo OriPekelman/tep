@@ -1,0 +1,11 @@
+# One entry in Tep::Broadcast's subscriber registry. Pairs a topic
+# with an output fd. See lib/tep/broadcast_subscription.rb +
+# docs/BATTERIES-DESIGN.md.
+module Tep
+  class BroadcastSubscription
+    attr_reader topic: String
+    attr_reader fd: Integer
+
+    def initialize: (String topic, Integer fd) -> void
+  end
+end
