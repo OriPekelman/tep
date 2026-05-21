@@ -30,6 +30,13 @@ require_relative "tep/streamer"
 require_relative "tep/parser"
 require_relative "tep/router"
 require_relative "tep/app"
+# Auth lands after App so Tep::AuthFilter < Tep::Filter can resolve
+# and the install! helper can reach Tep::APP. The provider classes
+# reference Tep::Jwt / Tep::Json which come after this -- works
+# because the references are inside method bodies (resolved at
+# runtime), not class-body literals (resolved at load time).
+require_relative "tep/auth_bearer_token"
+require_relative "tep/auth"
 require_relative "tep/server"
 require_relative "tep/server_scheduled"
 require_relative "tep/sqlite"
@@ -161,6 +168,8 @@ module Tep
   APP.set_static_root("")
   APP.set_before(Filter.new)
   APP.set_after(Filter.new)
+  APP.set_auth_filter(Filter.new)
+  APP.set_auth_bearer_secret("")
   APP.set_not_found(Handler.new)
   # Type-seeding: methods that may not be called by a given user app
   # would otherwise default their param C types to mrb_int and

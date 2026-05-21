@@ -11,6 +11,18 @@ module Tep
   class App
     attr_accessor :router, :static_root, :session_secret
     attr_accessor :before_filter, :after_filter, :nf_handler
+    # The auth-filter runs BEFORE before_filter so handler bodies and
+    # user filters always see a populated req.identity. Separate slot
+    # (rather than wedging into before_filter) so user-installed
+    # filters and the auth populate don't fight for the single slot
+    # tep otherwise imposes. Default is a no-op Tep::Filter; the
+    # Auth battery installs Tep::AuthFilter on top via
+    # Tep::Auth.install!.
+    attr_accessor :auth_filter
+    # Shared HS256 secret consumed by Tep::AuthBearerToken. Stored on
+    # APP (rather than a class var) so spinel routes the read through
+    # the canonical instance-attr path.
+    attr_accessor :auth_bearer_secret
     attr_accessor :asset_bodies, :asset_mimes
     attr_accessor :sched_fibers, :sched_wake_at, :sched_current
     attr_accessor :sched_io_fd, :sched_io_mode, :sched_io_ready
@@ -33,6 +45,8 @@ module Tep
       @session_secret = ""
       @before_filter  = Filter.new   # no-op default
       @after_filter   = Filter.new
+      @auth_filter    = Filter.new   # no-op until Tep::Auth.install!
+      @auth_bearer_secret = ""
       @nf_handler     = Handler.new
       @asset_bodies   = Tep.str_hash # path -> bytes (filled at boot
       @asset_mimes    = Tep.str_hash # by Tep::Assets._add lines
@@ -78,10 +92,12 @@ module Tep
       @router.add(verb, pattern, handler)
     end
 
-    def set_static_root(root); @static_root = root; end
-    def set_before(f);         @before_filter = f; end
-    def set_after(f);          @after_filter = f; end
-    def set_not_found(h);      @nf_handler = h; end
+    def set_static_root(root);    @static_root = root; end
+    def set_before(f);            @before_filter = f; end
+    def set_after(f);             @after_filter = f; end
+    def set_auth_filter(f);       @auth_filter = f; end
+    def set_auth_bearer_secret(s); @auth_bearer_secret = s; end
+    def set_not_found(h);         @nf_handler = h; end
 
     def dispatch(req, res)
       # Pull a signed session cookie into req.session, when configured.
@@ -94,6 +110,14 @@ module Tep
       end
 
       asset_served = false
+      # Auth filter populates req.identity (anonymous or matched
+      # provider's Identity) before the user's before-filter runs,
+      # so user code can always rely on req.identity being set.
+      @auth_filter.before(req, res)
+      if res.halted
+        # Auth filter signalled "deny" -- skip the user filter +
+        # route dispatch, fall through to after-filter + session.
+      end
       @before_filter.before(req, res)
       if !res.halted
         # Bundled assets (everything under <app>/assets/, baked into
