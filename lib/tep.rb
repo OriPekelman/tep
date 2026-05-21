@@ -21,6 +21,9 @@ require_relative "tep/url"
 require_relative "tep/net"
 require_relative "tep/agent_delegation"
 require_relative "tep/identity"
+# Auth data classes (no deps; storage on Tep::App references them).
+require_relative "tep/auth_oauth2_client"
+require_relative "tep/auth_oauth2_code"
 require_relative "tep/session"
 require_relative "tep/request"
 require_relative "tep/response"
@@ -30,13 +33,12 @@ require_relative "tep/streamer"
 require_relative "tep/parser"
 require_relative "tep/router"
 require_relative "tep/app"
-# Auth lands after App so Tep::AuthFilter < Tep::Filter can resolve
-# and the install! helper can reach Tep::APP. The provider classes
-# reference Tep::Jwt / Tep::Json which come after this -- works
-# because the references are inside method bodies (resolved at
-# runtime), not class-body literals (resolved at load time).
+# Auth provider classes land after App so Tep::AuthFilter < Tep::Filter
+# resolves and the install! helper can reach Tep::APP. References to
+# Tep::Jwt / Tep::Json inside their method bodies resolve at runtime.
 require_relative "tep/auth_bearer_token"
 require_relative "tep/auth_session_cookie"
+require_relative "tep/auth_oauth2"
 require_relative "tep/auth"
 require_relative "tep/server"
 require_relative "tep/server_scheduled"
@@ -190,6 +192,21 @@ module Tep
   _tep_seed_stream.write("")   # pin the parameter type to :str
   Tep.h("")                    # pin Tep.h(s)'s param to :str
   _tep_seed_res.start_websocket("", Tep::WebSocket::Driver.new(0))
+
+  # AuthOAuth2 type-seeding. Every public cmeth needs at least one
+  # top-level call so spinel locks the param C types in compile
+  # units that don't otherwise exercise OAuth2 (e.g. test_llm.rb
+  # builds an app that never touches Tep::AuthOAuth2; without
+  # these seeds spinel defaults the params to mrb_int and the
+  # AuthOAuth2Client / AuthOAuth2Code constructor calls inside
+  # the methods mismatch the typed ivars).
+  _tep_seed_oauth2_caps = [:_seed]
+  _tep_seed_oauth2_caps.delete_at(0)
+  Tep::AuthOAuth2.register_client("_seed", "", "", _tep_seed_oauth2_caps)
+  Tep::AuthOAuth2.unregister_client("_seed")
+  Tep::AuthOAuth2.find_client("_seed")
+  _tep_seed_oauth2_code = Tep::AuthOAuth2.issue_code("_seed", "_seed", "", 0)
+  Tep::AuthOAuth2.exchange_code(_tep_seed_oauth2_code, "_seed", 0)
 
   # SQLite type-seeding. Each method below pins a parameter type
   # (or pulls the FFI return into use) so spinel emits the correct

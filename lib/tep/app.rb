@@ -23,6 +23,10 @@ module Tep
     # APP (rather than a class var) so spinel routes the read through
     # the canonical instance-attr path.
     attr_accessor :auth_bearer_secret
+    # Per-process OAuth2 client registry + ephemeral authorization-code
+    # store. See Tep::AuthOAuth2 for the issuance flow.
+    attr_accessor :auth_oauth2_clients
+    attr_accessor :auth_oauth2_codes
     attr_accessor :asset_bodies, :asset_mimes
     attr_accessor :sched_fibers, :sched_wake_at, :sched_current
     attr_accessor :sched_io_fd, :sched_io_mode, :sched_io_ready
@@ -47,6 +51,12 @@ module Tep
       @after_filter   = Filter.new
       @auth_filter    = Filter.new   # no-op until Tep::Auth.install!
       @auth_bearer_secret = ""
+      # Type-seed the OAuth2 registries with a single dummy entry +
+      # immediate drop so the PtrArray slot type is pinned.
+      @auth_oauth2_clients = [Tep::AuthOAuth2Client.new("_", "", "", [:_])]
+      @auth_oauth2_clients.delete_at(0)
+      @auth_oauth2_codes = [Tep::AuthOAuth2Code.new("_", "", "", "", 0)]
+      @auth_oauth2_codes.delete_at(0)
       @nf_handler     = Handler.new
       @asset_bodies   = Tep.str_hash # path -> bytes (filled at boot
       @asset_mimes    = Tep.str_hash # by Tep::Assets._add lines

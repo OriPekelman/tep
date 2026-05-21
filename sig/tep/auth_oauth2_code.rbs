@@ -1,0 +1,23 @@
+# One entry in Tep::AuthOAuth2's short-lived authorization-code
+# registry. Single-use; sweeps on every lookup. See
+# lib/tep/auth_oauth2_code.rb + docs/BATTERIES-DESIGN.md.
+module Tep
+  class AuthOAuth2Code
+    attr_reader code: String
+    attr_reader principal_id: String
+    attr_reader client_id: String
+    attr_reader caps_str: String
+    attr_reader expires_at: Integer
+
+    def initialize: (
+      String code,
+      String principal_id,
+      String client_id,
+      String caps_str,
+      Integer expires_at
+    ) -> void
+
+    # `now` is unix epoch seconds.
+    def expired?: (Integer now) -> bool
+  end
+end

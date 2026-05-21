@@ -1,0 +1,41 @@
+# OAuth2-style authorization-code issuance. tep here is the
+# authorization server; apps wire their own /authorize + /token
+# routes on top of these primitives. The issued JWT plugs into
+# Tep::AuthBearerToken's wire format -- no new token schema. See
+# lib/tep/auth_oauth2.rb + docs/BATTERIES-DESIGN.md.
+module Tep
+  module AuthOAuth2
+    DEFAULT_CODE_TTL: Integer    # seconds
+    DEFAULT_TOKEN_TTL: Integer   # seconds
+
+    def self.register_client: (
+      String client_id,
+      String name,
+      String redirect_uri,
+      Array[Symbol] allowed_caps
+    ) -> Integer
+
+    def self.unregister_client: (String client_id) -> Integer
+    def self.find_client: (String client_id) -> AuthOAuth2Client?
+
+    # Mint a one-time code tied to (principal, client, caps).
+    # `ttl_seconds == 0` uses DEFAULT_CODE_TTL.
+    def self.issue_code: (
+      String principal_id,
+      String client_id,
+      String caps_str,
+      Integer ttl_seconds
+    ) -> String
+
+    # Redeem a code for a JWT. Returns "" on any failure.
+    # `token_ttl_seconds == 0` uses DEFAULT_TOKEN_TTL.
+    def self.exchange_code: (
+      String code,
+      String client_id,
+      Integer token_ttl_seconds
+    ) -> String
+
+    def self.mint_jwt: (AuthOAuth2Code rec, Integer token_ttl_seconds) -> String
+    def self.sweep_expired_codes: () -> Integer
+  end
+end
