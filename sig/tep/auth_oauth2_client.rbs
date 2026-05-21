@@ -1,0 +1,18 @@
+# One entry in Tep::AuthOAuth2's client registry. Represents a bot
+# / agent / automation client that can be granted delegated access.
+# See lib/tep/auth_oauth2_client.rb + docs/BATTERIES-DESIGN.md.
+module Tep
+  class AuthOAuth2Client
+    attr_reader client_id: String
+    attr_reader name: String
+    attr_reader redirect_uri: String
+    attr_reader allowed_caps: Array[Symbol]
+
+    def initialize: (
+      String client_id,
+      String name,
+      String redirect_uri,
+      Array[Symbol] allowed_caps
+    ) -> void
+  end
+end
