@@ -4,8 +4,14 @@
 module Tep
   module Broadcast
     # Subscribe `fd` to `topic`. Returns an opaque sub_id usable
-    # for later #unsubscribe (a single-sub drop).
+    # for later #unsubscribe (a single-sub drop). Delivery is raw
+    # bytes via sphttp_write_str (no WS framing).
     def self.subscribe: (String topic, Integer fd) -> Integer
+
+    # WebSocket-bridged subscription. `fd` is an established WS
+    # connection (typically Tep::WebSocket::Connection#fd). publish
+    # wraps payload in a WS TEXT frame before delivery.
+    def self.subscribe_ws: (String topic, Integer fd) -> Integer
 
     # Drop the subscription at `sub_id`. Returns 0.
     def self.unsubscribe: (Integer sub_id) -> Integer

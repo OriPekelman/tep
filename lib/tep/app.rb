@@ -70,7 +70,7 @@ module Tep
       @auth_oauth2_codes = [Tep::AuthOAuth2Code.new("_", "", "", "", 0)]
       @auth_oauth2_codes.delete_at(0)
       # Same type-seed pattern for the Broadcast subscriber registry.
-      @broadcast_subs = [Tep::BroadcastSubscription.new("_", -1)]
+      @broadcast_subs = [Tep::BroadcastSubscription.new("_", -1, 0)]
       @broadcast_subs.delete_at(0)
       @broadcast_pg_enabled = 0
       @broadcast_pg_channel = ""
