@@ -9,6 +9,17 @@ require_relative "helper"
 #     (sphttp_connect) to make the listener readable, the scheduler's
 #     next tick picks up the readiness and resumes the fiber.
 class TestScheduler < TepTest
+  # Upstream-blocked on matz/spinel#641: Tep::Server::Scheduled
+  # segfaults under any non-trivial concurrent workload due to the
+  # post-#636 per-fiber GC root save/restore not walking
+  # sp_fiber_root's saved region. PR up at matz/spinel#641 (this
+  # side authored + bisected + patched); waiting on merge. Drop
+  # this skip when #641 closes.
+  def setup
+    skip "blocked on matz/spinel#641 (Tep::Server::Scheduled GC-root regression)"
+    super
+  end
+
   app_source <<~RB
     require 'sinatra'
 
