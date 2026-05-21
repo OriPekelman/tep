@@ -21,11 +21,12 @@ require_relative "tep/url"
 require_relative "tep/net"
 require_relative "tep/agent_delegation"
 require_relative "tep/identity"
-# Auth + Broadcast data classes (no deps; storage on Tep::App
-# references them, so they must load before app.rb).
+# Auth + Broadcast + Presence data classes (no deps; storage on
+# Tep::App references them, so they must load before app.rb).
 require_relative "tep/auth_oauth2_client"
 require_relative "tep/auth_oauth2_code"
 require_relative "tep/broadcast_subscription"
+require_relative "tep/presence_entry"
 require_relative "tep/session"
 require_relative "tep/request"
 require_relative "tep/response"
@@ -43,6 +44,7 @@ require_relative "tep/auth_session_cookie"
 require_relative "tep/auth_oauth2"
 require_relative "tep/auth"
 require_relative "tep/broadcast"
+require_relative "tep/presence"
 require_relative "tep/server"
 require_relative "tep/server_scheduled"
 require_relative "tep/sqlite"
@@ -243,6 +245,28 @@ module Tep
   # The new PG::Connection LISTEN/NOTIFY method seeds live further
   # down with the rest of the PG seeds, where _tep_seed_pg_conn is
   # already defined.
+
+  # Presence type-seeding. Same pattern as Broadcast: pin every
+  # cmeth's param C types so compile units that don't otherwise
+  # touch Presence still get correct signatures. track() requires
+  # a req with a populated identity -- construct a synthetic one.
+  _tep_seed_presence_caps = [:_seed]
+  _tep_seed_presence_caps.delete_at(0)
+  _tep_seed_presence_req = Tep::Request.new
+  _tep_seed_presence_req.identity = Tep::Identity.new(
+    "_seed", nil, _tep_seed_presence_caps)
+  Tep::Presence.track(_tep_seed_presence_req, "_seed", -1)
+  Tep::Presence.find_entry("_seed", -1)
+  Tep::Presence.list("_seed")
+  Tep::Presence.count("_seed")
+  Tep::Presence.count_humans("_seed")
+  Tep::Presence.count_agents("_seed")
+  Tep::Presence.count_filtered("_seed", :both)
+  Tep::Presence.set_status("_seed", -1, :busy, "", 0)
+  Tep::Presence.clear_status("_seed", -1)
+  Tep::Presence.untrack("_seed", -1)
+  Tep::Presence.untrack_by_fd(-1)
+  Tep::Presence.clear
 
   # SQLite type-seeding. Each method below pins a parameter type
   # (or pulls the FFI return into use) so spinel emits the correct

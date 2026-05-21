@@ -1,0 +1,27 @@
+# One row in Tep::Presence's registry. (principal, session, topic)
+# plus kind/agent_id for the agentic split and inline structured
+# status. See lib/tep/presence_entry.rb + docs/BATTERIES-DESIGN.md.
+module Tep
+  class PresenceEntry
+    attr_reader topic: String
+    attr_reader principal_id: String
+    attr_reader kind: Symbol       # :human | :agent_for
+    attr_reader agent_id: String   # empty when kind == :human
+    attr_reader fd: Integer        # session-id surrogate
+    attr_reader since: Integer     # unix epoch sec
+
+    # Structured-status fields (Tep::PresenceStatus inlined).
+    attr_accessor status_state: Symbol   # :available | :busy | :blocked
+    attr_accessor status_note: String
+    attr_accessor status_until: Integer  # unix epoch sec; 0 = no expiry
+
+    def initialize: (
+      String topic,
+      String principal_id,
+      Symbol kind,
+      String agent_id,
+      Integer fd,
+      Integer since
+    ) -> void
+  end
+end

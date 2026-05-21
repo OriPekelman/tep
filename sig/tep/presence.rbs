@@ -1,0 +1,47 @@
+# Topic-keyed who's-here registry, agent-aware via Tep::Identity.
+# Builds on Battery 1 (identity) + Battery 2 (broadcast). See
+# lib/tep/presence.rb + docs/BATTERIES-DESIGN.md.
+module Tep
+  module Presence
+    # Track a presence entry. principal_id / kind / agent_id come
+    # off req.identity. fd is the connection's socket fd (acts as
+    # the session-id surrogate). Returns 0; dedups on
+    # (topic, fd) so repeat calls are safe.
+    def self.track: (Tep::Request req, String topic, Integer fd) -> Integer
+
+    # Drop the (topic, fd) entry. Returns 1 if removed, 0 if not
+    # found.
+    def self.untrack: (String topic, Integer fd) -> Integer
+
+    # Drop every entry tied to fd (across topics). Used by the WS
+    # close hook. Returns count dropped.
+    def self.untrack_by_fd: (Integer fd) -> Integer
+
+    # All entries for topic. Apps group by principal_id when they
+    # want the Phoenix.Presence-shaped {principal => [metas]}
+    # snapshot.
+    def self.list: (String topic) -> Array[Tep::PresenceEntry]
+
+    def self.count: (String topic) -> Integer
+    def self.count_humans: (String topic) -> Integer
+    def self.count_agents: (String topic) -> Integer
+    def self.count_filtered: (String topic, Symbol kind_filter) -> Integer
+
+    # Structured status (:available | :busy | :blocked + note +
+    # until). Returns 1 if applied, 0 if entry not found.
+    def self.set_status: (
+      String topic,
+      Integer fd,
+      Symbol state,
+      String note,
+      Integer until_ts
+    ) -> Integer
+
+    def self.clear_status: (String topic, Integer fd) -> Integer
+
+    def self.find_entry: (String topic, Integer fd) -> Tep::PresenceEntry?
+
+    # Drop every entry. Returns count dropped.
+    def self.clear: () -> Integer
+  end
+end

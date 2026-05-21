@@ -31,6 +31,10 @@ module Tep
     # topic with an output fd; publish iterates + writes the payload
     # to every matching fd.
     attr_accessor :broadcast_subs
+    # Per-process Presence entry registry. Each entry is one
+    # (principal, session, topic) tracking, with kind/agent_id +
+    # structured-status fields inline. See Tep::Presence.
+    attr_accessor :presence_entries
     # PG-backed cross-worker pub/sub state. `broadcast_pg_enabled`
     # is 0 when off, 1 when on. The dedicated LISTEN connection
     # lives in `broadcast_pg_conn`; channel name in
@@ -72,6 +76,9 @@ module Tep
       # Same type-seed pattern for the Broadcast subscriber registry.
       @broadcast_subs = [Tep::BroadcastSubscription.new("_", -1, 0)]
       @broadcast_subs.delete_at(0)
+      # And for the Presence entry registry.
+      @presence_entries = [Tep::PresenceEntry.new("_", "", :human, "", -1, 0)]
+      @presence_entries.delete_at(0)
       @broadcast_pg_enabled = 0
       @broadcast_pg_channel = ""
       # Seed broadcast_pg_conn later via lib/tep.rb's setter seed
