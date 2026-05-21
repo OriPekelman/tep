@@ -21,9 +21,11 @@ require_relative "tep/url"
 require_relative "tep/net"
 require_relative "tep/agent_delegation"
 require_relative "tep/identity"
-# Auth data classes (no deps; storage on Tep::App references them).
+# Auth + Broadcast data classes (no deps; storage on Tep::App
+# references them, so they must load before app.rb).
 require_relative "tep/auth_oauth2_client"
 require_relative "tep/auth_oauth2_code"
+require_relative "tep/broadcast_subscription"
 require_relative "tep/session"
 require_relative "tep/request"
 require_relative "tep/response"
@@ -40,6 +42,7 @@ require_relative "tep/auth_bearer_token"
 require_relative "tep/auth_session_cookie"
 require_relative "tep/auth_oauth2"
 require_relative "tep/auth"
+require_relative "tep/broadcast"
 require_relative "tep/server"
 require_relative "tep/server_scheduled"
 require_relative "tep/sqlite"
@@ -207,6 +210,17 @@ module Tep
   Tep::AuthOAuth2.find_client("_seed")
   _tep_seed_oauth2_code = Tep::AuthOAuth2.issue_code("_seed", "_seed", "", 0)
   Tep::AuthOAuth2.exchange_code(_tep_seed_oauth2_code, "_seed", 0)
+
+  # Broadcast type-seeding. Same pattern: pin every cmeth's param C
+  # types so compile units that don't otherwise exercise pub/sub
+  # still get correct signatures.
+  _tep_seed_broadcast_sub = Tep::Broadcast.subscribe("_seed", -1)
+  Tep::Broadcast.publish("_seed", "")
+  Tep::Broadcast.subscribers_for("_seed")
+  Tep::Broadcast.unsubscribe(_tep_seed_broadcast_sub)
+  Tep::Broadcast.unsubscribe_fd(-1)
+  Tep::Broadcast.subscriber_count
+  Tep::Broadcast.clear
 
   # SQLite type-seeding. Each method below pins a parameter type
   # (or pulls the FFI return into use) so spinel emits the correct
