@@ -43,5 +43,22 @@ module Tep
 
     # Drop every entry. Returns count dropped.
     def self.clear: () -> Integer
+
+    # Broadcast topic that diff events fire on. Subscribers
+    # (typically WS connections via Tep::Broadcast.subscribe_ws)
+    # register against this.
+    def self.diff_topic: (String topic) -> String
+
+    # Flat-JSON wire format for a diff event. `kind` ∈
+    # {"join", "leave", "status"}.
+    def self.encode_diff: (String kind, Tep::PresenceEntry entry) -> String
+
+    # Publish a diff via Tep::Broadcast. Returns local-match count.
+    def self.publish_diff: (String kind, Tep::PresenceEntry entry) -> Integer
+
+    # Walk the registry, reset entries whose status_until <= now
+    # back to :available, emit a "status" diff for each. Returns
+    # count reset.
+    def self.sweep_expired_status: () -> Integer
   end
 end

@@ -267,6 +267,13 @@ module Tep
   Tep::Presence.untrack("_seed", -1)
   Tep::Presence.untrack_by_fd(-1)
   Tep::Presence.clear
+  # Diff + auto-expiry seeds (chunk 3.2).
+  Tep::Presence.diff_topic("_seed")
+  _tep_seed_presence_entry = Tep::PresenceEntry.new(
+    "_seed", "_seed", :human, "", -1, 0)
+  Tep::Presence.encode_diff("join", _tep_seed_presence_entry)
+  Tep::Presence.publish_diff("join", _tep_seed_presence_entry)
+  Tep::Presence.sweep_expired_status
 
   # SQLite type-seeding. Each method below pins a parameter type
   # (or pulls the FFI return into use) so spinel emits the correct
