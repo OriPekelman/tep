@@ -10,7 +10,7 @@
 #   end
 #   Tep.get "/", Root.new
 #
-#   Tep.run!(4567, 1)
+#   Tep.run!(4567, 1, false)
 #
 # Sinatra-classic source (with `do ... end` blocks) is supported via
 # `bin/tep build app.rb`, which translates blocks into Handler
@@ -559,7 +559,13 @@ module Tep
   # both branches reference `quiet` as a heap-cell but only the first
   # path declares it. Bundling the decision inside one method
   # sidesteps the codegen miss.
-  def self.run!(port, workers, quiet, scheduled)
+  #
+  # `scheduled` defaults to false so apps that ship the historical
+  # 3-arg call (Tep.run!(port, workers, quiet)) keep building. Spinel
+  # accepts the call without the 4th arg only because it supports
+  # default-value params; without this, the 3-arg call silently
+  # miscompiled (matz/spinel arity-warning shape, tep#13).
+  def self.run!(port, workers, quiet, scheduled = false)
     if scheduled
       Server::Scheduled.new(APP).run(port, workers, quiet)
     else
