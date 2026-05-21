@@ -27,5 +27,29 @@ module Tep
 
     # Drop every subscription. Returns the count dropped.
     def self.clear: () -> Integer
+
+    # ---- PG backend (cross-worker pub/sub) ----
+
+    # Open a dedicated PG connection, issue LISTEN <channel>, and
+    # flip publish() into PG-NOTIFY-aware mode. `channel` must be
+    # a safe SQL identifier. Returns 0 on success, -1 on failure.
+    def self.enable_pg_backend: (String conninfo, String channel) -> Integer
+
+    # Close the LISTEN connection + revert publish() to local-only.
+    def self.disable_pg_backend: () -> Integer
+
+    # Block up to timeout_ms for one notification on the PG
+    # channel; dispatch to local subscribers. Returns 1 on
+    # delivery, 0 on timeout, -1 on connection error.
+    def self.poll_pg_once: (Integer timeout_ms) -> Integer
+
+    # Wire format helpers (length-prefixed "<topic_len>:<topic><payload>").
+    def self.encode_wire: (String topic, String payload) -> String
+    def self.deliver_wire_local: (String wire) -> Integer
+
+    # Same fan-out as publish but skips the PG NOTIFY step.
+    # Used internally when delivering a cross-worker message that
+    # came in via PG.
+    def self.publish_local_only: (String topic, String payload) -> Integer
   end
 end

@@ -602,6 +602,149 @@ int tep_pg_get_result(int h) {
     return tep_pg_stash_result(r, h);
 }
 
+/* --- LISTEN / NOTIFY ---
+ *
+ * Connection-level async-notification surface. Used by
+ * Tep::Broadcast's PG backend (Battery 2 chunk 2.2) to cross-worker
+ * pub/sub: worker A's publish runs NOTIFY on a shared channel;
+ * worker B's poll_notification picks up the delivery and dispatches
+ * to local subscribers. The C side just exposes PQexec-shaped
+ * LISTEN / NOTIFY and a poll loop around PQconsumeInput + PQnotifies.
+ *
+ * Channel names are SQL identifiers, NOT escaped here -- the
+ * caller is responsible for passing a safe identifier (typically
+ * a hard-coded constant like "tep_broadcast"). Payloads ARE
+ * escaped via PQescapeLiteral so arbitrary bytes (with quotes,
+ * backslashes, NULs up to PG's payload-size limit) round-trip
+ * cleanly. */
+
+int tep_pg_listen(int h, const char *channel) {
+    PGconn *c = tep_pg_conn_for(h);
+    if (c == NULL) return -1;
+    /* LISTEN <identifier> -- channel must be a safe SQL identifier. */
+    char buf[256];
+    snprintf(buf, sizeof(buf), "LISTEN %s", channel);
+    PGresult *r = PQexec(c, buf);
+    int ok = (PQresultStatus(r) == PGRES_COMMAND_OK) ? 0 : -1;
+    PQclear(r);
+    return ok;
+}
+
+int tep_pg_unlisten(int h, const char *channel) {
+    PGconn *c = tep_pg_conn_for(h);
+    if (c == NULL) return -1;
+    char buf[256];
+    snprintf(buf, sizeof(buf), "UNLISTEN %s", channel);
+    PGresult *r = PQexec(c, buf);
+    int ok = (PQresultStatus(r) == PGRES_COMMAND_OK) ? 0 : -1;
+    PQclear(r);
+    return ok;
+}
+
+int tep_pg_notify(int h, const char *channel, const char *payload) {
+    PGconn *c = tep_pg_conn_for(h);
+    if (c == NULL) return -1;
+    /* PQescapeLiteral wraps payload in single quotes + escapes
+     * embedded quotes/backslashes. Returns a malloc'd string the
+     * caller must PQfreemem. */
+    char *esc = PQescapeLiteral(c, payload, strlen(payload));
+    if (esc == NULL) return -1;
+    /* "NOTIFY <channel>, <escaped_payload>" -- max payload size is
+     * 8000 bytes per PG (configurable, but the default cap is
+     * load-bearing). Larger payloads get rejected at PQexec time. */
+    size_t need = strlen(channel) + strlen(esc) + 32;
+    char *buf = (char *)malloc(need);
+    if (buf == NULL) { PQfreemem(esc); return -1; }
+    snprintf(buf, need, "NOTIFY %s, %s", channel, esc);
+    PGresult *r = PQexec(c, buf);
+    int ok = (PQresultStatus(r) == PGRES_COMMAND_OK) ? 0 : -1;
+    PQclear(r);
+    PQfreemem(esc);
+    free(buf);
+    return ok;
+}
+
+/* Stash for the most recently consumed notification. */
+static char tep_pg_notify_channel_buf[256];
+static char tep_pg_notify_payload_buf[16384];
+
+/* Block up to `timeout_ms` waiting for a notification on `h`.
+ * Returns 1 if one was received (channel + payload available via
+ * tep_pg_notify_channel / tep_pg_notify_payload), 0 on timeout, -1
+ * on connection error.
+ *
+ * Uses select() on PQsocket(conn) to wait, then PQconsumeInput +
+ * PQnotifies to read pending notifications. The connection MUST
+ * already be in LISTEN mode (via tep_pg_listen) for the channel
+ * the caller cares about.
+ *
+ * Single-notification per call by design -- the caller drives the
+ * loop, calling repeatedly to drain any accumulated notifications.
+ * Returns 1 + sets a fresh stash on every notification received. */
+#include <sys/select.h>
+#include <sys/time.h>
+
+int tep_pg_poll_notification(int h, int timeout_ms) {
+    PGconn *c = tep_pg_conn_for(h);
+    if (c == NULL) return -1;
+
+    /* Fast path: check for already-pending notification before
+     * doing any I/O. PQconsumeInput drains the kernel buffer if
+     * anything is sitting there. */
+    if (PQconsumeInput(c) == 0) return -1;
+    PGnotify *n = PQnotifies(c);
+
+    /* If nothing pending, wait on the socket for up to timeout_ms. */
+    if (n == NULL) {
+        int fd = PQsocket(c);
+        if (fd < 0) return -1;
+        fd_set rs;
+        FD_ZERO(&rs);
+        FD_SET(fd, &rs);
+        struct timeval tv;
+        tv.tv_sec = timeout_ms / 1000;
+        tv.tv_usec = (timeout_ms % 1000) * 1000;
+        int sel = select(fd + 1, &rs, NULL, NULL, &tv);
+        if (sel < 0) return -1;
+        if (sel == 0) return 0;
+        if (PQconsumeInput(c) == 0) return -1;
+        n = PQnotifies(c);
+        if (n == NULL) return 0;
+    }
+
+    /* Copy out into static buffers + free the libpq struct. */
+    if (n->relname) {
+        size_t nlen = strlen(n->relname);
+        if (nlen >= sizeof(tep_pg_notify_channel_buf)) {
+            nlen = sizeof(tep_pg_notify_channel_buf) - 1;
+        }
+        memcpy(tep_pg_notify_channel_buf, n->relname, nlen);
+        tep_pg_notify_channel_buf[nlen] = '\0';
+    } else {
+        tep_pg_notify_channel_buf[0] = '\0';
+    }
+    if (n->extra) {
+        size_t plen = strlen(n->extra);
+        if (plen >= sizeof(tep_pg_notify_payload_buf)) {
+            plen = sizeof(tep_pg_notify_payload_buf) - 1;
+        }
+        memcpy(tep_pg_notify_payload_buf, n->extra, plen);
+        tep_pg_notify_payload_buf[plen] = '\0';
+    } else {
+        tep_pg_notify_payload_buf[0] = '\0';
+    }
+    PQfreemem(n);
+    return 1;
+}
+
+const char *tep_pg_notify_channel(void) {
+    return tep_pg_notify_channel_buf;
+}
+
+const char *tep_pg_notify_payload(void) {
+    return tep_pg_notify_payload_buf;
+}
+
 /* --- Version --- */
 
 const char *tep_pg_libpq_version(void) {

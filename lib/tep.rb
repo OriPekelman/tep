@@ -176,6 +176,13 @@ module Tep
   APP.set_after(Filter.new)
   APP.set_auth_filter(Filter.new)
   APP.set_auth_bearer_secret("")
+  # Broadcast PG-backend setter seeds. enable_pg_backend reaches
+  # these via set_broadcast_pg_conn / _channel / _enabled when a
+  # connect succeeds; the empty-conninfo seed below short-circuits
+  # before getting there, so we exercise the setters directly.
+  APP.set_broadcast_pg_enabled(0)
+  APP.set_broadcast_pg_channel("")
+  APP.set_broadcast_pg_conn(PG::Connection.new(""))
   APP.set_not_found(Handler.new)
   # Type-seeding: methods that may not be called by a given user app
   # would otherwise default their param C types to mrb_int and
@@ -221,6 +228,20 @@ module Tep
   Tep::Broadcast.unsubscribe_fd(-1)
   Tep::Broadcast.subscriber_count
   Tep::Broadcast.clear
+
+  # Broadcast PG-backend seeds. enable_pg_backend("", "") tries to
+  # open a PG connection -- empty conninfo behaves the same as the
+  # PG::Connection.new("") seed above: connect fails, returns -1.
+  # The point is to pin parameter types on every cmeth.
+  Tep::Broadcast.enable_pg_backend("", "")
+  Tep::Broadcast.poll_pg_once(0)
+  Tep::Broadcast.disable_pg_backend
+  Tep::Broadcast.encode_wire("", "")
+  Tep::Broadcast.deliver_wire_local("0:")
+  Tep::Broadcast.publish_local_only("_seed", "")
+  # The new PG::Connection LISTEN/NOTIFY method seeds live further
+  # down with the rest of the PG seeds, where _tep_seed_pg_conn is
+  # already defined.
 
   # SQLite type-seeding. Each method below pins a parameter type
   # (or pulls the FFI return into use) so spinel emits the correct
@@ -277,6 +298,13 @@ module Tep
   # non-scheduled context (the shim's PQconnectStart-then-FAILED
   # path), which is type-equivalent to the success path.
   PG::Connection.async_connect("")
+  # LISTEN / NOTIFY surface (Tep::Broadcast PG backend lands here).
+  _tep_seed_pg_conn.listen("_seed")
+  _tep_seed_pg_conn.unlisten("_seed")
+  _tep_seed_pg_conn.notify("_seed", "")
+  _tep_seed_pg_conn.poll_notification(0)
+  _tep_seed_pg_conn.last_notify_channel
+  _tep_seed_pg_conn.last_notify_payload
   _tep_seed_pg_res = PG::Result.new(-1)
   _tep_seed_pg_res.ntuples
   _tep_seed_pg_res.nfields
