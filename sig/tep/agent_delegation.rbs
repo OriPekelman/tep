@@ -1,0 +1,22 @@
+# The delegation half of a delegated identity: the agent's id,
+# the grant window, and the origin label. Paired with a
+# Tep::Identity whose principal_id names the human being acted
+# for. See lib/tep/agent_delegation.rb + docs/BATTERIES-DESIGN.md.
+module Tep
+  class AgentDelegation
+    attr_reader agent_id: String
+    attr_reader issued_at: Integer
+    attr_reader expires_at: Integer
+    attr_reader origin: Symbol
+
+    def initialize: (
+      String agent_id,
+      Integer issued_at,
+      Integer expires_at,
+      Symbol origin
+    ) -> void
+
+    # `now` is unix epoch seconds. Caller controls the clock source.
+    def expired?: (Integer now) -> bool
+  end
+end

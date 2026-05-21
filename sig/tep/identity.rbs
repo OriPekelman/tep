@@ -1,0 +1,29 @@
+# Principal + delegate identity. Set on req.identity by the
+# Tep::Auth provider chain; consumed by Broadcast / Presence /
+# LiveView. See lib/tep/identity.rb + docs/BATTERIES-DESIGN.md.
+module Tep
+  class Identity
+    attr_reader principal_id: String
+    attr_reader acting_via: AgentDelegation?
+    attr_reader capabilities: Array[Symbol]
+
+    def initialize: (
+      String principal_id,
+      AgentDelegation? acting_via,
+      Array[Symbol] capabilities
+    ) -> void
+
+    # Unauthenticated identity. Empty principal, no acting_via,
+    # empty capability set. Tep::Auth installs this on req.identity
+    # when no provider sniffs a credential.
+    def self.anonymous: () -> Identity
+
+    def human?: () -> bool
+    def agent?: () -> bool
+    def may?: (Symbol cap) -> bool
+
+    # Audit string. "user:<principal>" for humans;
+    # "agent:<agent_id>/<principal>" for delegated identities.
+    def subject: () -> String
+  end
+end
