@@ -60,5 +60,34 @@ module Tep
     # back to :available, emit a "status" diff for each. Returns
     # count reset.
     def self.sweep_expired_status: () -> Integer
+
+    # ---- PG mirror (cross-worker visibility) ----
+
+    # Open a dedicated PG conn, ensure tep_presence schema,
+    # mirror this worker's writes from now on. Returns 0 on
+    # success, -1 on connect / schema failure.
+    def self.enable_pg_mirror: (String conninfo) -> Integer
+
+    # DELETE this worker's rows + close the mirror conn.
+    def self.disable_pg_mirror: () -> Integer
+
+    # Canonical CREATE TABLE for tep_presence (idempotent).
+    def self.schema_sql: () -> String
+
+    def self.mirror_insert: (Tep::PresenceEntry entry) -> Integer
+    def self.mirror_delete: (String topic, Integer fd) -> Integer
+    def self.mirror_status: (
+      String topic,
+      Integer fd,
+      Symbol state,
+      String note,
+      Integer until_ts
+    ) -> Integer
+
+    # SELECT all entries for `topic` across every worker that's
+    # written to the mirror. Returns Array[PresenceEntry];
+    # entries are read-only snapshots.
+    def self.list_global: (String topic) -> Array[Tep::PresenceEntry]
+    def self.count_global: (String topic) -> Integer
   end
 end

@@ -50,6 +50,7 @@ module Tep
       entry = Tep::PresenceEntry.new(
         topic, ident.principal_id, kind, agent_id, fd, Time.now.to_i)
       Tep::APP.presence_entries.push(entry)
+      Tep::Presence.mirror_insert(entry)
       Tep::Presence.publish_diff("join", entry)
       0
     end
@@ -65,6 +66,7 @@ module Tep
         if entries[i].topic == topic && entries[i].fd == fd
           e = entries[i]
           entries.delete_at(i)
+          Tep::Presence.mirror_delete(topic, fd)
           Tep::Presence.publish_diff("leave", e)
           return 1
         end
@@ -86,6 +88,7 @@ module Tep
         if entries[i].fd == fd
           e = entries[i]
           entries.delete_at(i)
+          Tep::Presence.mirror_delete(e.topic, fd)
           Tep::Presence.publish_diff("leave", e)
           dropped += 1
         end
@@ -158,6 +161,7 @@ module Tep
       entry.status_state = state
       entry.status_note  = note
       entry.status_until = until_ts
+      Tep::Presence.mirror_status(topic, fd, state, note, until_ts)
       Tep::Presence.publish_diff("status", entry)
       1
     end
@@ -256,6 +260,211 @@ module Tep
         i += 1
       end
       swept
+    end
+
+    # ---- PG mirror (cross-worker visibility) ----
+    #
+    # Opt-in mirror of the local presence registry to a shared PG
+    # table. Each worker's track/untrack/set_status writes also
+    # touch the table; list_global / count_global read across all
+    # workers. The local registry stays the fast read path for
+    # per-worker queries (list / count); list_global is for the
+    # "who's globally in this room" snapshot that's typically a
+    # one-shot UI render.
+    #
+    # Worker ID is PID + boot epoch second so a same-PID restart
+    # doesn't alias a prior worker's stale rows. On
+    # disable_pg_mirror (or clean shutdown), this worker's rows
+    # get DELETE'd. A crashed worker leaves stale rows -- apps
+    # that care about that need a periodic prune (TODO: future
+    # chunk).
+    #
+    # Returns 0 on success, -1 on connect / schema failure.
+    def self.enable_pg_mirror(conninfo)
+      conn = PG::Connection.new(conninfo)
+      if conn.pgh < 0
+        return -1
+      end
+      r = conn.exec(Tep::Presence.schema_sql)
+      if !r.ok?
+        r.clear
+        conn.finish
+        return -1
+      end
+      r.clear
+      Tep::APP.set_presence_pg_conn(conn)
+      worker_id = Sock.sphttp_getpid.to_s + "-" + Time.now.to_i.to_s
+      Tep::APP.set_presence_pg_worker_id(worker_id)
+      Tep::APP.set_presence_pg_enabled(1)
+      # Drop any rows from a prior worker that managed to leave
+      # stale entries with this same worker_id (unlikely thanks
+      # to the boot-epoch suffix, but defensive).
+      r = conn.exec_params(
+        "DELETE FROM tep_presence WHERE worker_id = $1",
+        [worker_id])
+      r.clear
+      0
+    end
+
+    def self.disable_pg_mirror
+      if Tep::APP.presence_pg_enabled == 0
+        return 0
+      end
+      r = Tep::APP.presence_pg_conn.exec_params(
+        "DELETE FROM tep_presence WHERE worker_id = $1",
+        [Tep::APP.presence_pg_worker_id])
+      r.clear
+      Tep::APP.presence_pg_conn.finish
+      Tep::APP.set_presence_pg_enabled(0)
+      0
+    end
+
+    # CREATE TABLE statement, kept here so apps that want to
+    # provision the schema separately (migration runners, etc.)
+    # can grab the canonical DDL. Idempotent via IF NOT EXISTS.
+    def self.schema_sql
+      "CREATE TABLE IF NOT EXISTS tep_presence (" +
+        "worker_id    TEXT NOT NULL, " +
+        "topic        TEXT NOT NULL, " +
+        "fd           INTEGER NOT NULL, " +
+        "principal_id TEXT NOT NULL, " +
+        "kind         TEXT NOT NULL, " +
+        "agent_id     TEXT NOT NULL, " +
+        "since_ts     BIGINT NOT NULL, " +
+        "status_state TEXT NOT NULL, " +
+        "status_note  TEXT NOT NULL, " +
+        "status_until BIGINT NOT NULL, " +
+        "PRIMARY KEY (worker_id, topic, fd)" +
+      ")"
+    end
+
+    # Mirror a track to PG. Called from track() when the PG
+    # mirror is enabled.
+    def self.mirror_insert(entry)
+      if Tep::APP.presence_pg_enabled == 0
+        return 0
+      end
+      r = Tep::APP.presence_pg_conn.exec_params(
+        "INSERT INTO tep_presence " +
+        "(worker_id, topic, fd, principal_id, kind, agent_id, " +
+        " since_ts, status_state, status_note, status_until) " +
+        "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) " +
+        "ON CONFLICT (worker_id, topic, fd) DO UPDATE SET " +
+        "  principal_id = EXCLUDED.principal_id, " +
+        "  kind         = EXCLUDED.kind, " +
+        "  agent_id     = EXCLUDED.agent_id, " +
+        "  since_ts     = EXCLUDED.since_ts, " +
+        "  status_state = EXCLUDED.status_state, " +
+        "  status_note  = EXCLUDED.status_note, " +
+        "  status_until = EXCLUDED.status_until",
+        [
+          Tep::APP.presence_pg_worker_id,
+          entry.topic,
+          entry.fd.to_s,
+          entry.principal_id,
+          entry.kind.to_s,
+          entry.agent_id,
+          entry.since.to_s,
+          entry.status_state.to_s,
+          entry.status_note,
+          entry.status_until.to_s
+        ])
+      r.clear
+      0
+    end
+
+    # Mirror an untrack to PG.
+    def self.mirror_delete(topic, fd)
+      if Tep::APP.presence_pg_enabled == 0
+        return 0
+      end
+      r = Tep::APP.presence_pg_conn.exec_params(
+        "DELETE FROM tep_presence " +
+        "WHERE worker_id = $1 AND topic = $2 AND fd = $3",
+        [Tep::APP.presence_pg_worker_id, topic, fd.to_s])
+      r.clear
+      0
+    end
+
+    # Mirror a status update.
+    def self.mirror_status(topic, fd, state, note, until_ts)
+      if Tep::APP.presence_pg_enabled == 0
+        return 0
+      end
+      r = Tep::APP.presence_pg_conn.exec_params(
+        "UPDATE tep_presence " +
+        "SET status_state = $4, status_note = $5, status_until = $6 " +
+        "WHERE worker_id = $1 AND topic = $2 AND fd = $3",
+        [Tep::APP.presence_pg_worker_id, topic, fd.to_s,
+         state.to_s, note, until_ts.to_s])
+      r.clear
+      0
+    end
+
+    # Cross-worker list: SELECT all entries on `topic` regardless
+    # of which worker tracked them. Returns Array[PresenceEntry]
+    # built from the PG rows. The returned entries are read-only
+    # snapshots -- mutating them doesn't write back to PG.
+    def self.list_global(topic)
+      result = [Tep::PresenceEntry.new("", "", :human, "", -1, 0)]
+      result.delete_at(0)
+      if Tep::APP.presence_pg_enabled == 0
+        return result
+      end
+      r = Tep::APP.presence_pg_conn.exec_params(
+        "SELECT principal_id, kind, agent_id, fd, since_ts, " +
+        "       status_state, status_note, status_until " +
+        "FROM tep_presence WHERE topic = $1 ORDER BY since_ts",
+        [topic])
+      if !r.ok?
+        r.clear
+        return result
+      end
+      i = 0
+      n = r.ntuples
+      while i < n
+        kind_sym = :human
+        if r.getvalue(i, 1) == "agent_for"
+          kind_sym = :agent_for
+        end
+        state_sym = :available
+        sstr = r.getvalue(i, 5)
+        if sstr == "busy"
+          state_sym = :busy
+        elsif sstr == "blocked"
+          state_sym = :blocked
+        end
+        e = Tep::PresenceEntry.new(
+          topic,
+          r.getvalue(i, 0),
+          kind_sym,
+          r.getvalue(i, 2),
+          r.getvalue(i, 3).to_i,
+          r.getvalue(i, 4).to_i)
+        e.status_state = state_sym
+        e.status_note  = r.getvalue(i, 6)
+        e.status_until = r.getvalue(i, 7).to_i
+        result.push(e)
+        i += 1
+      end
+      r.clear
+      result
+    end
+
+    def self.count_global(topic)
+      if Tep::APP.presence_pg_enabled == 0
+        return 0
+      end
+      r = Tep::APP.presence_pg_conn.exec_params(
+        "SELECT count(*) FROM tep_presence WHERE topic = $1",
+        [topic])
+      if !r.ok?
+        r.clear
+        return 0
+      end
+      n = r.getvalue(0, 0).to_i
+      r.clear
+      n
     end
   end
 end
