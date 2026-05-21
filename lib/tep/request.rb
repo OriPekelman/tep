@@ -5,6 +5,12 @@ module Tep
     attr_accessor :params, :query, :req_headers, :raw_body, :cookies, :session
     attr_accessor :remote_host
     attr_accessor :ivars
+    # Set by the auth-filter (Tep::AuthFilter, run before the user's
+    # before-filter -- see Tep::App#auth_filter). Always populated:
+    # Tep::Identity.anonymous when no provider matched, otherwise
+    # the matched provider's Identity. Handlers and filters can
+    # rely on req.identity being non-nil.
+    attr_accessor :identity
 
     def initialize
       @verb         = ""
@@ -31,6 +37,7 @@ module Tep
                                      # `@x = v` -> `req.ivars["x"] = (v).to_s`
                                      # in handler bodies and `@x` -> `ivars["x"]`
                                      # inside ERB chunks.
+      @identity     = Tep::Identity.anonymous
     end
 
     attr_accessor :passed

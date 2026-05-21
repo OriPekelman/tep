@@ -1,0 +1,23 @@
+# JWT-HS256 bearer-token auth provider. Reads
+# Authorization: Bearer <token>; verifies via Tep::Jwt; decodes
+# the flat-JSON payload (sub / exp / caps / optional delegate)
+# into a Tep::Identity. See lib/tep/auth_bearer_token.rb +
+# docs/BATTERIES-DESIGN.md.
+module Tep
+  class AuthBearerToken
+    # Configure the shared HS256 secret. Apps call once at boot.
+    def self.set_secret: (String s) -> Integer
+
+    # Sniff the Authorization header + verify + decode. Returns
+    # Tep::Identity on success, nil otherwise (no header / bad
+    # prefix / signature mismatch / expired / malformed payload).
+    def self.try: (Tep::Request req) -> Tep::Identity?
+
+    # Comma-separated caps string -> array of symbols.
+    def self.parse_caps: (String s) -> Array[Symbol]
+
+    # Pipe-encoded delegate string (agent_id|issued_at|expires_at|origin)
+    # -> Tep::AgentDelegation, or nil for empty / malformed.
+    def self.parse_delegate: (String s) -> Tep::AgentDelegation?
+  end
+end
