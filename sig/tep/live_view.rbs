@@ -24,6 +24,14 @@ module Tep
     # No-op when topic is empty.
     def broadcast_render: () -> Integer
 
+    # Subclasses override to react to a Tep::Presence diff
+    # (join/leave/status) on the bound topic. Default no-op.
+    def handle_presence_diff: (String diff_json) -> Integer
+
+    # Convenience: parse + dispatch. Same shape as
+    # dispatch_event_json but for presence diffs.
+    def apply_presence_diff_json: (String json) -> Integer
+
     # Parse JSON-encoded {event, payload} from the client + call
     # handle_event. Imeth so subclass dispatch goes through the
     # typed slot.
