@@ -136,11 +136,10 @@ module Tep
     # Base class for event handlers. Subclass + override
     # `handle_event(event)`. The Driver stores one Handler instance
     # per event type and dispatches via `@h_message.handle_event(evt)`.
-    # Spinel's block-based callback shape (faye's `driver.on(:msg)
-    # { ... }`) wraps a closure with captured locals -- workable
-    # post-matz/spinel#564 but the explicit-Handler shape is simpler
-    # for now and stays compatible with Fiber.storage when Phase 3
-    # routes per-connection state through it.
+    # The explicit-Handler shape (vs faye's block-based `driver.on(:msg)
+    # { ... }`) is chosen because it stays compatible with future
+    # Fiber.storage per-connection state plumbing without re-typing
+    # the callback boundary.
     class Handler
       def handle_event(event)
         0

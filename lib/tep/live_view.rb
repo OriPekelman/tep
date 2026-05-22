@@ -1,12 +1,12 @@
 # Tep::LiveView -- Phoenix.LiveView-shape server-rendered stateful
 # UI over WebSocket. Battery 4 in docs/BATTERIES-DESIGN.md.
 #
-# v1 (chunk 4.1) ships the bones: the base class apps subclass + a
-# pair of cmeths (render_page / dispatch_event) for the manual
-# wiring path. Auto-wiring (Tep.live "/path", CounterView), the
-# handle_broadcast hook, and presence-diff bindings land in 4.2 /
-# 4.3 -- they need either translator changes or the Scheduled
-# server to be reliable upstream (matz/spinel#641).
+# Ships the base class apps subclass + a pair of cmeths
+# (render_page / dispatch_event) for the manual wiring path, the
+# topic + broadcast_render binding, and the handle_presence_diff
+# hook. Auto-wiring (Tep.live "/path", CounterView) is the open
+# follow-up -- needs translator support to lower a per-view
+# Handler subclass.
 #
 # Usage (chunk 4.1):
 #
@@ -146,11 +146,11 @@ module Tep
     # diff JSON strings to this method and it dispatches to
     # handle_presence_diff on the subclass.
     #
-    # Note: as of chunk 4.3, automatic server-side intercept of
-    # diffs (a background fiber per WS that pulls from the
-    # presence diff topic and calls apply_presence_diff_json) is
-    # not provided -- it needs Tep::Server::Scheduled reliable
-    # under load, gated on matz/spinel#641. Apps that need
+    # Note: automatic server-side intercept of diffs (a background
+    # fiber per WS that pulls from the presence diff topic and
+    # calls apply_presence_diff_json) is not provided -- the WS
+    # DSL doesn't bridge `req` into on_X handler bodies, so the
+    # natural shape needs translator work. Apps that need
     # server-side reaction wire the intercept loop themselves.
     # Apps that only need client-side display can skip this and
     # rely on Tep::Broadcast.subscribe_ws delivering the diff
