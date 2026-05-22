@@ -1,37 +1,30 @@
-# Agentic chat -- the four-battery demo.
+# Agentic chat -- the four-battery demo, now WS-driven.
 #
-# A small chat-room view exercising every battery in tep's
-# agentic story: Tep::Auth (session-cookie identity),
-# Tep::Broadcast (in-process publish path), Tep::Presence
-# (who's here, agent-aware, with structured status),
-# Tep::LiveView (the render_page bootstrap helper).
-#
-# This v1 uses **HTTP polling** instead of a live WS-driven
-# feed. The reason: tep's `websocket "/path" do |ws|` DSL
-# doesn't bridge the per-request `req` into on_X handler
-# bodies, and a spinel inference quirk widens `evt.data` to
-# poly when it flows into custom helpers from inside on_message.
-# A real-time WS chat is the natural shape -- filed as a tep
-# follow-up; this demo gets you the agentic surface across
-# all four batteries today.
+# Exercises all four batteries in tep's agentic story:
+#   * Tep::Auth (session-cookie identity)
+#   * Tep::Broadcast (in-process pub-sub over WS)
+#   * Tep::Presence (who's here, agent-aware, with structured status)
+#   * Tep::LiveView (server-rendered HTML pushed over WS on change)
 #
 # Run:
 #   bin/tep build examples/agentic_chat/app.rb -o /tmp/agentic_chat
 #   /tmp/agentic_chat -p 4567
-# Open http://127.0.0.1:4567/ in two browsers.
+# Open http://127.0.0.1:4567/ in two browsers; each message + agent
+# spawn lands in <100ms via WS push, no polling, no reloads.
 require 'sinatra'
+
+set :scheduler, :scheduled
 
 Tep.session_secret = "demo-only-do-not-use-in-prod-XXXXXXXXXX"
 Tep::Auth.install!
 
 CHAT_TOPIC = "agentic_chat:room"
 
+# Sentinel for the WS payload's two-region split. ASCII-only,
+# unlikely to appear in any user-typed message.
+TEP_SEP = "<<TEP>>"
+
 # ---- shared chat state ----
-#
-# Parallel string arrays for the message log + simple `add`
-# entry point. Plain class (no Tep::LiveView subclass) to
-# sidestep the virtual-dispatch widening tep's translator
-# currently emits across LiveView base + subclass.
 
 class ChatRoom
   def initialize
@@ -99,7 +92,6 @@ def spawn_agent(principal_id)
   CHAT.add(
     "agent:summarizer-bot/" + principal_id,
     "i'm here -- watching for things to summarize.", "agent")
-  Tep::Broadcast.publish(CHAT_TOPIC, "agent-spawned")
   fd
 end
 
@@ -144,19 +136,17 @@ def render_presence
   "</aside>"
 end
 
+# Broadcast both regions in one frame. Subscribers' JS splits on
+# TEP_SEP and swaps each outerHTML in place -- no full reload.
+def publish_room
+  payload = TEP_SEP + CHAT.render + TEP_SEP + render_presence
+  Tep::Broadcast.publish(CHAT_TOPIC, payload)
+  0
+end
+
 # ---- routes ----
 
 before do
-  # principal_id is opaque -- Identity#subject prepends "user:"
-  # for humans, so the principal stored on the session should NOT
-  # already carry it.
-  #
-  # We also set req.identity directly: Tep::AuthFilter runs
-  # BEFORE this before-filter, so it already populated
-  # req.identity from session (= anonymous on first visit).
-  # AuthSessionCookie.set writes to req.session but
-  # req.identity stays whatever the auth filter put there.
-  # Direct assignment plugs the gap for the same-request render.
   if req.session.get("identity_sub").length == 0
     pid = Crypto.sp_crypto_random_b64url(4)
     ident = Tep::Identity.new(pid, nil, [:read, :write])
@@ -173,17 +163,13 @@ end
 
 get '/chat' do
   res.headers["Content-Type"] = "text/html; charset=utf-8"
-  # Track the human's session in presence. Synthetic fd derived
-  # from the principal_id so reloads reuse the same row.
   pid = req.identity.principal_id
-  fd = pid.bytes[5]   # cheap deterministic-per-user fd; collisions
-                      # tolerable for the demo
+  fd = pid.bytes[5]
   Tep::Presence.track(req, CHAT_TOPIC, fd)
   user_subject = req.identity.subject
   "<!doctype html><html><head>" +
     "<meta charset='utf-8'>" +
     "<title>agentic chat (tep)</title>" +
-    "<meta http-equiv='refresh' content='3'>" +
     "<link rel='stylesheet' href='/agentic_chat/style.css'>" +
     "</head><body>" +
     "<header>" +
@@ -194,16 +180,17 @@ get '/chat' do
     "<main>" +
       "<section id='room'>" +
         CHAT.render +
-        "<form id='compose' action='/chat/send' method='POST'>" +
-          "<input name='body' placeholder='message…' autocomplete='off' autofocus>" +
+        "<form id='compose' onsubmit='return tepSend(event)' method='POST' action='/chat/send'>" +
+          "<input name='body' placeholder='message...' autocomplete='off' autofocus>" +
           "<button type='submit'>send</button>" +
         "</form>" +
-        "<form id='agent-form' action='/agent/add' method='POST'>" +
+        "<form id='agent-form' onsubmit='return tepSend(event)' method='POST' action='/agent/add'>" +
           "<button type='submit'>+ summarizer</button>" +
         "</form>" +
       "</section>" +
       render_presence +
     "</main>" +
+    "<script>" + agentic_chat_js + "</script>" +
     "</body></html>"
 end
 
@@ -211,18 +198,17 @@ post '/chat/send' do
   body = req.params["body"]
   if body.length > 0
     CHAT.add(req.identity.subject, body, "human")
-    Tep::Broadcast.publish(CHAT_TOPIC, "message-added")
+    publish_room
   end
-  res.set_status(302)
-  res.headers["Location"] = "/chat"
+  res.set_status(204)
   ""
 end
 
 post '/agent/add' do
   pid = req.identity.principal_id + ""
   spawn_agent(pid)
-  res.set_status(302)
-  res.headers["Location"] = "/chat"
+  publish_room
+  res.set_status(204)
   ""
 end
 
@@ -231,7 +217,41 @@ get '/agentic_chat/style.css' do
   agentic_chat_css
 end
 
+websocket "/chat/ws" do |ws|
+  on_open do |evt|
+    Tep::Broadcast.subscribe_ws(CHAT_TOPIC, ws.fd)
+  end
+
+  on_close do |evt|
+    Tep::Broadcast.unsubscribe_fd(ws.fd)
+  end
+end
+
 # ---- inline assets ----
+
+def agentic_chat_js
+  "var __tepSep = '" + TEP_SEP + "';" +
+  "var __tepWs = new WebSocket((location.protocol==='https:'?'wss://':'ws://')+location.host+'/chat/ws');" +
+  "__tepWs.onmessage = function(e){" +
+    "var parts = e.data.split(__tepSep);" +
+    "if (parts[1]) {" +
+      "var m = document.getElementById('messages');" +
+      "if (m) m.outerHTML = parts[1];" +
+    "}" +
+    "if (parts[2]) {" +
+      "var p = document.getElementById('presence');" +
+      "if (p) p.outerHTML = parts[2];" +
+    "}" +
+  "};" +
+  "function tepSend(ev){" +
+    "ev.preventDefault();" +
+    "var f = ev.target;" +
+    "fetch(f.action, {method:f.method, body:new FormData(f)});" +
+    "var inp = f.querySelector('input[name=body]');" +
+    "if (inp) inp.value='';" +
+    "return false;" +
+  "}"
+end
 
 def agentic_chat_css
   "*{box-sizing:border-box}" +
@@ -281,8 +301,3 @@ def agentic_chat_css
   ".pres-row .note{width:100%;padding-left:1.1rem;font-size:.8em;color:#888;" +
     "font-style:italic}"
 end
-
-# bin/tep auto-injects Tep.run! at the bottom of the translated
-# source AFTER the generated route registrations, so don't add
-# our own here -- if we did, the server would start before the
-# routes existed and every request would 404.
