@@ -119,11 +119,23 @@ through Spinel.
 | `Tep::Parallel`  | grosser/parallel-shaped fork fan-out. |
 | `Tep::Job`       | sidekiq-shaped queue over SQLite. |
 | `PG`             | ruby-pg-shape libpq client: `PG::Connection`, `PG::Result`, `PG::Error`; surface mirrors the `pg` gem (`exec` / `exec_params` / `escape_*` / `fields` / `values` / `getvalue` / `sql_state`). Designed so an eventual ActiveRecord-on-spinel port reuses the existing AR adapter with minimal divergence — see `docs/PG-BATTERY.md`. |
+| `Tep::Auth`      | Principal+delegate identity (`Tep::Identity` / `Tep::AgentDelegation`) + provider chain. Three providers shipped: `Tep::AuthBearerToken` (JWT-HS256), `Tep::AuthSessionCookie` (signed cookie), `Tep::AuthOAuth2` (authorization-code grant issuance for bots/agents). Same `req.identity` surface regardless of provider; agents are first-class (`identity.agent?`, `identity.acting_via.agent_id`, capability subsetting). |
+| `Tep::Broadcast` | In-process pub-sub + cross-worker via PG LISTEN/NOTIFY. Subscribe an fd to a topic (`subscribe` raw, `subscribe_ws` WS-frame-wrapped); publish writes to every matching subscriber. The seam Presence and LiveView build on. |
+| `Tep::Presence`  | Topic-keyed who's-here registry, agent-aware. `Tep::Presence.track(req, topic, fd)` records a (principal, session, topic) tuple with a 3-state structured status (`:available | :busy | :blocked` + free-text note + expiry). Diffs broadcast on join/leave/status; PG-mirror for cross-worker `list_global` snapshots. |
+| `Tep::LiveView`  | Phoenix.LiveView-shape server-rendered stateful UI over WebSocket. Subclass `Tep::LiveView`, override `render` + `handle_event` + (optionally) `handle_presence_diff`; `broadcast_render` fans the new HTML out to every subscribed viewer. Bootstrap client (~10 lines of inline JS) ships in `Tep::LiveView.render_page`. |
 
 Per-battery API docs and cookbooks live on the
 [wiki](https://github.com/OriPekelman/tep/wiki). The full
 Sinatra-compatibility matrix is in
 [SINATRA_COMPAT.md](SINATRA_COMPAT.md).
+
+The last four batteries (`Tep::Auth`, `Tep::Broadcast`,
+`Tep::Presence`, `Tep::LiveView`) ship a small framework for
+"web apps in a live agentic age" — `req.identity` is always a
+principal+delegate pair so agents acting on behalf of humans
+are first-class through every battery. The end-to-end design
++ a realistic chat-room scenario walked through every seam
+lives in [`docs/BATTERIES-DESIGN.md`](docs/BATTERIES-DESIGN.md).
 
 ~200 tests pass `make test`. 9 real-world test apps build and serve
 end-to-end (smoke-tested through `Net::HTTP`), and the bundled
