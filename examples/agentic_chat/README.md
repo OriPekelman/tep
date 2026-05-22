@@ -1,7 +1,8 @@
 # agentic chat -- the four-battery demo
 
 A small chat room exercising every battery in tep's agentic
-story: identity, broadcast, presence, server-rendered HTML.
+story: identity, broadcast, presence, server-rendered HTML
+pushed over WebSocket.
 
 ```
 ┌───────────────────────────────────────────────────────────┐
@@ -27,10 +28,12 @@ bin/tep build examples/agentic_chat/app.rb -o /tmp/agentic_chat
 # open http://127.0.0.1:4567/ in two browsers
 ```
 
-Page auto-refreshes every 3 seconds (HTTP `<meta refresh>`) so
-new messages + presence changes from other tabs appear. Click
-**+ summarizer** to invite a synthetic agent into the room —
-it appears in the presence sidebar with `kind=agent_for`,
+Every chat message + agent spawn arrives in the other tab in
+<100ms via a WebSocket push. No polling, no full-page reload --
+the server re-renders the `#messages` + `#presence` regions on
+every change and broadcasts both to all subscribed sockets.
+Click **+ summarizer** to invite a synthetic agent into the
+room -- it appears in the presence sidebar with `kind=agent_for`,
 shares the inviter's `principal_id`, and posts an arrival
 message.
 
@@ -39,45 +42,39 @@ message.
 | Battery | What it does here |
 |---|---|
 | `Tep::Auth` (`Tep::AuthSessionCookie`) | Every visitor's first request auto-creates an `identity` cookie. Subsequent requests land with `req.identity` populated; `req.identity.subject` is rendered in the header + drives presence rows. |
-| `Tep::AuthOAuth2`-style delegation | The `+ summarizer` route constructs a `Tep::AgentDelegation` + `Tep::Identity` with `kind=:agent_for, origin=:oauth_grant` — same shape an external bot would receive over the real OAuth flow. |
-| `Tep::Broadcast` | Every `POST /chat/send` and `POST /agent/add` calls `Tep::Broadcast.publish(CHAT_TOPIC, …)`. v1 polling means subscribers aren't WS clients (yet); the publish wire is in place for the WS upgrade when spinel's WS-handler widening is resolved. |
+| `Tep::AuthOAuth2`-style delegation | The `+ summarizer` route constructs a `Tep::AgentDelegation` + `Tep::Identity` with `kind=:agent_for, origin=:oauth_grant` -- same shape an external bot would receive over the real OAuth flow. |
+| `Tep::Broadcast` | Every `POST /chat/send` and `POST /agent/add` calls `publish_room`, which builds the updated `#messages` + `#presence` HTML once and publishes a single TEXT frame to every WS subscriber via `Tep::Broadcast.publish`. |
 | `Tep::Presence` | Humans tracked on every `GET /chat` (one row per principal_id). Agents tracked on `+ summarizer` with `status_state=:busy, status_note="summarizing the room"`. Sidebar renders both groups with the agentic kind + status. |
-| `Tep::LiveView` | The rendered `#messages` block is the live-view content target. The full live-WS path is held — see "wire shape" below — but the `render_page` helper + `ChatRoom#render` pattern is what an upgraded LiveView would use unchanged. |
+| `Tep::LiveView` | `CHAT.render` + `render_presence` are the live-view content targets. The WS push delivers the new HTML; client-side JS does `outerHTML = ...` on both regions in place. The same render functions run for the initial page load and for every push -- no special template-vs-push divergence. |
 
 ## Wire shape
 
-v1 uses HTTP polling via `<meta http-equiv="refresh" content="3">`.
-The natural shape — WS-driven server pushes — is held up on two
-spinel-side surfaces I hit while building this:
+```
+client                          server
+   |  GET  /chat                   |
+   |<------------------------------|  full page (HTML + JS)
+   |                               |
+   |  GET  /chat/ws (Upgrade)      |
+   |------------------------------>|  websocket "/chat/ws" do |ws|
+   |<------------------------------|    on_open -> subscribe_ws
+   |     101 Switching             |
+   |                               |
+   |  POST /chat/send {body:"hi"}  |
+   |------------------------------>|  CHAT.add + publish_room
+   |<------------------------------|  204 No Content
+   |                               |
+   |<------------------------------|  WS TEXT frame:
+   |   "<<TEP>><div id='messages'> |   "<<TEP>>{messages}
+   |     ...<<TEP>><aside id='     |    <<TEP>>{presence}"
+   |     presence'>..."            |
+   |                               |
+   |   JS: e.data.split('<<TEP>>') |
+   |       -> swap each outerHTML  |
+```
 
-1. **`Tep::Json.get_str` widens when called from inside an
-   `on_message do |evt| ... end` block.** The translator
-   generates a `Tep::WebSocket::Handler` subclass per event;
-   reading `evt.data` and slicing it inside the body causes
-   spinel to widen `evt.data` (declared as `String`) to poly,
-   which cascades through every downstream `String` slot the
-   message touches. Adding a `sig/tep/websocket.rbs` with
-   `Event#data: String` + enabling `--rbs` doesn't fix it
-   today; `spinel_rbs_extract` only loads if it's built (`make
-   rbs_extract`), and tep's overall RBS coverage is too stale
-   for `--rbs` to be defaulted on without a multi-PR cleanup.
-
-2. **The `websocket "/path" do |ws|` DSL doesn't bridge the
-   per-request `req` into `on_open` / `on_message` handler
-   bodies.** Each handler becomes a separate `Handler`
-   subclass with `@ws` storage but no `req` — so capturing the
-   session-cookie identity at upgrade time + attaching it to
-   the WS connection needs an out-of-band shape (e.g. the
-   client sends a "hello|<subject>" first frame, server caches
-   keyed by fd).
-
-Both are tep-side issues, separate from this PR.
-
-When those resolve, the polling layer drops out and the route
-becomes a real WS-driven LiveView with sub-second updates +
-`handle_presence_diff` running server-side. The CSS, HTML,
-ChatRoom class, presence-rendering helpers all stay; only the
-transport changes.
+`<<TEP>>` is a sentinel separator (ASCII, unlikely to appear in
+user text). The server packs both regions into one frame so
+subscribers see them update atomically.
 
 ## Code size
 
@@ -98,6 +95,9 @@ No CSS framework, no JS bundler, no DB.
   button adds a synthetic presence row + posts one message
   in the same process. A real bot would open its own WS with
   the JWT minted by `Tep::AuthOAuth2.exchange_code` and chat
-  alongside the humans — the framework surface is identical.
-- **Sub-second updates.** Polling at 3s; WS at <100ms once
-  spinel unblocks the surfaces above.
+  alongside the humans -- the framework surface is identical.
+- **Per-subscriber rendering.** Every WS subscriber gets the
+  same HTML payload. Personalized views (e.g. mention
+  highlights for the current user) would need either per-fd
+  render filters or a client-side template that consumes a
+  structured payload instead of HTML.
