@@ -119,15 +119,24 @@ module Tep
       out
     end
 
-    # Fork one child to process `item`, writing the result to
-    # `job_dir/idx`. Returns the child pid in the parent; the
-    # child never returns (exits when done).
+    # Fork one child to process `item`. When `job_dir` is non-empty,
+    # the child writes the worker's String result to `job_dir/idx`
+    # (consumed by map_processes); otherwise the result is discarded
+    # (fire-and-forget shape used by each_process). Returns the child
+    # pid in the parent; the child never returns (exits when done).
+    #
+    # The method-call boundary is load-bearing: an inline fork-and-
+    # exec loop body shared locals across iterations under spinel's
+    # codegen, so every child processed the same (last) item. A
+    # separate def gives each fork a clean local frame.
     def spawn_one(item, idx, job_dir)
       pid = Sock.sphttp_fork
       if pid == 0
         result = @worker.run(item)
-        path   = job_dir + "/" + idx.to_s
-        File.write(path, result)
+        if job_dir.length > 0
+          path = job_dir + "/" + idx.to_s
+          File.write(path, result)
+        end
         Sock.sphttp_exit(0)
       end
       pid
@@ -138,7 +147,7 @@ module Tep
       n = items.length
       i = 0
       while i < n
-        spawn_one_silent(items[i])
+        spawn_one(items[i], 0, "")
         i += 1
       end
       reaped = 0
@@ -147,17 +156,6 @@ module Tep
         reaped += 1
       end
       0
-    end
-
-    # Same as spawn_one but discards the result. Used by
-    # each_process for fire-and-forget fan-out.
-    def spawn_one_silent(item)
-      pid = Sock.sphttp_fork
-      if pid == 0
-        @worker.run(item)
-        Sock.sphttp_exit(0)
-      end
-      pid
     end
 
     # Per-invocation scratch directory. Uses pid + monotonic
