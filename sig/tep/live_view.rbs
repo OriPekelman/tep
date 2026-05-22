@@ -1,0 +1,29 @@
+# Phoenix.LiveView-shape server-rendered stateful UI over
+# WebSocket. v1 chunk 4.1 ships the base class + render_page +
+# dispatch_event helpers. See lib/tep/live_view.rb +
+# docs/BATTERIES-DESIGN.md.
+module Tep
+  class LiveView
+    def initialize: () -> void
+
+    # Subclasses override to seed @ivars from the request.
+    def mount: (Tep::Request req) -> Integer
+
+    # Subclasses override to render the current state as HTML.
+    # Wrap real content in an element with id="tep-live-root".
+    def render: () -> String
+
+    # Subclasses override to mutate state on client events.
+    def handle_event: (String event, String payload, Tep::Request req) -> Integer
+
+    # Parse JSON-encoded {event, payload} from the client + call
+    # handle_event. Imeth so subclass dispatch goes through the
+    # typed slot.
+    def dispatch_event_json: (String json_msg, Tep::Request req) -> Integer
+
+    # Wrap content in a full HTML page with the client-side
+    # bootstrap (WS connect + innerHTML swap + click->event
+    # dispatch).
+    def self.render_page: (String content_html, String ws_path) -> String
+  end
+end
