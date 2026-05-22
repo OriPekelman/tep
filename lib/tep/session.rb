@@ -42,7 +42,7 @@ module Tep
         return false
       end
       dot = cookie_value.rindex(".")
-      if dot < 0
+      if dot.nil?
         return false
       end
       payload = cookie_value[0, dot]
