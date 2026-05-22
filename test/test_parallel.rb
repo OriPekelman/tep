@@ -4,15 +4,6 @@ require_relative "helper"
 # Worker against a small input list and checks both the
 # result-collecting and fire-and-forget shapes.
 class TestParallel < TepTest
-  # Upstream-blocked on matz/spinel#643: File.write inside
-  # Tep::Parallel#spawn_one passes a poly-typed (sp_RbVal) value
-  # to the :str FFI arg without unboxing, gcc rejects the cast.
-  # Reproduces on clean main against current spinel master. Drop
-  # this skip when #643 closes.
-  def setup
-    skip "blocked on matz/spinel#643 (:str FFI arg poly-unbox missing)"
-    super
-  end
 
   app_source <<~RB
     require 'sinatra'
