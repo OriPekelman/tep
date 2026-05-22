@@ -222,9 +222,10 @@ websocket "/chat/ws" do |ws|
     Tep::Broadcast.subscribe_ws(CHAT_TOPIC, ws.fd)
   end
 
-  on_close do |evt|
-    Tep::Broadcast.unsubscribe_fd(ws.fd)
-  end
+  # No explicit on_close needed -- Tep::WebSocket::Connection auto-
+  # drops every subscription keyed on the closed fd. Apps that want
+  # to do additional work on close (logging, presence untrack, ...)
+  # still register on_close blocks normally.
 end
 
 # ---- inline assets ----

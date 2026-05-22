@@ -56,13 +56,12 @@ module Tep
     # before delivery -- the peer sees a well-formed WS message,
     # not raw bytes that would close the connection.
     #
-    # Apps unsubscribe in their WS close handler:
-    #
-    #   conn.on(:close) { Tep::Broadcast.unsubscribe_fd(conn.fd) }
-    #
-    # v1 keeps this explicit; an auto-unsubscribe hook on
-    # Tep::WebSocket::Connection lands as a follow-up once we've
-    # used it in a real app and seen what the right shape is.
+    # Cleanup is automatic: when the WS connection closes,
+    # Tep::WebSocket::Connection.dispatch_close runs the user's
+    # on_close handler and then calls unsubscribe_fd(driver.fd),
+    # dropping every subscription tied to the closed connection.
+    # Apps don't need to add their own unsubscribe; if they do,
+    # the second call just finds 0 matches (harmless).
     def self.subscribe_ws(topic, fd)
       subs = Tep::APP.broadcast_subs
       sub = Tep::BroadcastSubscription.new(

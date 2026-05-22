@@ -31,6 +31,7 @@ shape, lowered by the `websocket '/p' do |ws| ... end` DSL hook).
 | Splat (`*`)                          | ✅ 1    | Last-segment only |
 | Query string                         | ✅ 4    | `params[:q]` reads through |
 | Form-urlencoded body                 | ✅ 2    | Auto-merged into params |
+| Multipart/form-data body             | ✅ 1    | Text fields auto-merged into params; file-upload parts skipped (follow-up `req.files`) |
 | URL-decoding (`%xx`, `+`)            | ✅ 2    | Path captures and query both |
 | Custom status (`status N`)           | ✅ 5    | 201, 204, 401, 418, 500, ... |
 | Default `text/html` Content-Type     | ✅ 1    | |

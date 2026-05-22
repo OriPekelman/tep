@@ -147,6 +147,13 @@ module Tep
         evt.code = code
         evt.reason = reason
         driver.h_close.handle_event(evt)
+        # Auto-cleanup: every WS subscription keyed on this fd
+        # gets dropped from the Broadcast registry. Safe even when
+        # the connection never subscribed (no-op match). Apps that
+        # still call Tep::Broadcast.unsubscribe_fd in their
+        # on_close block stay correct -- the second call just
+        # finds 0 matches.
+        Tep::Broadcast.unsubscribe_fd(driver.fd)
         0
       end
     end
