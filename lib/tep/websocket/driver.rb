@@ -140,7 +140,19 @@ module Tep
     # { ... }`) is chosen because it stays compatible with future
     # Fiber.storage per-connection state plumbing without re-typing
     # the callback boundary.
+    #
+    # `req` is set at WS upgrade time by the route handler the
+    # translator emits, giving on_X handler bodies access to the
+    # request that initiated the connection (req.identity,
+    # req.session, headers, ...). It stays the same across every
+    # event on the connection -- there's no per-frame "request".
     class Handler
+      attr_accessor :req
+
+      def initialize
+        @req = Tep::Request.new
+      end
+
       def handle_event(event)
         0
       end

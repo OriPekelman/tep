@@ -163,9 +163,10 @@ end
 
 get '/chat' do
   res.headers["Content-Type"] = "text/html; charset=utf-8"
-  pid = req.identity.principal_id
-  fd = pid.bytes[5]
-  Tep::Presence.track(req, CHAT_TOPIC, fd)
+  # Presence tracking happens at WS upgrade (see the websocket
+  # block below) -- gives a true "currently connected" view with
+  # auto-cleanup on close instead of synthesizing a per-principal
+  # fd at page-render time.
   user_subject = req.identity.subject
   "<!doctype html><html><head>" +
     "<meta charset='utf-8'>" +
@@ -219,13 +220,18 @@ end
 
 websocket "/chat/ws" do |ws|
   on_open do |evt|
+    # req is the upgrade-time request, so req.identity is the
+    # session-cookie identity of whoever opened the socket.
     Tep::Broadcast.subscribe_ws(CHAT_TOPIC, ws.fd)
+    Tep::Presence.track(req, CHAT_TOPIC, ws.fd)
+    publish_room
   end
 
   # No explicit on_close needed -- Tep::WebSocket::Connection auto-
-  # drops every subscription keyed on the closed fd. Apps that want
-  # to do additional work on close (logging, presence untrack, ...)
-  # still register on_close blocks normally.
+  # drops every Broadcast subscription AND Presence row keyed on
+  # the closed fd. Apps that want to do additional work on close
+  # (logging, custom cleanup) still register on_close blocks
+  # normally.
 end
 
 # ---- inline assets ----
