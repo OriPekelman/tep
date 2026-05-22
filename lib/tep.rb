@@ -274,6 +274,22 @@ module Tep
   Tep::Presence.encode_diff("join", _tep_seed_presence_entry)
   Tep::Presence.publish_diff("join", _tep_seed_presence_entry)
   Tep::Presence.sweep_expired_status
+  # PG mirror seeds (chunk 3.3). enable_pg_mirror("") fails the
+  # connect cleanly (-1) but still pins param types.
+  Tep::Presence.enable_pg_mirror("")
+  Tep::Presence.schema_sql
+  Tep::Presence.mirror_insert(_tep_seed_presence_entry)
+  Tep::Presence.mirror_delete("_seed", -1)
+  Tep::Presence.mirror_status("_seed", -1, :available, "", 0)
+  Tep::Presence.list_global("_seed")
+  Tep::Presence.count_global("_seed")
+  Tep::Presence.disable_pg_mirror
+  # Same APP-setter-via-constant pattern as the broadcast_pg_conn
+  # seed: PG::Connection.new can't run inside App#initialize
+  # (Tep::APP is mid-construction; sched_current read segfaults).
+  APP.set_presence_pg_enabled(0)
+  APP.set_presence_pg_worker_id("")
+  APP.set_presence_pg_conn(PG::Connection.new(""))
 
   # SQLite type-seeding. Each method below pins a parameter type
   # (or pulls the FFI return into use) so spinel emits the correct

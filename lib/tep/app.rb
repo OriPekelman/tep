@@ -35,6 +35,14 @@ module Tep
     # (principal, session, topic) tracking, with kind/agent_id +
     # structured-status fields inline. See Tep::Presence.
     attr_accessor :presence_entries
+    # PG-mirror state for cross-worker visibility. `enabled` is 0
+    # when off, 1 when on. `worker_id` uniquely identifies this
+    # worker's rows in the tep_presence table (PID + boot epoch
+    # so a restart on the same PID isn't aliased). See
+    # Tep::Presence.enable_pg_mirror.
+    attr_accessor :presence_pg_enabled
+    attr_accessor :presence_pg_worker_id
+    attr_accessor :presence_pg_conn
     # PG-backed cross-worker pub/sub state. `broadcast_pg_enabled`
     # is 0 when off, 1 when on. The dedicated LISTEN connection
     # lives in `broadcast_pg_conn`; channel name in
@@ -79,6 +87,8 @@ module Tep
       # And for the Presence entry registry.
       @presence_entries = [Tep::PresenceEntry.new("_", "", :human, "", -1, 0)]
       @presence_entries.delete_at(0)
+      @presence_pg_enabled   = 0
+      @presence_pg_worker_id = ""
       @broadcast_pg_enabled = 0
       @broadcast_pg_channel = ""
       # Seed broadcast_pg_conn later via lib/tep.rb's setter seed
@@ -138,6 +148,9 @@ module Tep
     def set_broadcast_pg_enabled(v); @broadcast_pg_enabled = v; end
     def set_broadcast_pg_channel(s); @broadcast_pg_channel = s; end
     def set_broadcast_pg_conn(c);    @broadcast_pg_conn    = c; end
+    def set_presence_pg_enabled(v);   @presence_pg_enabled   = v; end
+    def set_presence_pg_worker_id(s); @presence_pg_worker_id = s; end
+    def set_presence_pg_conn(c);      @presence_pg_conn      = c; end
     def set_not_found(h);         @nf_handler = h; end
 
     def dispatch(req, res)
