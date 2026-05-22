@@ -141,20 +141,23 @@ are first-class through every battery. The end-to-end design
 + a realistic chat-room scenario walked through every seam
 lives in [`docs/BATTERIES-DESIGN.md`](docs/BATTERIES-DESIGN.md).
 
-~200 tests pass `make test`. 9 real-world test apps build and serve
-end-to-end (smoke-tested through `Net::HTTP`), and the bundled
-[`examples/chatbot/`](examples/chatbot/app.rb) — a minimalistic
-OpenWebUI-style client backed by any OpenAI-compatible endpoint
-(Ollama / OpenAI / [toy](https://github.com/OriPekelman/toy/tree/main/tep_demo)) —
-exercises the full Tep battery surface (`Tep::Server::Scheduled` +
-`Tep::Llm` + `Tep::SQLite` + `Tep::Streamer` + `Tep::Session` +
-`Tep::Password` + `Tep::Jwt` + `Tep::Security::{Cors,Headers}` +
-`Tep::Assets` + `Tep::Json` + `Tep::Job` + `Tep::Logger`) in ~1500
-lines of Ruby + HTML + CSS + JS.
-[`examples/websocket_echo.rb`](examples/websocket_echo.rb) shows
-`Tep::WebSocket` in isolation; the end-to-end harness in
-`test/test_websocket_echo.rb` performs a real RFC 6455 handshake
-over a raw socket and round-trips a masked TEXT frame.
+~360 tests pass `make test`. End-to-end demos that build and run:
+
+- **[`examples/agentic_chat/`](examples/agentic_chat/app.rb)** —
+  the four-battery agentic demo. Sub-second WS push, multi-user
+  chat, agent-spawn with OAuth2-style delegation. ~270 lines.
+- **[`examples/chatbot/`](examples/chatbot/app.rb)** — minimalistic
+  OpenWebUI-style client backed by any OpenAI-compatible endpoint
+  (Ollama / OpenAI / [toy](https://github.com/OriPekelman/toy/tree/main/tep_demo))
+  exercising the full pre-agentic battery surface
+  (`Tep::Server::Scheduled` + `Tep::Llm` + `Tep::SQLite` +
+  `Tep::Streamer` + `Tep::Session` + `Tep::Password` + `Tep::Jwt` +
+  `Tep::Security::{Cors,Headers}` + `Tep::Assets` + `Tep::Json` +
+  `Tep::Job` + `Tep::Logger`) in ~1500 lines of Ruby + HTML + CSS + JS.
+- **[`examples/websocket_echo.rb`](examples/websocket_echo.rb)** —
+  `Tep::WebSocket` in isolation; `test/test_websocket_echo.rb`
+  performs a real RFC 6455 handshake over a raw socket and
+  round-trips a masked TEXT frame.
 
 ### Type signatures (RBS)
 
