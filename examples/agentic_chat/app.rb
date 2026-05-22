@@ -246,7 +246,12 @@ def agentic_chat_js
   "function tepSend(ev){" +
     "ev.preventDefault();" +
     "var f = ev.target;" +
-    "fetch(f.action, {method:f.method, body:new FormData(f)});" +
+    "var body = new URLSearchParams(new FormData(f)).toString();" +
+    "fetch(f.action, {" +
+      "method:f.method," +
+      "headers:{'Content-Type':'application/x-www-form-urlencoded'}," +
+      "body:body" +
+    "});" +
     "var inp = f.querySelector('input[name=body]');" +
     "if (inp) inp.value='';" +
     "return false;" +
