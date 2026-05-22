@@ -90,6 +90,48 @@ class TestLiveView < TepTest
       # shell -- subclasses are expected to override.
       Tep::LiveView.new.render
     end
+
+    # ---- chunk 4.2: broadcast binding ----
+
+    # A view bound to a topic. Setting the topic via a class
+    # constant rather than a per-instance ivar so the test
+    # endpoint doesn't need to thread state across calls.
+    class RoomView < Tep::LiveView
+      def topic
+        "room:lobby"
+      end
+      def render
+        "<div id='tep-live-root'>room:lobby</div>"
+      end
+    end
+
+    # Default base class topic.
+    get '/base_topic' do
+      Tep::LiveView.new.topic
+    end
+
+    # Subclass with overridden topic.
+    get '/room_topic' do
+      RoomView.new.topic
+    end
+
+    # broadcast_render on a topic-less view is a no-op (returns 0).
+    get '/broadcast_noop_topicless' do
+      Tep::LiveView.new.broadcast_render.to_s
+    end
+
+    # broadcast_render with a topic + an existing subscriber.
+    get '/broadcast_render_match_count' do
+      # Subscribe a fake fd to room:lobby so broadcast_render has
+      # someone to match.
+      Tep::Broadcast.clear
+      Tep::Broadcast.subscribe("room:lobby", -1)
+      v = RoomView.new
+      "topic=" + v.topic +
+        "|subs=" + Tep::Broadcast.subscribers_for("room:lobby").to_s +
+        "|direct_publish=" + Tep::Broadcast.publish("room:lobby", "x").to_s +
+        "|broadcast_render=" + v.broadcast_render.to_s
+    end
   RB
 
   def test_initial_render_default_count
@@ -135,5 +177,33 @@ class TestLiveView < TepTest
   def test_base_class_render_is_empty_shell
     res = get("/base_class_render").body
     assert_equal "<div id='tep-live-root'></div>", res
+  end
+
+  # ---- chunk 4.2: broadcast binding ----
+
+  def test_base_class_topic_is_empty
+    assert_equal "", get("/base_topic").body
+  end
+
+  def test_subclass_topic_override
+    assert_equal "room:lobby", get("/room_topic").body
+  end
+
+  def test_broadcast_render_noop_when_topicless
+    # broadcast_render on a view with no topic is a no-op
+    # (subscribers can't bind to "" topics).
+    assert_equal "0", get("/broadcast_noop_topicless").body
+  end
+
+  def test_broadcast_render_publishes_to_topic
+    # Pre-subscribe a fake fd to room:lobby. broadcast_render
+    # should publish + match the subscriber.
+    res = get("/broadcast_render_match_count").body
+    # res shape:
+    #   topic=room:lobby|subs=1|direct_publish=1|broadcast_render=1
+    assert_match(/topic=room:lobby/, res)
+    assert_match(/subs=1/, res)
+    assert_match(/direct_publish=1/, res)
+    assert_match(/broadcast_render=1/, res)
   end
 end

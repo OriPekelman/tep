@@ -85,6 +85,35 @@ module Tep
       0
     end
 
+    # Topic this view is bound to for broadcast fan-out. Default
+    # is the empty string -- subclasses override to return a
+    # stable id (e.g. "room:" + @id.to_s). When non-empty, the
+    # broadcast_render helper publishes re-renders here so every
+    # subscribed WS sees the new HTML.
+    def topic
+      ""
+    end
+
+    # Re-render + publish the result to self.topic via
+    # Tep::Broadcast. Apps call this from handle_event after
+    # mutating state; subscribed WSes -- including the originating
+    # client -- receive the new HTML and the client-side bootstrap
+    # outerHTML-swaps it into the DOM.
+    #
+    # Returns the local-match count from Tep::Broadcast.publish
+    # (number of WSes that received the re-render on this worker).
+    # 0 here is ambiguous between "no topic configured" (skip) and
+    # "topic configured but no subscribers" -- the empty-topic path
+    # short-circuits without calling publish, so callers that
+    # want to distinguish can check `topic.length == 0` themselves.
+    def broadcast_render
+      t = topic
+      if t.length == 0
+        return 0
+      end
+      Tep::Broadcast.publish(t, render)
+    end
+
     # Imeth bridge from the WS-side JSON wire format to the
     # subclass's `handle_event`. Apps call this from their
     # on_message block:

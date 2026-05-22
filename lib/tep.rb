@@ -302,6 +302,8 @@ module Tep
   _tep_seed_live_view.render
   _tep_seed_live_view.handle_event("", "", _tep_seed_live_view_req)
   _tep_seed_live_view.dispatch_event_json("{}", _tep_seed_live_view_req)
+  _tep_seed_live_view.topic
+  _tep_seed_live_view.broadcast_render
   Tep::LiveView.render_page("", "")
 
   # SQLite type-seeding. Each method below pins a parameter type
