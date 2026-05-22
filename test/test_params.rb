@@ -19,6 +19,10 @@ class TestParams < TepTest
       "" + params[:name] + "=" + params[:age]
     end
 
+    post '/multipart' do
+      "" + params[:name] + "=" + params[:age]
+    end
+
     get '/encoded/:name' do
       "" + params[:name]
     end
@@ -51,6 +55,25 @@ class TestParams < TepTest
   def test_form_body
     res = post("/form", "name=alice&age=30",
                "Content-Type" => "application/x-www-form-urlencoded")
+    assert_equal "alice=30", res.body
+  end
+
+  def test_multipart_body
+    # Browsers send multipart/form-data for any form using FormData
+    # or carrying a file input. The text fields land in req.params;
+    # file-upload parts are skipped in v1.
+    bnd  = "----TepTestBoundary"
+    body = "--#{bnd}\r\n" \
+           "Content-Disposition: form-data; name=\"name\"\r\n" \
+           "\r\n" \
+           "alice\r\n" \
+           "--#{bnd}\r\n" \
+           "Content-Disposition: form-data; name=\"age\"\r\n" \
+           "\r\n" \
+           "30\r\n" \
+           "--#{bnd}--\r\n"
+    res = post("/multipart", body,
+               "Content-Type" => "multipart/form-data; boundary=#{bnd}")
     assert_equal "alice=30", res.body
   end
 

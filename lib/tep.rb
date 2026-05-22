@@ -18,6 +18,7 @@
 
 require_relative "tep/version"
 require_relative "tep/url"
+require_relative "tep/multipart"
 require_relative "tep/net"
 require_relative "tep/agent_delegation"
 require_relative "tep/identity"
@@ -204,6 +205,12 @@ module Tep
   _tep_seed_res.streamer.pump(_tep_seed_stream)
   _tep_seed_stream.write("")   # pin the parameter type to :str
   Tep.h("")                    # pin Tep.h(s)'s param to :str
+  # Multipart parser: pin all param types so the server-side
+  # branches that call Tep::Multipart.parse have proper signatures
+  # even when no user app exercises multipart on its own.
+  Tep::Multipart.parse("", "")
+  Tep::Multipart.extract_boundary("")
+  Tep::Multipart.extract_field_name("")
   _tep_seed_res.start_websocket("", Tep::WebSocket::Driver.new(0))
 
   # AuthOAuth2 type-seeding. Every public cmeth needs at least one

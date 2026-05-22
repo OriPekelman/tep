@@ -1,0 +1,18 @@
+# Multipart/form-data text-field parser. File-upload parts (any part
+# carrying `filename=`) are skipped in v1; supporting them requires
+# `req.files` + NUL-safe byte storage.
+module Tep
+  module Multipart
+    # Returns a string-keyed string-valued hash of text fields.
+    # Empty when the boundary can't be extracted or the body is empty.
+    def self.parse: (String body, String content_type) -> Hash[String, String]
+
+    # Extract `boundary=...` value from a Content-Type header.
+    # Returns "" when no boundary param is present.
+    def self.extract_boundary: (String content_type) -> String
+
+    # Extract `name="..."` from a single part's headers blob.
+    # Returns "" when no name found.
+    def self.extract_field_name: (String headers) -> String
+  end
+end

@@ -50,6 +50,7 @@ module Tep
     def keep_alive?: () -> bool
     def content_length: () -> Integer
     def form?: () -> bool
+    def multipart?: () -> bool
     def scheme: () -> String
     def ssl?: () -> bool
   end

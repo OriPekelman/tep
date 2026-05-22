@@ -73,6 +73,14 @@ module Tep
       @req_headers["content-type"].downcase.start_with?("application/x-www-form-urlencoded")
     end
 
+    # True when the request body is a multipart/form-data submission
+    # (browsers use this for any form built via `new FormData(...)`
+    # or carrying file inputs). Tep::Multipart.parse handles the
+    # text fields; file-upload parts are skipped in v1.
+    def multipart?
+      @req_headers["content-type"].downcase.start_with?("multipart/form-data")
+    end
+
     # ---- Rack::Request-style accessors (reads only, no .ip yet) ----
     # These are convenience getters over headers we already parse;
     # `.ip` would need a sphttp_accept_with_peer C helper before it
