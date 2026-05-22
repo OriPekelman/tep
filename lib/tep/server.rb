@@ -100,6 +100,10 @@ module Tep
           Url.parse_query(req.raw_body).each do |k, v|
             req.params[k] = v
           end
+        elsif req.multipart?
+          Tep::Multipart.parse(req.raw_body, req.req_headers["content-type"]).each do |k, v|
+            req.params[k] = v
+          end
         end
 
         res = Response.new
