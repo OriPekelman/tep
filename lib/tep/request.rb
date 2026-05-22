@@ -108,5 +108,35 @@ module Tep
     def ssl?
       scheme == "https"
     end
+
+    # Pull any remaining body bytes from `client_fd` up to the
+    # advertised Content-Length, then merge form / multipart fields
+    # into @params. Called once per request by both the prefork and
+    # scheduled servers right after Parser.parse populates the
+    # request headers + the body bytes already in the recv buffer.
+    #
+    # No-op on bodyless requests. Form parsing handles
+    # `application/x-www-form-urlencoded`; multipart handles
+    # `multipart/form-data` (text fields only; file uploads skipped).
+    # Other content types leave @raw_body intact for handlers that
+    # want to consume it directly.
+    def consume_body(client_fd)
+      cl = content_length
+      already = @raw_body.length
+      if cl > already
+        rest = Sock.sphttp_drain_body(client_fd, cl - already)
+        @raw_body = @raw_body + rest
+      end
+      if form?
+        Url.parse_query(@raw_body).each do |k, v|
+          @params[k] = v
+        end
+      elsif multipart?
+        Tep::Multipart.parse(@raw_body, @req_headers["content-type"]).each do |k, v|
+          @params[k] = v
+        end
+      end
+      0
+    end
   end
 end
