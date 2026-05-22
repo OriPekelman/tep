@@ -10,7 +10,12 @@ module Tep
   COOKIE_NAME = "tep.session"
 
   class Session
-    attr_accessor :data, :dirty
+    # @data intentionally NOT exposed as attr_accessor: a `data`
+    # method on Session would collide with `Tep::WebSocket::Event#data`
+    # under spinel's virtual imeth dispatch (matz/spinel#513 shape),
+    # widening `evt.data` to poly inside on_message handler bodies.
+    # Public surface is get/set/has?/length/clear only.
+    attr_accessor :dirty
 
     def initialize
       @data  = Tep.str_hash
