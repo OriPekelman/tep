@@ -45,6 +45,7 @@ require_relative "tep/auth_oauth2"
 require_relative "tep/auth"
 require_relative "tep/broadcast"
 require_relative "tep/presence"
+require_relative "tep/live_view"
 require_relative "tep/server"
 require_relative "tep/server_scheduled"
 require_relative "tep/sqlite"
@@ -290,6 +291,18 @@ module Tep
   APP.set_presence_pg_enabled(0)
   APP.set_presence_pg_worker_id("")
   APP.set_presence_pg_conn(PG::Connection.new(""))
+
+  # LiveView type-seeding (chunk 4.1). The render_page + dispatch_event
+  # cmeths get pinned via top-level calls; the base-class mount /
+  # render / handle_event imeths are pinned via a single noop
+  # instance call so subclass dispatch widens cleanly.
+  _tep_seed_live_view = Tep::LiveView.new
+  _tep_seed_live_view_req = Tep::Request.new
+  _tep_seed_live_view.mount(_tep_seed_live_view_req)
+  _tep_seed_live_view.render
+  _tep_seed_live_view.handle_event("", "", _tep_seed_live_view_req)
+  _tep_seed_live_view.dispatch_event_json("{}", _tep_seed_live_view_req)
+  Tep::LiveView.render_page("", "")
 
   # SQLite type-seeding. Each method below pins a parameter type
   # (or pulls the FFI return into use) so spinel emits the correct
