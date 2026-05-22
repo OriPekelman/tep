@@ -4,9 +4,8 @@
 # Ships the base class apps subclass + a pair of cmeths
 # (render_page / dispatch_event) for the manual wiring path, the
 # topic + broadcast_render binding, and the handle_presence_diff
-# hook. Auto-wiring (Tep.live "/path", CounterView) is the open
-# follow-up -- needs translator support to lower a per-view
-# Handler subclass.
+# hook. Auto-wiring (Tep.live "/path", CounterView) is tracked at
+# OriPekelman/tep#53.
 #
 # Usage (chunk 4.1):
 #
@@ -148,13 +147,13 @@ module Tep
     #
     # Note: automatic server-side intercept of diffs (a background
     # fiber per WS that pulls from the presence diff topic and
-    # calls apply_presence_diff_json) is not provided -- the WS
-    # DSL doesn't bridge `req` into on_X handler bodies, so the
-    # natural shape needs translator work. Apps that need
-    # server-side reaction wire the intercept loop themselves.
-    # Apps that only need client-side display can skip this and
-    # rely on Tep::Broadcast.subscribe_ws delivering the diff
-    # JSON straight to the WS for client-side rendering.
+    # calls apply_presence_diff_json) is not provided -- needs the
+    # WS DSL to bridge `req` into on_X handler bodies, tracked at
+    # OriPekelman/tep#54. Apps that need server-side reaction wire
+    # the intercept loop themselves; apps that only need client-
+    # side display can skip this and rely on
+    # Tep::Broadcast.subscribe_ws delivering the diff JSON straight
+    # to the WS for client-side rendering.
     def apply_presence_diff_json(json)
       handle_presence_diff(json)
       0
