@@ -1,0 +1,131 @@
+# RFC 6455 server-side WebSocket. See lib/tep/websocket.rb +
+# lib/tep/websocket/{frame,driver,connection,handshake}.rb.
+module Tep
+  module WebSocket
+    OPCODE_CONTINUATION: Integer
+    OPCODE_TEXT: Integer
+    OPCODE_BINARY: Integer
+    OPCODE_CLOSE: Integer
+    OPCODE_PING: Integer
+    OPCODE_PONG: Integer
+
+    CLOSE_NORMAL: Integer
+    CLOSE_GOING_AWAY: Integer
+    CLOSE_PROTOCOL_ERROR: Integer
+
+    DEFAULT_MAX_FRAME: Integer
+
+    # One parsed WS frame (server-side, unmasked-on-write).
+    class Frame
+      attr_accessor fin: bool
+      attr_accessor opcode: Integer
+      attr_accessor payload: String
+
+      def initialize: (bool fin, Integer opcode, String payload) -> Integer
+      def encode_unmasked: () -> String
+
+      def self.byte_to_chr: (Integer n) -> String
+      def self.parse_from_buf: (Integer start, Integer avail) -> ParseResult
+      def self.reserved_opcode?: (Integer op) -> bool
+      def self.control_opcode?: (Integer op) -> bool
+    end
+
+    class ParseResult
+      attr_accessor outcome: String     # "ok" | "need" | "close"
+      attr_accessor frame: Frame
+      attr_accessor consumed: Integer
+      attr_accessor close_code: Integer
+
+      def initialize: () -> Integer
+    end
+
+    # Send-side driver. Owns the fd + the six event-handler slots.
+    class Driver
+      attr_accessor fd: Integer
+      attr_accessor max_frame_size: Integer
+      attr_accessor subprotocol: String
+      attr_accessor h_open: Handler
+      attr_accessor h_message: Handler
+      attr_accessor h_close: Handler
+      attr_accessor h_ping: Handler
+      attr_accessor h_pong: Handler
+      attr_accessor h_error: Handler
+
+      def initialize: (Integer fd) -> Integer
+
+      def set_max_frame_size: (Integer n) -> void
+      def set_fd: (Integer new_fd) -> void
+      def set_subprotocol: (String name) -> void
+
+      def set_on_open: (Handler h) -> Handler
+      def set_on_message: (Handler h) -> Handler
+      def set_on_close: (Handler h) -> Handler
+      def set_on_ping: (Handler h) -> Handler
+      def set_on_pong: (Handler h) -> Handler
+      def set_on_error: (Handler h) -> Handler
+
+      def text: (String s) -> Integer
+      def binary: (String bytes) -> Integer
+      def ping: (String payload) -> Integer
+      def pong: (String payload) -> Integer
+      def close: (Integer code, String reason) -> Integer
+
+      def self.send_frame: (Integer fd, Integer opcode, String payload) -> Integer
+      def self.encode_close_payload: (Integer code, String reason) -> String
+    end
+
+    # Event passed to handler callbacks. data is always a String
+    # (text/binary frames carry payload bytes; ping/pong carry the
+    # ping payload; close carries empty body + uses code/reason).
+    class Event
+      attr_accessor data: String
+      attr_accessor code: Integer
+      attr_accessor reason: String
+
+      def initialize: () -> Integer
+    end
+
+    # Base handler. Subclasses override handle_event to react to
+    # a specific event kind. The DSL's `on_open do |evt| ... end`
+    # blocks lower to anonymous Handler subclasses.
+    class Handler
+      def handle_event: (Event evt) -> Integer
+    end
+
+    # Per-connection recv loop. Created by the upgrade handler;
+    # run() returns 0 on clean close, -1 on error.
+    class Connection
+      attr_accessor driver: Driver
+      attr_accessor fd: Integer
+      attr_accessor idle_timeout_seconds: Integer
+
+      def initialize: (Driver driver) -> Integer
+      def set_idle_timeout: (Integer seconds) -> void
+      def run: () -> Integer
+
+      def self.dispatch_frame: (Driver driver, Frame frame) -> Integer
+      def self.dispatch_open: (Driver driver) -> Integer
+      def self.dispatch_message: (Driver driver, String data, bool text) -> Integer
+      def self.dispatch_ping: (Driver driver, String data) -> Integer
+      def self.dispatch_pong: (Driver driver, String data) -> Integer
+      def self.dispatch_close: (Driver driver, Integer code, String reason) -> Integer
+    end
+
+    class ConnectionState
+      attr_accessor start: Integer
+      attr_accessor avail: Integer
+
+      def initialize: () -> Integer
+    end
+
+    class Handshake
+      attr_accessor valid: bool
+      attr_accessor accept_key: String
+
+      def initialize: () -> Integer
+
+      def self.check: (Tep::Request req) -> Handshake
+      def self.build_response: (String accept_key, String subprotocol) -> String
+    end
+  end
+end

@@ -18,6 +18,12 @@ module Tep
     attr_accessor session: Tep::Session
     attr_accessor remote_host: String
 
+    # Set by Tep::AuthFilter (when Tep::Auth.install! has been
+    # called) before the user's before-filter runs. Always
+    # non-nil: defaults to Tep::Identity.anonymous when no auth
+    # provider matched.
+    attr_accessor identity: Tep::Identity
+
     # Per-request scratch bag. Sinatra-translator rewrites `@x = v`
     # to `req.ivars["x"] = v.to_s` in handler bodies; templates read
     # back via `ivars["x"]`.
@@ -27,7 +33,7 @@ module Tep
     # route. Set by `req.set_passed`.
     attr_accessor passed: bool
 
-    def initialize: () -> void
+    def initialize: () -> Integer
     def set_passed: () -> bool
 
     # Aliases / shortcuts.
