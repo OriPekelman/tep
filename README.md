@@ -7,6 +7,10 @@
 A Sinatra-flavoured web framework that compiles to a native binary
 via [Spinel][spinel].
 
+> **Current release:** [v0.7.0](https://github.com/OriPekelman/tep/releases/tag/v0.7.0)
+> — the four-battery release (Auth, Broadcast, Presence, LiveView).
+> Pre-alpha; API still in motion.
+
 > **Pre-alpha.** Tep exists primarily to exercise Spinel against
 > real-world Ruby code. The framework happens to be useful too —
 > it's a fast, single-binary HTTP server with the Sinatra DSL most
