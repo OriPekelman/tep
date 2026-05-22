@@ -23,10 +23,11 @@
 # fan-out) use the same subscribe-fd shape with a different fd.
 #
 # Storage scope is per-process: subscriptions live on Tep::APP,
-# which under prefork is per-worker. Cross-worker pub-sub (via PG
-# LISTEN/NOTIFY) is a follow-up chunk -- subscribers will still
-# register fd-local, but publish() will route through the database
-# so other workers see the message too.
+# which under prefork is per-worker. Cross-worker pub-sub goes
+# through PG LISTEN/NOTIFY (Tep::Broadcast.enable_pg_backend) --
+# subscribers always register fd-local; publish() additionally
+# NOTIFY's the configured channel so peer workers' local
+# subscribers see the message too.
 #
 # `subscribe` returns an opaque subscription id (the registry
 # index at insertion time). Callers can pass it back to

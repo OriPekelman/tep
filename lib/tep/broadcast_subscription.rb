@@ -10,10 +10,12 @@
 # connection fds; non-WS use cases (server-sent events, log
 # fan-out, etc.) work the same way.
 #
-# Single-process registry only in v1; cross-worker pub-sub
-# (PG LISTEN/NOTIFY) lands in a follow-up chunk. See
-# docs/BATTERIES-DESIGN.md for the broader Broadcast battery
-# design.
+# Each subscription lives in a single worker's registry. Cross-
+# worker pub-sub goes through PG LISTEN/NOTIFY (see
+# Tep::Broadcast.enable_pg_backend) which fans publishes out
+# without moving subscription state; subscribers always register
+# fd-local. See docs/BATTERIES-DESIGN.md for the broader Broadcast
+# battery design.
 module Tep
   class BroadcastSubscription
     attr_reader :topic   # String

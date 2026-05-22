@@ -15,9 +15,12 @@
 # the Phoenix.Presence shape extended with the agentic kind/
 # agent_id pair.
 #
-# Storage scope is per-process (Tep::APP). Cross-worker
-# visibility (PG-backed) lands in a follow-up chunk; v1 works
-# best in single-worker prefork or app-internal contexts.
+# Local storage is per-process (Tep::APP) for the fast list /
+# count read path. Cross-worker visibility goes through PG --
+# Tep::Presence.enable_pg_mirror writes each track/untrack/
+# set_status as an UPSERT/DELETE; list_global pulls the union.
+# Apps that don't need cross-worker snapshots run single-worker
+# or skip the mirror entirely.
 #
 # Status handling: every entry carries a Tep::PresenceStatus
 # inline (status_state / status_note / status_until on the
