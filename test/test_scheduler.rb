@@ -9,15 +9,15 @@ require_relative "helper"
 #     (sphttp_connect) to make the listener readable, the scheduler's
 #     next tick picks up the readiness and resumes the fiber.
 class TestScheduler < TepTest
-  # Upstream still has issues: matz/spinel#641 (per-fiber GC root)
-  # is now merged, but the prefork handler in /cooperate still
-  # SIGSEGVs on the Tep::Scheduler.clear + spawn_fiber +
-  # run_until_empty path. Likely a separate spinel issue worth
-  # filing once we have a smaller standalone repro; for now the
-  # class stays skipped so the suite's signal stays useful.
+  # The prefork handler in /cooperate SIGSEGVs on the
+  # Tep::Scheduler.clear + spawn_fiber + run_until_empty path.
+  # Verified still failing on current spinel master (post the
+  # #641 wave). Minimal repro pending -- the prefork-vs-cooperative
+  # crossover here doesn't reproduce from a 6-class fiber probe.
+  # Class stays skipped so the suite's signal stays useful.
   def setup
-    skip "blocked on a separate spinel issue (#641 merged but " \
-         "Tep::Scheduler primitives still SIGSEGV in prefork handlers)"
+    skip "Tep::Scheduler primitives SIGSEGV in prefork handlers; " \
+         "minimal repro pending"
     super
   end
 
