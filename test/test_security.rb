@@ -20,6 +20,14 @@ class TestSecurity < TepTest
     get '/' do
       "ok"
     end
+
+    # Route that pre-sets X-Frame-Options before the Headers
+    # after-filter runs -- verifies the filter's
+    # `unless res.headers.key?` guard preserves handler-set values.
+    get '/custom_frame' do
+      res.headers["X-Frame-Options"] = "DENY"
+      "ok"
+    end
   RB
 
   def test_cors_origin_on_get
@@ -52,14 +60,13 @@ class TestSecurity < TepTest
     assert_match(/includeSubDomains/, res["Strict-Transport-Security"])
   end
 
-  def test_handler_can_still_override_cors_origin_if_needed
-    # The Headers filter only sets a header when not already present
-    # (`unless res.headers.key?`); we verify that a handler-set value
-    # survives. Add a route that sets X-Frame-Options to a custom
-    # value and confirm it isn't clobbered. (Skipped here because the
-    # one route in the app source doesn't override; this is a sanity
-    # check on the filter logic itself, exercised at compile time --
-    # the `if !res.headers.key?` guard.)
-    skip "covered by Headers filter source -- no route in app to exercise override"
+  def test_handler_set_header_survives_after_filter
+    # The Headers after-filter only sets each header when not already
+    # present (`unless res.headers.key?`). /custom_frame pre-sets
+    # X-Frame-Options to DENY; the filter must not overwrite it back
+    # to SAMEORIGIN.
+    res = get("/custom_frame")
+    assert_equal "200", res.code
+    assert_equal "DENY", res["X-Frame-Options"]
   end
 end
