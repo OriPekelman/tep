@@ -275,9 +275,8 @@ module Tep
     # Worker ID is PID + boot epoch second so a same-PID restart
     # doesn't alias a prior worker's stale rows. On
     # disable_pg_mirror (or clean shutdown), this worker's rows
-    # get DELETE'd. A crashed worker leaves stale rows -- apps
-    # that care about that need a periodic prune (TODO: future
-    # chunk).
+    # get DELETE'd. A crashed worker leaves stale rows -- the
+    # periodic-prune follow-up tracks at OriPekelman/tep#47.
     #
     # Returns 0 on success, -1 on connect / schema failure.
     def self.enable_pg_mirror(conninfo)
