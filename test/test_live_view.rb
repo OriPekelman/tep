@@ -120,6 +120,55 @@ class TestLiveView < TepTest
       Tep::LiveView.new.broadcast_render.to_s
     end
 
+    # ---- chunk 4.3: presence diff binding ----
+
+    # A view that records every presence diff it receives -- the
+    # subclass override of handle_presence_diff pulls a field out
+    # and appends to a class-level Array so the test endpoint can
+    # report it back.
+    class PresenceTrackingView < Tep::LiveView
+      def initialize
+        super
+        @last_principal = ""
+        @last_kind      = ""
+        @last_state     = ""
+      end
+      attr_reader :last_principal, :last_kind, :last_state
+      def topic
+        "room:lobby"
+      end
+      def render
+        "<div id='tep-live-root'>" + @last_principal + ":" + @last_state + "</div>"
+      end
+      def handle_presence_diff(diff_json)
+        @last_principal = Tep::Json.get_str(diff_json, "principal")
+        @last_kind      = Tep::Json.get_str(diff_json, "kind")
+        @last_state     = Tep::Json.get_str(diff_json, "state")
+        0
+      end
+    end
+
+    get '/presence_diff_default_noop' do
+      Tep::LiveView.new.handle_presence_diff("{\\"kind\\":\\"join\\"}").to_s
+    end
+
+    get '/presence_diff_apply' do
+      v = PresenceTrackingView.new
+      # Feed a synthetic diff JSON.
+      diff = "{\\"kind\\":\\"status\\",\\"principal\\":\\"user:42\\"," +
+             "\\"state\\":\\"busy\\",\\"note\\":\\"\\"}"
+      v.apply_presence_diff_json(diff)
+      v.last_principal + "|" + v.last_kind + "|" + v.last_state
+    end
+
+    get '/presence_diff_render_after_apply' do
+      v = PresenceTrackingView.new
+      diff = "{\\"kind\\":\\"join\\",\\"principal\\":\\"user:99\\"," +
+             "\\"state\\":\\"available\\",\\"note\\":\\"\\"}"
+      v.apply_presence_diff_json(diff)
+      v.render
+    end
+
     # broadcast_render with a topic + an existing subscriber.
     get '/broadcast_render_match_count' do
       # Subscribe a fake fd to room:lobby so broadcast_render has
@@ -205,5 +254,25 @@ class TestLiveView < TepTest
     assert_match(/subs=1/, res)
     assert_match(/direct_publish=1/, res)
     assert_match(/broadcast_render=1/, res)
+  end
+
+  # ---- chunk 4.3: presence diff binding ----
+
+  def test_base_class_handle_presence_diff_is_noop
+    # Default returns 0 and doesn't crash on arbitrary JSON.
+    assert_equal "0", get("/presence_diff_default_noop").body
+  end
+
+  def test_subclass_handle_presence_diff_receives_diff_fields
+    # The subclass override pulls principal/kind/state out of the
+    # diff JSON and updates ivars. apply_presence_diff_json is
+    # the imeth that bridges JSON to handle_presence_diff.
+    assert_equal "user:42|status|busy", get("/presence_diff_apply").body
+  end
+
+  def test_handle_presence_diff_can_drive_render
+    # After applying a join diff, render reflects the new state.
+    res = get("/presence_diff_render_after_apply").body
+    assert_equal "<div id='tep-live-root'>user:99:available</div>", res
   end
 end
