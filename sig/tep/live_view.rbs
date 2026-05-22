@@ -16,6 +16,14 @@ module Tep
     # Subclasses override to mutate state on client events.
     def handle_event: (String event, String payload, Tep::Request req) -> Integer
 
+    # Topic this view binds to for broadcast fan-out. Default "";
+    # subclasses override to return a stable id.
+    def topic: () -> String
+
+    # Publish self.render to self.topic via Tep::Broadcast.
+    # No-op when topic is empty.
+    def broadcast_render: () -> Integer
+
     # Parse JSON-encoded {event, payload} from the client + call
     # handle_event. Imeth so subclass dispatch goes through the
     # typed slot.
