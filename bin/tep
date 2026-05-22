@@ -286,11 +286,13 @@ def translate(input_path)
       body = rewrite_block(info[:src], force_string: false)
       out << "class #{ev_cls} < Tep::WebSocket::Handler"
       out << "  def initialize"
+      out << "    super"
       out << "    @ws = Tep::WebSocket::Driver.new(0)"
       out << "  end"
       out << "  attr_accessor :ws"
       out << "  def handle_event(#{info[:evt_param]})"
       out << "    #{w[:ws_param]} = @ws"
+      out << "    req = @req"
       out << indent(body, 4)
       out << "    0"
       out << "  end"
@@ -312,6 +314,7 @@ def translate(input_path)
       slot = ev.sub("on_", "set_on_")
       out << "    _cb_#{ev} = #{cls}.new"
       out << "    _cb_#{ev}.ws = drv"
+      out << "    _cb_#{ev}.req = req"
       out << "    drv.#{slot}(_cb_#{ev})"
     end
     out << "    res.start_websocket(hs.accept_key, drv)"
