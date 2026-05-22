@@ -9,14 +9,15 @@ require_relative "helper"
 #     (sphttp_connect) to make the listener readable, the scheduler's
 #     next tick picks up the readiness and resumes the fiber.
 class TestScheduler < TepTest
-  # Upstream-blocked on matz/spinel#641: Tep::Server::Scheduled
-  # segfaults under any non-trivial concurrent workload due to the
-  # post-#636 per-fiber GC root save/restore not walking
-  # sp_fiber_root's saved region. PR up at matz/spinel#641 (this
-  # side authored + bisected + patched); waiting on merge. Drop
-  # this skip when #641 closes.
+  # Upstream still has issues: matz/spinel#641 (per-fiber GC root)
+  # is now merged, but the prefork handler in /cooperate still
+  # SIGSEGVs on the Tep::Scheduler.clear + spawn_fiber +
+  # run_until_empty path. Likely a separate spinel issue worth
+  # filing once we have a smaller standalone repro; for now the
+  # class stays skipped so the suite's signal stays useful.
   def setup
-    skip "blocked on matz/spinel#641 (Tep::Server::Scheduled GC-root regression)"
+    skip "blocked on a separate spinel issue (#641 merged but " \
+         "Tep::Scheduler primitives still SIGSEGV in prefork handlers)"
     super
   end
 

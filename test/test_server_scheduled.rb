@@ -37,11 +37,6 @@ class TestServerScheduled < TepTest
   end
 
   def test_post_body_through_scheduler
-    # The POST-body path through Tep::Server::Scheduled trips a
-    # fiber + GC root interaction matz/spinel#641 covers (the GET
-    # variants in this class don't exercise the same draining
-    # sequence). Drop this skip when #641 closes.
-    skip "blocked on matz/spinel#641 (Tep::Server::Scheduled POST-body interaction)"
     res = post("/upper", "hello world")
     assert_equal "200", res.code
     assert_equal "HELLO WORLD", res.body
