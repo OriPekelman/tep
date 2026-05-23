@@ -1,15 +1,16 @@
 # Tep::Auth -- the entry point for the Auth battery.
 #
 # Sets `req.identity` (a Tep::Identity) on every request, populated
-# by walking a fixed provider chain. v1's chain is one provider:
-# Tep::AuthBearerToken (JWT HS256). SessionCookie and OAuth2 land
-# as separate chunks; each one extends the chain by editing
-# Tep::Auth.identify (rather than via a runtime registry, because
-# spinel's PtrArray<Base> dispatch can't carry cls_id across
-# heterogeneous Provider subclasses -- see memory note
-# [[spinel_widening_dispatch]]). The fixed-chain shape is a v1
-# concession; once spinel resolves the cls_id story the design
-# doc's Tep::Auth.providers.add(...) API will land.
+# by walking a fixed provider chain. Three providers ship:
+# Tep::AuthBearerToken (JWT HS256), Tep::AuthSessionCookie
+# (signed cookie), Tep::AuthOAuth2 (delegated-grant exchange).
+# Each one extends the chain by editing Tep::Auth.identify
+# (rather than via a runtime registry, because spinel's
+# PtrArray<Base> dispatch can't carry cls_id across heterogeneous
+# Provider subclasses -- see memory [[spinel_widening_dispatch]]).
+# Once spinel resolves the cls_id story the design doc's
+# Tep::Auth.providers.add(...) API will land; until then the
+# fixed-chain shape stays.
 #
 # Install pattern:
 #
