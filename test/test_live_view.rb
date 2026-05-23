@@ -120,6 +120,15 @@ class TestLiveView < TepTest
       Tep::LiveView.new.broadcast_render.to_s
     end
 
+    # ---- Tep.live auto-wiring ----
+    #
+    # `Tep.live "/auto", CounterView` is lowered by the translator
+    # into a GET handler at /auto (initial render + bootstrap JS)
+    # and a WS handler at /auto/ws (event dispatch + re-render).
+    # The blocking server returns 501 for the WS upgrade, so the
+    # test exercises the GET side only.
+    Tep.live "/auto", CounterView
+
     # ---- chunk 4.3: presence diff binding ----
 
     # A view that records every presence diff it receives -- the
@@ -274,5 +283,42 @@ class TestLiveView < TepTest
     # After applying a join diff, render reflects the new state.
     res = get("/presence_diff_render_after_apply").body
     assert_equal "<div id='tep-live-root'>user:99:available</div>", res
+  end
+
+  # ---- Tep.live auto-wiring ----
+
+  def test_tep_live_get_returns_initial_render_wrapped_in_page
+    # GET /auto runs the translator-emitted route: instantiate
+    # CounterView, mount(req), render, wrap in render_page targeted
+    # at /auto/ws.
+    res = get("/auto")
+    assert_equal "200", res.code
+    body = res.body
+    # Initial render comes from CounterView#render with @count = 0.
+    assert_includes body, "<div id='tep-live-root'>Count: 0</div>"
+    # render_page bootstrap JS targets the auto-generated WS path.
+    assert_includes body, "/auto/ws"
+    # render_page wraps in a full HTML doc with the bootstrap shell.
+    assert_includes body, "<!doctype html>"
+    assert_includes body, "var ws=new WebSocket("
+  end
+
+  def test_tep_live_get_honors_view_mount
+    # CounterView#mount reads ?seed= from req.params and seeds @count.
+    res = get("/auto?seed=42")
+    assert_includes res.body, "<div id='tep-live-root'>Count: 42</div>"
+  end
+
+  def test_tep_live_ws_path_returns_501_under_blocking_server
+    # The auto-wired WS path requires the scheduled server. The
+    # blocking server returns 501 for WS upgrade attempts (same
+    # behavior as a hand-written `websocket` block).
+    res = req(:get, "/auto/ws", nil, {
+      "Upgrade"               => "websocket",
+      "Connection"            => "Upgrade",
+      "Sec-WebSocket-Key"     => "x3JJHMbDL1EzLkh9GBhXDw==",
+      "Sec-WebSocket-Version" => "13",
+    })
+    assert_equal "501", res.code
   end
 end
