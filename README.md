@@ -143,6 +143,11 @@ lives in [`docs/BATTERIES-DESIGN.md`](docs/BATTERIES-DESIGN.md).
 
 ~360 tests pass `make test`. End-to-end demos that build and run:
 
+- **[`examples/counter/`](examples/counter/app.rb)** — the
+  smallest `Tep.live` demo. Shared integer counter; click in one
+  tab, every other tab updates in <100ms. ~80 lines of Ruby + CSS,
+  no JS to write (the bootstrap shell wires `data-event` clicks
+  through the WS).
 - **[`examples/agentic_chat/`](examples/agentic_chat/app.rb)** —
   the four-battery agentic demo. Sub-second WS push, multi-user
   chat, agent-spawn with OAuth2-style delegation. ~270 lines.
