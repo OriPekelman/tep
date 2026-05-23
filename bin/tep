@@ -68,6 +68,7 @@ def translate(input_path)
   prog = parsed.value
   routes        = []
   websockets    = []
+  live_views    = []
   filters       = { "before" => [], "after" => [] }
   not_founds    = []
   startup_block = nil
@@ -87,6 +88,18 @@ def translate(input_path)
   views_used     = source.scan(/(?<![\w.])erb\s+:(\w+)/).flatten.uniq
   mustaches_used = source.scan(/(?<![\w.])mustache\s+:(\w+)/).flatten.uniq
   process = lambda do |node|
+    # `Tep.live "/path", ViewClass` -- the one Tep::*-receiver call
+    # the translator owns. Lowers to a GET route (render_page) +
+    # WS route (per-connection view instance, event dispatch +
+    # re-render). Other Tep.*  calls (Tep.before, Tep.get, ...)
+    # pass through as runtime method calls.
+    if call?(node) && node.name == :live &&
+       node.receiver.is_a?(Prism::ConstantReadNode) &&
+       node.receiver.name == :Tep
+      handle_tep_live(node, live_views, warnings)
+      return
+    end
+
     # Only bare top-level method calls (no receiver) are candidates
     # for DSL handling -- `get '/'`, `before do`, `set :public_dir`,
     # etc. A call with a receiver (`$arr.delete_at(0)`,
@@ -325,6 +338,105 @@ def translate(input_path)
     w[:cls] = rt_cls
   end
 
+  # Tep.live emission. For each `Tep.live "/path", ViewClass`:
+  #   * TepLive_N_Get handles GET /path -- instantiate view per
+  #     request, mount(req), wrap in render_page targeting /path/ws.
+  #   * TepLive_N_WsOpen / TepLive_N_WsMessage are Handler subclasses;
+  #     each connection's route handler creates ONE ViewClass instance
+  #     and stashes it on both handlers so on_open and on_message
+  #     share state. on_open mounts + subscribes to view.topic (when
+  #     non-empty) + sends initial render; on_message dispatches the
+  #     JSON event + sends re-render.
+  #   * TepLive_N_WsRoute handles the WS upgrade at /path/ws.
+  live_views.each_with_index do |lv, i|
+    base   = "TepLive_#{i}"
+    klass  = lv[:view_class]
+    path   = lv[:path]
+    ws_path = path + "/ws"
+
+    get_cls = "#{base}_Get"
+    out << "class #{get_cls} < Tep::Handler"
+    out << "  def handle(req, res)"
+    out << "    v = #{klass}.new"
+    out << "    v.mount(req)"
+    out << "    Tep::LiveView.render_page(v.render, #{ws_path.inspect})"
+    out << "  end"
+    out << "end"
+    out << ""
+
+    open_cls = "#{base}_WsOpen"
+    out << "class #{open_cls} < Tep::WebSocket::Handler"
+    out << "  attr_accessor :ws, :view"
+    out << "  def initialize"
+    out << "    super"
+    out << "    @ws   = Tep::WebSocket::Driver.new(0)"
+    out << "    @view = #{klass}.new"
+    out << "  end"
+    out << "  def handle_event(evt)"
+    out << "    ws   = @ws"
+    out << "    req  = @req"
+    out << "    view = @view"
+    out << "    view.mount(req)"
+    out << "    t = view.topic"
+    out << "    if t.length > 0"
+    out << "      Tep::Broadcast.subscribe_ws(t, ws.fd)"
+    out << "    end"
+    out << "    ws.text(view.render)"
+    out << "    0"
+    out << "  end"
+    out << "end"
+    out << ""
+
+    msg_cls = "#{base}_WsMessage"
+    out << "class #{msg_cls} < Tep::WebSocket::Handler"
+    out << "  attr_accessor :ws, :view"
+    out << "  def initialize"
+    out << "    super"
+    out << "    @ws   = Tep::WebSocket::Driver.new(0)"
+    out << "    @view = #{klass}.new"
+    out << "  end"
+    out << "  def handle_event(evt)"
+    out << "    ws   = @ws"
+    out << "    req  = @req"
+    out << "    view = @view"
+    out << "    view.dispatch_event_json(evt.data, req)"
+    out << "    ws.text(view.render)"
+    out << "    0"
+    out << "  end"
+    out << "end"
+    out << ""
+
+    ws_route_cls = "#{base}_WsRoute"
+    out << "class #{ws_route_cls} < Tep::Handler"
+    out << "  def handle(req, res)"
+    out << "    hs = Tep::WebSocket::Handshake.check(req)"
+    out << "    if !hs.valid"
+    out << "      res.set_status(400)"
+    out << "      return \"\""
+    out << "    end"
+    out << "    drv = Tep::WebSocket::Driver.new(0)"
+    out << "    v = #{klass}.new"
+    out << "    _cb_on_open = #{open_cls}.new"
+    out << "    _cb_on_open.ws   = drv"
+    out << "    _cb_on_open.req  = req"
+    out << "    _cb_on_open.view = v"
+    out << "    drv.set_on_open(_cb_on_open)"
+    out << "    _cb_on_message = #{msg_cls}.new"
+    out << "    _cb_on_message.ws   = drv"
+    out << "    _cb_on_message.req  = req"
+    out << "    _cb_on_message.view = v"
+    out << "    drv.set_on_message(_cb_on_message)"
+    out << "    res.start_websocket(hs.accept_key, drv)"
+    out << "    \"\""
+    out << "  end"
+    out << "end"
+    out << ""
+
+    lv[:get_cls] = get_cls
+    lv[:ws_cls]  = ws_route_cls
+    lv[:ws_path] = ws_path
+  end
+
   # Registrations.
   out << Tep_public_dir(config[:public_dir]) if config[:public_dir]
   out << %(Tep.before #{filter_classes["before"]}.new) if filter_classes["before"]
@@ -349,6 +461,10 @@ def translate(input_path)
   end
   websockets.each do |w|
     out << %(Tep.get #{w[:path].inspect}, #{w[:cls]}.new)
+  end
+  live_views.each do |lv|
+    out << %(Tep.get #{lv[:path].inspect},    #{lv[:get_cls]}.new)
+    out << %(Tep.get #{lv[:ws_path].inspect}, #{lv[:ws_cls]}.new)
   end
   out << ""
 
@@ -407,6 +523,25 @@ end
 
 def call?(node)
   node.is_a?(Prism::CallNode)
+end
+
+def handle_tep_live(node, live_views, warnings)
+  args = node.arguments&.arguments || []
+  if args.length < 2
+    return warnings << "skipped Tep.live -- needs (\"/path\", ViewClass)"
+  end
+  path = args[0]
+  view = args[1]
+  unless path.is_a?(Prism::StringNode)
+    return warnings << "skipped Tep.live -- first arg must be a string literal path"
+  end
+  unless view.is_a?(Prism::ConstantReadNode) || view.is_a?(Prism::ConstantPathNode)
+    return warnings << "skipped Tep.live -- second arg must be a class constant"
+  end
+  live_views << {
+    path:       path.unescaped,
+    view_class: view.slice,
+  }
 end
 
 def handle_top_call(node, routes, websockets, filters, not_founds, config, warnings, passthrough)

@@ -3,9 +3,10 @@
 #
 # Ships the base class apps subclass + a pair of cmeths
 # (render_page / dispatch_event) for the manual wiring path, the
-# topic + broadcast_render binding, and the handle_presence_diff
-# hook. Auto-wiring (Tep.live "/path", CounterView) is tracked at
-# OriPekelman/tep#53.
+# topic + broadcast_render binding, the handle_presence_diff
+# hook, and auto-wiring via `Tep.live "/path", ViewClass` which
+# lowers to a GET (render_page) + WS (event dispatch + re-render)
+# pair in one DSL call.
 #
 # Usage (chunk 4.1):
 #
