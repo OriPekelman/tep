@@ -60,10 +60,12 @@ module Tep
       end
 
       # Parse one frame from the sphttp recv frame buffer (accessed
-      # via Sock.sphttp_recv_frame_byte_at because the :str FFI is
-      # NUL-bound under spinel master). `start` is the byte offset
-      # to begin reading; `avail` is the count of valid bytes in the
-      # buffer.
+      # via Sock.sphttp_recv_frame_byte_at because spinel's :str
+      # FFI return + the slice / .bytes[i] paths still NUL-truncate
+      # past the first 0x00 byte -- a frame with NULs anywhere in
+      # the payload would parse wrong via bulk-buffer + slice).
+      # Tracked at matz/spinel#657. `start` is the byte offset to
+      # begin reading; `avail` is the count of valid bytes.
       #
       # Returns a ParseResult with one of three shapes:
       #   .status == "ok"      -> .frame populated + .consumed bytes used
