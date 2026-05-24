@@ -149,6 +149,12 @@ lives in [`docs/BATTERIES-DESIGN.md`](docs/BATTERIES-DESIGN.md).
   tab, every other tab updates in <100ms. ~80 lines of Ruby + CSS,
   no JS to write (the bootstrap shell wires `data-event` clicks
   through the WS).
+- **[`examples/experiments/`](examples/experiments/app.rb)** —
+  the `Tep::MCP` battery demo. Mock training-run manager driven
+  by an MCP client (Claude Code / OpenCode / Gravity): 4 tools,
+  2 resources, capability gating, auto-published `/llms.txt` +
+  `/openapi.json` + `/mcp` JSON-RPC. ~200 lines of Ruby plus an
+  `AGENTS.md` worked example.
 - **[`examples/agentic_chat/`](examples/agentic_chat/app.rb)** —
   the four-battery agentic demo. Sub-second WS push, multi-user
   chat, agent-spawn with OAuth2-style delegation. ~270 lines.

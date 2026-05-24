@@ -634,9 +634,48 @@ def translate(input_path)
     out << "end"
     out << ""
 
+    # openapi.json: OpenAPI 3.0 description of the HTTP-direct
+    # surface (tools at POST /tools/<name>, resources at GET
+    # /resources/<name>). Generated at translate time as a single
+    # constant string the handler returns verbatim. Mirrors what
+    # MCP clients see at tools/list + resources/list, but in the
+    # universal OpenAPI shape so non-MCP agents (and ordinary
+    # OpenAPI tooling) can consume the same catalog.
+    paths_parts = []
+    mcp_tools.each do |t|
+      props_parts = t[:params].map do |p|
+        json_type =
+          case p[:type]
+          when "Integer" then "integer"
+          when "Float"   then "number"
+          else                "string"
+          end
+        %("#{p[:name]}":{"type":"#{json_type}","description":#{p[:desc].inspect}})
+      end
+      required_arr = t[:params].map { |p| %("#{p[:name]}") }.join(",")
+      schema_json = %({"type":"object","properties":{#{props_parts.join(",")}},"required":[#{required_arr}]})
+      paths_parts << %("/tools/#{t[:name]}":{"post":{"summary":#{t[:description].inspect},"requestBody":{"required":true,"content":{"application/json":{"schema":#{schema_json}}}},"responses":{"200":{"description":"tool text result","content":{"text/plain":{}}},"400":{"description":"tool error"}}}})
+    end
+    mcp_resources.each do |rdef|
+      paths_parts << %("/resources/#{rdef[:name]}":{"get":{"summary":#{rdef[:description].inspect},"responses":{"200":{"description":"resource content","content":{"text/plain":{}}}}}})
+    end
+    openapi_json =
+      %({"openapi":"3.0.3","info":{"title":#{server_name.inspect},"version":#{server_version.inspect}},) +
+      %("paths":{#{paths_parts.join(",")}}})
+    openapi_const = "TepMCP_OPENAPI_JSON"
+    out << "#{openapi_const} = #{openapi_json.inspect}"
+    out << ""
+    out << "class TepMCP_OpenAPI < Tep::Handler"
+    out << "  def handle(req, res)"
+    out << "    res.headers[\"Content-Type\"] = \"application/json\""
+    out << "    #{openapi_const}"
+    out << "  end"
+    out << "end"
+    out << ""
+
     # llms.txt: minimal markdown index of the tool + resource
     # catalogs. Stable ASCII so even a non-LLM reader can scan it.
-    llms_lines = ["# " + server_name, "", "MCP-endpoint: /mcp", ""]
+    llms_lines = ["# " + server_name, "", "MCP-endpoint: /mcp", "OpenAPI: /openapi.json", ""]
     unless mcp_tools.empty?
       llms_lines << "## Tools"
       llms_lines << ""
@@ -702,6 +741,7 @@ def translate(input_path)
     end
     out << %(Tep.post "/mcp", TepMCP_Dispatcher.new)
     out << %(Tep.get  "/llms.txt", TepMCP_LlmsTxt.new)
+    out << %(Tep.get  "/openapi.json", TepMCP_OpenAPI.new)
   end
   out << ""
 
