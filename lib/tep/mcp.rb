@@ -54,6 +54,31 @@ module Tep
       r
     end
 
+    # Resource read outcome -- a (uri, mime, text) triple wrapped
+    # in the resources/read response envelope. Kept as a simple
+    # value class (parallel to Result) so spinel tracks the slot
+    # types cleanly across module boundaries.
+    class ResourceContent
+      attr_accessor :uri, :mime, :text
+
+      def initialize
+        @uri  = ""
+        @mime = "text/plain"
+        @text = ""
+      end
+    end
+
+    # Build a text-mime resource content block. URI is the
+    # resource's identifier (echoed back to the client so clients
+    # can correlate the response with the request).
+    def self.resource_text(uri, text)
+      c = Tep::MCP::ResourceContent.new
+      c.uri  = uri
+      c.mime = "text/plain"
+      c.text = text
+      c
+    end
+
     # JSON-quote a String for embedding in our envelope output.
     # The escape body is inlined (vs split into a separate
     # json_escape helper) because the helper-shape param kept
@@ -114,7 +139,7 @@ module Tep
       "{\"jsonrpc\":\"2.0\",\"id\":" + req_id.to_s + "," +
         "\"result\":{" +
           "\"protocolVersion\":\"" + Tep::MCP::PROTOCOL_VERSION + "\"," +
-          "\"capabilities\":{\"tools\":{}}," +
+          "\"capabilities\":{\"tools\":{},\"resources\":{}}," +
           "\"serverInfo\":{" +
             "\"name\":"    + Tep::MCP.json_quote(server_name)    + "," +
             "\"version\":" + Tep::MCP.json_quote(server_version) +
@@ -148,6 +173,41 @@ module Tep
             "{\"type\":\"text\",\"text\":" + Tep::MCP.json_quote(text) + "}" +
           "]," +
           "\"isError\":" + is_err_str +
+        "}" +
+      "}"
+    end
+
+    # Wrap a pre-built resources-array JSON string into the
+    # resources/list response envelope. Same shape as
+    # tools_list_envelope -- translator emits the array literally
+    # at compile time so spinel doesn't need to walk it at runtime.
+    def self.resources_list_envelope(req_id, resources_array_json)
+      "{\"jsonrpc\":\"2.0\",\"id\":" + req_id.to_s + "," +
+        "\"result\":{\"resources\":" + resources_array_json + "}" +
+      "}"
+    end
+
+    # Wrap a ResourceContent into a resources/read response
+    # envelope. contents is a one-element array per MCP spec; the
+    # uri / mimeType / text fields are read off as scalars (same
+    # spinel-friendly pattern as tools_call_envelope) before being
+    # spliced into the JSON.
+    def self.resources_read_envelope(req_id, uri, mime, text)
+      "{\"jsonrpc\":\"2.0\",\"id\":" + req_id.to_s + "," +
+        "\"result\":{\"contents\":[" +
+          "{\"uri\":" + Tep::MCP.json_quote(uri) + "," +
+           "\"mimeType\":" + Tep::MCP.json_quote(mime) + "," +
+           "\"text\":" + Tep::MCP.json_quote(text) + "}" +
+        "]}" +
+      "}"
+    end
+
+    # Error envelope for resources/read on an unknown URI. Same
+    # JSON-RPC code as unknown_tool (-32602 invalid params).
+    def self.unknown_resource_envelope(req_id, uri)
+      "{\"jsonrpc\":\"2.0\",\"id\":" + req_id.to_s + "," +
+        "\"error\":{\"code\":-32602," +
+          "\"message\":" + Tep::MCP.json_quote("unknown resource: " + uri) +
         "}" +
       "}"
     end

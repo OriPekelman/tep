@@ -113,15 +113,29 @@ follow.
 ### Resource declaration (chunk 5.3)
 
 ```ruby
-mcp_resource 'experiment/{id}/metrics', "Live metrics for a run" do |id|
-  stream do |out|
-    metric_subscribe(id) { |m| out.write(m.to_json + "\n") }
+mcp_resource 'server/status', "Current server status" do
+  on_read do
+    Tep::MCP.resource_text("server/status", "uptime: " + uptime.to_s)
   end
 end
 ```
 
-Same DSL shape, returns SSE stream on the HTTP side and
-`resources/read` over MCP.
+generates:
+
+- `GET /resources/server/status` — HTTP-direct read returning the
+  text body with the resource's mimeType as Content-Type.
+- A `resources/list` arm in `/mcp` that returns the catalog
+  (uri / name / description / mimeType per resource).
+- A `resources/read` arm in `/mcp` that looks up by URI and
+  returns the content block.
+
+`on_read` runs with `req` in scope (same shape as tools), so
+identity / caps gating works the same way (`caps:` keyword
+support for resources is a 5.4 follow-up if needed).
+
+URI templating (`'experiment/{id}/metrics'` with extracted
+captures) and streaming (`stream do |out| ... end` over SSE)
+defer beyond 5.3.
 
 ### Prompt declaration (chunk 5.4, maybe)
 
@@ -266,9 +280,9 @@ For HTTP-direct callers, the stream maps to chunked
 | Chunk | Scope | Status |
 |---|---|---|
 | **5.1** | Tool DSL (`mcp_tool`, `param`, `on_call`, `text`/`error`). Translator emission. JSON-RPC dispatch at `POST /mcp` with `initialize` + `tools/list` + `tools/call`. HTTP-direct `POST /tools/<name>`. `GET /llms.txt`. | Shipped (#65) |
-| **5.2** | `caps:` keyword on `mcp_tool` -> inline per-cap `req.identity.may?(:...)` check at the top of `call_<i>`. `notifications/initialized` returns 204 No Content. | Shipping |
-| **5.3** | `mcp_resource` DSL. Streaming via `stream do |out| ... end`. MCP progress notifications over the same `/mcp` SSE channel. Reuse `Tep::Streamer` where possible. | After 5.2 |
-| **5.4** | OpenAPI auto-generation from the tool registry. `AGENTS.md` convention doc. `examples/experiments` demo (training-runs scenario). | After 5.3 |
+| **5.2** | `caps:` keyword on `mcp_tool` -> inline per-cap `req.identity.may?(:...)` check at the top of `call_<i>`. `notifications/initialized` returns 204 No Content. | Shipped (#66) |
+| **5.3** | `mcp_resource 'uri', "desc" do; on_read do; ...; end; end` -> `resources/list` + `resources/read` JSON-RPC + `GET /resources/<uri>` HTTP-direct. No URI templating, no streaming -- both defer. | Shipping |
+| **5.4** | OpenAPI auto-generation. `AGENTS.md` convention doc. `examples/experiments` demo (training-runs scenario). URI templating + streaming for resources. | After 5.3 |
 
 Each chunk is one PR, same cadence as Batteries 1–4. Demo
 (`examples/experiments`) is the gate for considering the battery

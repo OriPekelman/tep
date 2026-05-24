@@ -582,6 +582,16 @@ module Tep
   Tep::MCP.tools_call_envelope(0, "", 1)
   Tep::MCP.unknown_tool_envelope(0, "")
   Tep::MCP.method_not_found_envelope(0, "")
+  # Resource seeds (chunk 5.3). resource_text gives us a typed
+  # ResourceContent for the resources/read path; the envelope
+  # builders take scalars to keep param-type inference tight.
+  _tep_seed_mcp_rc = Tep::MCP.resource_text("seed-uri", "seed-text")
+  _tep_seed_mcp_rc_uri  = _tep_seed_mcp_rc.uri
+  _tep_seed_mcp_rc_mime = _tep_seed_mcp_rc.mime
+  _tep_seed_mcp_rc_text = _tep_seed_mcp_rc.text
+  Tep::MCP.resources_list_envelope(0, "[]")
+  Tep::MCP.resources_read_envelope(0, "", "text/plain", "")
+  Tep::MCP.unknown_resource_envelope(0, "")
 
   # Tep::Llm seeds. attr_accessor return types default to mrb_int
   # if spinel sees no concrete callsite -- and Tep::Llm.build_request_body

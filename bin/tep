@@ -70,6 +70,7 @@ def translate(input_path)
   websockets    = []
   live_views    = []
   mcp_tools     = []
+  mcp_resources = []
   filters       = { "before" => [], "after" => [] }
   not_founds    = []
   startup_block = nil
@@ -107,7 +108,7 @@ def translate(input_path)
     # `something.frob`) is just user code: pass it through verbatim
     # so spinel sees it at program load.
     if call?(node) && node.receiver.nil?
-      result = handle_top_call(node, routes, websockets, mcp_tools, filters, not_founds, config, warnings, passthrough)
+      result = handle_top_call(node, routes, websockets, mcp_tools, mcp_resources, filters, not_founds, config, warnings, passthrough)
       startup_block = result if result.is_a?(Hash) && result[:kind] == :startup
       return
     end
@@ -458,7 +459,7 @@ def translate(input_path)
   #     trace types end-to-end.
   #   * TepMCP_LlmsTxt -- GET /llms.txt, returns the tool catalog as
   #     a markdown index any LLM-friendly client can fetch.
-  unless mcp_tools.empty?
+  if !mcp_tools.empty? || !mcp_resources.empty?
     # Build the tools/list JSON once, at translate time. Each entry
     # is {name, description, inputSchema}; inputSchema follows the
     # JSON Schema object form with property type/description per
@@ -533,6 +534,46 @@ def translate(input_path)
     out << "#{tools_const} = #{tools_list_json.inspect}"
     out << ""
 
+    # Per-resource read cmeths + HTTP-direct Handler subclasses
+    # (chunk 5.3). One Handler per resource for GET /resources/<name>
+    # plus a sibling cmeth `TepMCP_Resources.read_<i>(req)` that the
+    # dispatcher's resources/read arm calls statically (no
+    # PtrArray<Resource> dispatch, same pattern as tools).
+    unless mcp_resources.empty?
+      out << "module TepMCP_Resources"
+      mcp_resources.each_with_index do |rdef, i|
+        body = rewrite_block(rdef[:read_body], force_string: false)
+        out << "  def self.read_#{i}(req)"
+        out << indent(body, 4)
+        out << "  end"
+        out << ""
+      end
+      out << "end"
+      out << ""
+
+      mcp_resources.each_with_index do |rdef, i|
+        http_cls = "TepMCP_Res_#{i}_HttpRoute"
+        out << "class #{http_cls} < Tep::Handler"
+        out << "  def handle(req, res)"
+        out << "    c = TepMCP_Resources.read_#{i}(req)"
+        out << "    res.headers[\"Content-Type\"] = c.mime"
+        out << "    c.text"
+        out << "  end"
+        out << "end"
+        out << ""
+        rdef[:http_cls] = http_cls
+      end
+
+      # resources/list array, pre-built at translate time.
+      res_list_parts = mcp_resources.map do |rdef|
+        %({"uri":#{rdef[:name].inspect},"name":#{rdef[:name].inspect},"description":#{rdef[:description].inspect},"mimeType":"text/plain"})
+      end
+      resources_list_json = "[" + res_list_parts.join(",") + "]"
+      resources_const = "TepMCP_RESOURCES_LIST_JSON"
+      out << "#{resources_const} = #{resources_list_json.inspect}"
+      out << ""
+    end
+
     server_name    = (config[:mcp_server_name] || "tep-mcp-server").to_s
     server_version = config[:mcp_server_version] || begin
       vfile = File.read(File.expand_path("../lib/tep/version.rb", __dir__))
@@ -572,18 +613,47 @@ def translate(input_path)
     end
     out << "      return Tep::MCP.unknown_tool_envelope(req_id, tool_name)"
     out << "    end"
+    unless mcp_resources.empty?
+      out << "    if method == \"resources/list\""
+      out << "      return Tep::MCP.resources_list_envelope(req_id, TepMCP_RESOURCES_LIST_JSON)"
+      out << "    end"
+      out << "    if method == \"resources/read\""
+      out << "      res_params = Tep::MCP.nested_extract(body, \"params\")"
+      out << "      res_uri = Tep::Json.get_str(res_params, \"uri\")"
+      mcp_resources.each_with_index do |rdef, i|
+        out << "      if res_uri == #{rdef[:name].inspect}"
+        out << "        c = TepMCP_Resources.read_#{i}(req)"
+        out << "        return Tep::MCP.resources_read_envelope(req_id, c.uri, c.mime, c.text)"
+        out << "      end"
+      end
+      out << "      return Tep::MCP.unknown_resource_envelope(req_id, res_uri)"
+      out << "    end"
+    end
     out << "    Tep::MCP.method_not_found_envelope(req_id, method)"
     out << "  end"
     out << "end"
     out << ""
 
-    # llms.txt: minimal markdown index of the tool catalog. Stable
-    # ASCII so even a non-LLM reader can scan it.
-    llms_lines = ["# " + server_name, "", "MCP-endpoint: /mcp", "", "## Tools", ""]
-    mcp_tools.each do |t|
-      llms_lines << "- " + t[:name] + " -- " + t[:description]
+    # llms.txt: minimal markdown index of the tool + resource
+    # catalogs. Stable ASCII so even a non-LLM reader can scan it.
+    llms_lines = ["# " + server_name, "", "MCP-endpoint: /mcp", ""]
+    unless mcp_tools.empty?
+      llms_lines << "## Tools"
+      llms_lines << ""
+      mcp_tools.each do |t|
+        llms_lines << "- " + t[:name] + " -- " + t[:description]
+      end
+      llms_lines << ""
     end
-    llms_body = llms_lines.join("\n") + "\n"
+    unless mcp_resources.empty?
+      llms_lines << "## Resources"
+      llms_lines << ""
+      mcp_resources.each do |rdef|
+        llms_lines << "- " + rdef[:name] + " -- " + rdef[:description]
+      end
+      llms_lines << ""
+    end
+    llms_body = llms_lines.join("\n")
 
     out << "class TepMCP_LlmsTxt < Tep::Handler"
     out << "  def handle(req, res)"
@@ -623,9 +693,12 @@ def translate(input_path)
     out << %(Tep.get #{lv[:path].inspect},    #{lv[:get_cls]}.new)
     out << %(Tep.get #{lv[:ws_path].inspect}, #{lv[:ws_cls]}.new)
   end
-  unless mcp_tools.empty?
+  if !mcp_tools.empty? || !mcp_resources.empty?
     mcp_tools.each do |t|
       out << %(Tep.post "/tools/#{t[:name]}", #{t[:http_cls]}.new)
+    end
+    mcp_resources.each do |rdef|
+      out << %(Tep.get "/resources/#{rdef[:name]}", #{rdef[:http_cls]}.new)
     end
     out << %(Tep.post "/mcp", TepMCP_Dispatcher.new)
     out << %(Tep.get  "/llms.txt", TepMCP_LlmsTxt.new)
@@ -695,6 +768,60 @@ end
 # optional `default:` and `enum:` keyword args, kept verbatim into
 # the JSON Schema we emit). Each `on_call do |kwargs| ... end`
 # block becomes the tool's invocation body.
+# `mcp_resource 'name', "description" do; on_read do ... end; end`
+# (chunk 5.3). Each resource gets a read-only fetch endpoint at
+# `GET /resources/<name>` plus a `resources/list` + `resources/read`
+# dispatch arm via the /mcp dispatcher. The on_read body returns
+# Tep::MCP::ResourceContent (built via Tep::MCP.resource_text). No
+# URI templating + no streaming in this chunk -- both defer.
+def handle_mcp_resource(node, mcp_resources, warnings)
+  args  = node.arguments&.arguments || []
+  block = node.block
+  unless block.is_a?(Prism::BlockNode)
+    return warnings << "skipped mcp_resource -- needs a `do ... end` block"
+  end
+  if args.length < 2
+    return warnings << "skipped mcp_resource -- needs (\"name\", \"description\", &block)"
+  end
+  name_node = args[0]
+  desc_node = args[1]
+  unless name_node.is_a?(Prism::StringNode)
+    return warnings << "skipped mcp_resource -- first arg must be a string literal name"
+  end
+  unless desc_node.is_a?(Prism::StringNode)
+    return warnings << "skipped mcp_resource -- second arg must be a string literal description"
+  end
+
+  read_body = nil
+  body = block.body
+  if body.is_a?(Prism::StatementsNode)
+    body.body.each do |stmt|
+      next unless call?(stmt) && stmt.receiver.nil?
+      cname = stmt.name.to_s
+      if cname == "on_read"
+        inner = stmt.block
+        unless inner.is_a?(Prism::BlockNode)
+          warnings << "mcp_resource #{name_node.unescaped}: on_read needs a `do ... end` block"
+          next
+        end
+        read_body = block_source(inner)
+      else
+        warnings << "mcp_resource #{name_node.unescaped}: ignored unrecognized statement `#{cname}`"
+      end
+    end
+  end
+
+  if read_body.nil?
+    return warnings << "skipped mcp_resource #{name_node.unescaped} -- missing on_read do ... end"
+  end
+
+  mcp_resources << {
+    name:        name_node.unescaped,
+    description: desc_node.unescaped,
+    read_body:   read_body,
+  }
+end
+
 def handle_mcp_tool(node, mcp_tools, warnings)
   args  = node.arguments&.arguments || []
   block = node.block
@@ -836,11 +963,16 @@ def handle_tep_live(node, live_views, warnings)
   }
 end
 
-def handle_top_call(node, routes, websockets, mcp_tools, filters, not_founds, config, warnings, passthrough)
+def handle_top_call(node, routes, websockets, mcp_tools, mcp_resources, filters, not_founds, config, warnings, passthrough)
   name = node.name.to_s
 
   if name == "mcp_tool"
     handle_mcp_tool(node, mcp_tools, warnings)
+    return
+  end
+
+  if name == "mcp_resource"
+    handle_mcp_resource(node, mcp_resources, warnings)
     return
   end
 
