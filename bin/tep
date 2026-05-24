@@ -69,10 +69,11 @@ def translate(input_path)
   routes        = []
   websockets    = []
   live_views    = []
+  mcp_tools     = []
   filters       = { "before" => [], "after" => [] }
   not_founds    = []
   startup_block = nil
-  config        = { public_dir: nil }
+  config        = { public_dir: nil, mcp_server_name: nil, mcp_server_version: nil }
   warnings      = []
   anon_id       = 0
 
@@ -106,7 +107,7 @@ def translate(input_path)
     # `something.frob`) is just user code: pass it through verbatim
     # so spinel sees it at program load.
     if call?(node) && node.receiver.nil?
-      result = handle_top_call(node, routes, websockets, filters, not_founds, config, warnings, passthrough)
+      result = handle_top_call(node, routes, websockets, mcp_tools, filters, not_founds, config, warnings, passthrough)
       startup_block = result if result.is_a?(Hash) && result[:kind] == :startup
       return
     end
@@ -437,6 +438,145 @@ def translate(input_path)
     lv[:ws_path] = ws_path
   end
 
+  # Tep::MCP emission. For each `mcp_tool 'name', "desc" do ... end`:
+  #
+  #   * TepMCP_Tools.call_<i>(req, args_json) -- static cmeth that
+  #     parses args out of args_json (via Tep::Json.get_str/get_int),
+  #     binds them as locals, and runs the user's on_call body. The
+  #     body is rewritten the same way route bodies are (req / res /
+  #     params rewrites). Returns Tep::MCP::Result.
+  #   * TepMCP_<i>_HttpRoute -- POST /tools/<name>, takes the args
+  #     as the JSON request body, returns the Result's text directly
+  #     (with the right status / content-type).
+  #
+  # After all tools, two more classes:
+  #
+  #   * TepMCP_Dispatcher -- POST /mcp, parses the JSON-RPC envelope
+  #     and dispatches `initialize` / `tools/list` / `tools/call` by
+  #     statically-elif'd name. No PtrArray<Tool> involvement -- each
+  #     tool's call cmeth is referenced literally so spinel can
+  #     trace types end-to-end.
+  #   * TepMCP_LlmsTxt -- GET /llms.txt, returns the tool catalog as
+  #     a markdown index any LLM-friendly client can fetch.
+  unless mcp_tools.empty?
+    # Build the tools/list JSON once, at translate time. Each entry
+    # is {name, description, inputSchema}; inputSchema follows the
+    # JSON Schema object form with property type/description per
+    # param. Keep the schema flat (no $ref, no nested objects); MCP
+    # clients all accept this minimal shape.
+    tools_list_json_parts = []
+    mcp_tools.each do |t|
+      props_parts = []
+      t[:params].each do |p|
+        json_type =
+          case p[:type]
+          when "Integer" then "integer"
+          when "Float"   then "number"
+          else                "string"
+          end
+        props_parts << %("#{p[:name]}":{"type":"#{json_type}","description":#{p[:desc].inspect}})
+      end
+      required_arr = t[:params].map { |p| %("#{p[:name]}") }.join(",")
+      schema_json = %({"type":"object","properties":{#{props_parts.join(",")}},"required":[#{required_arr}]})
+      tools_list_json_parts << %({"name":"#{t[:name]}","description":#{t[:description].inspect},"inputSchema":#{schema_json}})
+    end
+    tools_list_json = "[" + tools_list_json_parts.join(",") + "]"
+
+    out << "module TepMCP_Tools"
+    mcp_tools.each_with_index do |t, i|
+      body = rewrite_block(t[:call_body], force_string: false)
+      out << "  def self.call_#{i}(req, args_json)"
+      t[:params].each do |p|
+        if p[:type] == "Integer"
+          out << "    #{p[:name]} = Tep::Json.get_int(args_json, #{p[:name].inspect})"
+        elsif p[:type] == "Float"
+          out << "    #{p[:name]} = Tep::Json.get_str(args_json, #{p[:name].inspect}).to_f"
+        else
+          out << "    #{p[:name]} = Tep::Json.get_str(args_json, #{p[:name].inspect})"
+        end
+      end
+      out << indent(body, 4)
+      out << "  end"
+      out << ""
+    end
+    out << "end"
+    out << ""
+
+    mcp_tools.each_with_index do |t, i|
+      http_cls = "TepMCP_#{i}_HttpRoute"
+      out << "class #{http_cls} < Tep::Handler"
+      out << "  def handle(req, res)"
+      out << "    args_json = req.raw_body"
+      out << "    r = TepMCP_Tools.call_#{i}(req, args_json)"
+      out << "    res.headers[\"Content-Type\"] = \"text/plain; charset=utf-8\""
+      out << "    if r.is_error == 1"
+      out << "      res.set_status(400)"
+      out << "    end"
+      out << "    r.text"
+      out << "  end"
+      out << "end"
+      out << ""
+      t[:http_cls] = http_cls
+    end
+
+    tools_const = "TepMCP_TOOLS_LIST_JSON"
+    out << "#{tools_const} = #{tools_list_json.inspect}"
+    out << ""
+
+    server_name    = (config[:mcp_server_name] || "tep-mcp-server").to_s
+    server_version = config[:mcp_server_version] || begin
+      vfile = File.read(File.expand_path("../lib/tep/version.rb", __dir__))
+      vfile[/VERSION\s*=\s*"([^"]+)"/, 1] || "0.0.0"
+    rescue
+      "0.0.0"
+    end
+
+    out << "class TepMCP_Dispatcher < Tep::Handler"
+    out << "  def handle(req, res)"
+    out << "    res.headers[\"Content-Type\"] = \"application/json\""
+    out << "    body = req.raw_body"
+    out << "    method = Tep::Json.get_str(body, \"method\")"
+    out << "    req_id = Tep::Json.get_int(body, \"id\")"
+    out << "    if method == \"initialize\""
+    out << "      return Tep::MCP.initialize_envelope(req_id, #{server_name.inspect}, #{server_version.inspect})"
+    out << "    end"
+    out << "    if method == \"tools/list\""
+    out << "      return Tep::MCP.tools_list_envelope(req_id, #{tools_const})"
+    out << "    end"
+    out << "    if method == \"tools/call\""
+    out << "      params = Tep::MCP.nested_extract(body, \"params\")"
+    out << "      tool_name = Tep::Json.get_str(params, \"name\")"
+    out << "      args = Tep::MCP.nested_extract(params, \"arguments\")"
+    mcp_tools.each_with_index do |t, i|
+      out << "      if tool_name == #{t[:name].inspect}"
+      out << "        r = TepMCP_Tools.call_#{i}(req, args)"
+      out << "        return Tep::MCP.tools_call_envelope(req_id, r.text, r.is_error)"
+      out << "      end"
+    end
+    out << "      return Tep::MCP.unknown_tool_envelope(req_id, tool_name)"
+    out << "    end"
+    out << "    Tep::MCP.method_not_found_envelope(req_id, method)"
+    out << "  end"
+    out << "end"
+    out << ""
+
+    # llms.txt: minimal markdown index of the tool catalog. Stable
+    # ASCII so even a non-LLM reader can scan it.
+    llms_lines = ["# " + server_name, "", "MCP-endpoint: /mcp", "", "## Tools", ""]
+    mcp_tools.each do |t|
+      llms_lines << "- " + t[:name] + " -- " + t[:description]
+    end
+    llms_body = llms_lines.join("\n") + "\n"
+
+    out << "class TepMCP_LlmsTxt < Tep::Handler"
+    out << "  def handle(req, res)"
+    out << "    res.headers[\"Content-Type\"] = \"text/markdown; charset=utf-8\""
+    out << "    #{llms_body.inspect}"
+    out << "  end"
+    out << "end"
+    out << ""
+  end
+
   # Registrations.
   out << Tep_public_dir(config[:public_dir]) if config[:public_dir]
   out << %(Tep.before #{filter_classes["before"]}.new) if filter_classes["before"]
@@ -465,6 +605,13 @@ def translate(input_path)
   live_views.each do |lv|
     out << %(Tep.get #{lv[:path].inspect},    #{lv[:get_cls]}.new)
     out << %(Tep.get #{lv[:ws_path].inspect}, #{lv[:ws_cls]}.new)
+  end
+  unless mcp_tools.empty?
+    mcp_tools.each do |t|
+      out << %(Tep.post "/tools/#{t[:name]}", #{t[:http_cls]}.new)
+    end
+    out << %(Tep.post "/mcp", TepMCP_Dispatcher.new)
+    out << %(Tep.get  "/llms.txt", TepMCP_LlmsTxt.new)
   end
   out << ""
 
@@ -525,6 +672,107 @@ def call?(node)
   node.is_a?(Prism::CallNode)
 end
 
+# `mcp_tool 'name', "description" do ... end` — collect the tool's
+# input-param declarations + the on_call body. Each `param :sym,
+# Type, "desc"` line inside the block records one parameter (with
+# optional `default:` and `enum:` keyword args, kept verbatim into
+# the JSON Schema we emit). Each `on_call do |kwargs| ... end`
+# block becomes the tool's invocation body.
+def handle_mcp_tool(node, mcp_tools, warnings)
+  args  = node.arguments&.arguments || []
+  block = node.block
+  unless block.is_a?(Prism::BlockNode)
+    return warnings << "skipped mcp_tool -- needs a `do ... end` block"
+  end
+  if args.length < 2
+    return warnings << "skipped mcp_tool -- needs (\"name\", \"description\", &block)"
+  end
+  name_node = args[0]
+  desc_node = args[1]
+  unless name_node.is_a?(Prism::StringNode)
+    return warnings << "skipped mcp_tool -- first arg must be a string literal name"
+  end
+  unless desc_node.is_a?(Prism::StringNode)
+    return warnings << "skipped mcp_tool -- second arg must be a string literal description"
+  end
+
+  params      = []
+  call_body   = nil
+  call_kwargs = []
+  body = block.body
+  if body.is_a?(Prism::StatementsNode)
+    body.body.each do |stmt|
+      next unless call?(stmt) && stmt.receiver.nil?
+      cname = stmt.name.to_s
+      if cname == "param"
+        pargs = stmt.arguments&.arguments || []
+        if pargs.length < 3
+          warnings << "mcp_tool #{name_node.unescaped}: skipped param -- needs (:sym, Type, \"desc\", default:, enum:)"
+          next
+        end
+        unless pargs[0].is_a?(Prism::SymbolNode)
+          warnings << "mcp_tool #{name_node.unescaped}: param name must be a symbol"
+          next
+        end
+        unless pargs[1].is_a?(Prism::ConstantReadNode)
+          warnings << "mcp_tool #{name_node.unescaped}: param type must be a bare constant (String/Integer/Float)"
+          next
+        end
+        unless pargs[2].is_a?(Prism::StringNode)
+          warnings << "mcp_tool #{name_node.unescaped}: param description must be a string literal"
+          next
+        end
+        type_name = pargs[1].name.to_s
+        unless %w[String Integer Float].include?(type_name)
+          warnings << "mcp_tool #{name_node.unescaped}: param type #{type_name} not supported (use String / Integer / Float)"
+          next
+        end
+        # Optional `default:` keyword (chunk 5.1 only honors default
+        # for input-schema annotation; the on_call body still needs
+        # to handle missing values defensively via the zero default).
+        params << {
+          name: pargs[0].value.to_s,
+          type: type_name,
+          desc: pargs[2].unescaped,
+        }
+      elsif cname == "on_call"
+        inner = stmt.block
+        unless inner.is_a?(Prism::BlockNode)
+          warnings << "mcp_tool #{name_node.unescaped}: on_call needs a `do |kwargs| ... end` block"
+          next
+        end
+        call_body = block_source(inner)
+        # Capture the keyword-param names from the block signature
+        # so the generated cmeth can pass them by-keyword to the
+        # rewritten body. v1 supports keyword params only.
+        ibp = inner.parameters
+        if ibp.is_a?(Prism::BlockParametersNode)
+          ipp = ibp.parameters
+          if ipp.is_a?(Prism::ParametersNode)
+            ipp.keywords.each do |kw|
+              call_kwargs << kw.name.to_s
+            end
+          end
+        end
+      else
+        warnings << "mcp_tool #{name_node.unescaped}: ignored unrecognized statement `#{cname}`"
+      end
+    end
+  end
+
+  if call_body.nil?
+    return warnings << "skipped mcp_tool #{name_node.unescaped} -- missing on_call do ... end"
+  end
+
+  mcp_tools << {
+    name:        name_node.unescaped,
+    description: desc_node.unescaped,
+    params:      params,
+    call_kwargs: call_kwargs,
+    call_body:   call_body,
+  }
+end
+
 def handle_tep_live(node, live_views, warnings)
   args = node.arguments&.arguments || []
   if args.length < 2
@@ -544,8 +792,13 @@ def handle_tep_live(node, live_views, warnings)
   }
 end
 
-def handle_top_call(node, routes, websockets, filters, not_founds, config, warnings, passthrough)
+def handle_top_call(node, routes, websockets, mcp_tools, filters, not_founds, config, warnings, passthrough)
   name = node.name.to_s
+
+  if name == "mcp_tool"
+    handle_mcp_tool(node, mcp_tools, warnings)
+    return
+  end
 
   if name == "websocket"
     args  = node.arguments&.arguments || []
