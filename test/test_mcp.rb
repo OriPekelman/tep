@@ -45,6 +45,18 @@ class TestMCP < TepTest
         Tep::MCP.text("wiped")
       end
     end
+
+    mcp_resource 'server/status', "Current server status" do
+      on_read do
+        Tep::MCP.resource_text("server/status", "uptime: 42")
+      end
+    end
+
+    mcp_resource 'server/version', "Server build version" do
+      on_read do
+        Tep::MCP.resource_text("server/version", "1.0.0-test")
+      end
+    end
   RB
 
   # ---- HTTP-direct invocation ----
@@ -171,6 +183,51 @@ class TestMCP < TepTest
     assert_equal "", res.body.to_s
   end
 
+  # ---- mcp_resource (chunk 5.3) ----
+
+  def test_http_direct_resource_read_returns_text
+    res = get("/resources/server/status")
+    assert_equal "200", res.code
+    assert_includes res["content-type"].to_s, "text/plain"
+    assert_equal "uptime: 42", res.body
+  end
+
+  def test_mcp_initialize_advertises_resources_capability
+    body = "{\"jsonrpc\":\"2.0\",\"id\":11,\"method\":\"initialize\"}"
+    res = post("/mcp", body, "Content-Type" => "application/json")
+    assert_equal "200", res.code
+    assert_includes res.body, "\"resources\":{}"
+  end
+
+  def test_mcp_resources_list_returns_both_resources
+    body = "{\"jsonrpc\":\"2.0\",\"id\":12,\"method\":\"resources/list\"}"
+    res = post("/mcp", body, "Content-Type" => "application/json")
+    assert_equal "200", res.code
+    assert_includes res.body, "\"uri\":\"server/status\""
+    assert_includes res.body, "\"uri\":\"server/version\""
+    assert_includes res.body, "\"description\":\"Current server status\""
+    assert_includes res.body, "\"mimeType\":\"text/plain\""
+  end
+
+  def test_mcp_resources_read_round_trips_content
+    body = "{\"jsonrpc\":\"2.0\",\"id\":13,\"method\":\"resources/read\"," +
+           "\"params\":{\"uri\":\"server/status\"}}"
+    res = post("/mcp", body, "Content-Type" => "application/json")
+    assert_equal "200", res.code
+    assert_includes res.body, "\"uri\":\"server/status\""
+    assert_includes res.body, "\"mimeType\":\"text/plain\""
+    assert_includes res.body, "\"text\":\"uptime: 42\""
+  end
+
+  def test_mcp_resources_read_unknown_uri_errors
+    body = "{\"jsonrpc\":\"2.0\",\"id\":14,\"method\":\"resources/read\"," +
+           "\"params\":{\"uri\":\"nope\"}}"
+    res = post("/mcp", body, "Content-Type" => "application/json")
+    assert_equal "200", res.code
+    assert_includes res.body, "\"code\":-32602"
+    assert_includes res.body, "unknown resource"
+  end
+
   # ---- llms.txt discovery ----
 
   def test_llms_txt_lists_tools_with_descriptions
@@ -178,7 +235,10 @@ class TestMCP < TepTest
     assert_equal "200", res.code
     assert_includes res["content-type"].to_s, "text/markdown"
     assert_includes res.body, "MCP-endpoint: /mcp"
+    assert_includes res.body, "## Tools"
     assert_includes res.body, "greet -- Say hi to someone"
     assert_includes res.body, "add -- Add two integers"
+    assert_includes res.body, "## Resources"
+    assert_includes res.body, "server/status -- Current server status"
   end
 end
