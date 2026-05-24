@@ -209,7 +209,7 @@ inside the `on_call` body — same pattern as routes. There's no
 special "MCP authorization" layer; the existing capability model
 is enough.
 
-The DSL could optionally accept a `caps:` argument:
+The DSL accepts a `caps:` keyword (chunk 5.2):
 
 ```ruby
 mcp_tool 'start_experiment', "...", caps: [:start_experiment] do
@@ -218,8 +218,12 @@ end
 ```
 
 When the calling identity is missing any of `caps`, the dispatch
-short-circuits with `error("missing capability: start_experiment")`
-before the `on_call` body runs. Chunk 5.2.
+short-circuits with `Tep::MCP.error("missing capability: <name>")`
+before the `on_call` body runs. Implementation: the translator
+emits one inline `req.identity.may?(:<cap>)` check per declared
+cap at the top of `call_<i>`. Loops over a symbol array aren't
+used (spinel's symbol-array iteration is uneven); a flat sequence
+of identical branches is the safest emit.
 
 ## Streaming (chunk 5.3)
 
@@ -261,8 +265,8 @@ For HTTP-direct callers, the stream maps to chunked
 
 | Chunk | Scope | Status |
 |---|---|---|
-| **5.1** | Tool DSL (`mcp_tool`, `param`, `on_call`, `text`/`error`). Translator emission. JSON-RPC dispatch at `POST /mcp` with `initialize` + `tools/list` + `tools/call`. HTTP-direct `POST /tools/<name>`. `GET /llms.txt`. | Building now |
-| **5.2** | `caps:` gating. Test coverage for unauthorized + missing-tool error paths. `notifications/initialized` handling. | After 5.1 |
+| **5.1** | Tool DSL (`mcp_tool`, `param`, `on_call`, `text`/`error`). Translator emission. JSON-RPC dispatch at `POST /mcp` with `initialize` + `tools/list` + `tools/call`. HTTP-direct `POST /tools/<name>`. `GET /llms.txt`. | Shipped (#65) |
+| **5.2** | `caps:` keyword on `mcp_tool` -> inline per-cap `req.identity.may?(:...)` check at the top of `call_<i>`. `notifications/initialized` returns 204 No Content. | Shipping |
 | **5.3** | `mcp_resource` DSL. Streaming via `stream do |out| ... end`. MCP progress notifications over the same `/mcp` SSE channel. Reuse `Tep::Streamer` where possible. | After 5.2 |
 | **5.4** | OpenAPI auto-generation from the tool registry. `AGENTS.md` convention doc. `examples/experiments` demo (training-runs scenario). | After 5.3 |
 
