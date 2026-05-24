@@ -52,6 +52,7 @@ require_relative "tep/server_scheduled"
 require_relative "tep/sqlite"
 require_relative "tep/pg"
 require_relative "tep/json"
+require_relative "tep/mcp"
 require_relative "tep/logger"
 require_relative "tep/jwt"
 require_relative "tep/password"
@@ -561,6 +562,26 @@ module Tep
   Tep::Json.get_str("{}", "")
   Tep::Json.get_int("{}", "")
   Tep::Json.has_key?("{}", "")
+
+  # Tep::MCP seeds (chunk 5.1). Tools register at compile time via
+  # bin/tep's mcp_tool DSL; the runtime helpers below are the
+  # shared shapes the translator-emitted dispatcher leans on.
+  # Seed both Result-construction paths so neither widens via the
+  # "no concrete caller -> int default" route. Read text + is_error
+  # off both so attr_accessor types pin to String / Integer.
+  _tep_seed_mcp_result     = Tep::MCP.text("seed")
+  _tep_seed_mcp_result_err = Tep::MCP.error("seed")
+  _tep_seed_mcp_txt        = _tep_seed_mcp_result.text
+  _tep_seed_mcp_err_int    = _tep_seed_mcp_result_err.is_error
+  Tep::MCP.json_quote(_tep_seed_mcp_txt)
+  Tep::MCP.json_quote("")
+  Tep::MCP.nested_extract("{}", "")
+  Tep::MCP.initialize_envelope(0, "", "")
+  Tep::MCP.tools_list_envelope(0, "[]")
+  Tep::MCP.tools_call_envelope(0, "", 0)
+  Tep::MCP.tools_call_envelope(0, "", 1)
+  Tep::MCP.unknown_tool_envelope(0, "")
+  Tep::MCP.method_not_found_envelope(0, "")
 
   # Tep::Llm seeds. attr_accessor return types default to mrb_int
   # if spinel sees no concrete callsite -- and Tep::Llm.build_request_body

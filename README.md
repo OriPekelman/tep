@@ -127,6 +127,7 @@ through Spinel.
 | `Tep::Broadcast` | In-process pub-sub + cross-worker via PG LISTEN/NOTIFY. Subscribe an fd to a topic (`subscribe` raw, `subscribe_ws` WS-frame-wrapped); publish writes to every matching subscriber. The seam Presence and LiveView build on. |
 | `Tep::Presence`  | Topic-keyed who's-here registry, agent-aware. `Tep::Presence.track(req, topic, fd)` records a (principal, session, topic) tuple with a 3-state structured status (`:available | :busy | :blocked` + free-text note + expiry). Diffs broadcast on join/leave/status; PG-mirror for cross-worker `list_global` snapshots. |
 | `Tep::LiveView`  | Phoenix.LiveView-shape server-rendered stateful UI over WebSocket. Subclass `Tep::LiveView`, override `render` + `handle_event` + (optionally) `handle_presence_diff`; `broadcast_render` fans the new HTML out to every subscribed viewer. Bootstrap client (~10 lines of inline JS) ships in `Tep::LiveView.render_page`. |
+| `Tep::MCP`       | Tool catalog for the agent-as-driver role. `mcp_tool 'name', "desc" do; param :foo, Type, "..."; on_call do; ...; end; end` registers a tool both at `POST /tools/<name>` (HTTP-direct) and through a JSON-RPC 2.0 dispatcher at `POST /mcp` (MCP-native — Claude Code / OpenCode / Gravity CLI). `GET /llms.txt` auto-publishes the catalog. See [`docs/MCP-BATTERY.md`](docs/MCP-BATTERY.md). Chunk 5.1; `mcp_resource` + streaming + OpenAPI in 5.2–5.4. |
 
 Per-battery API docs and cookbooks live on the
 [wiki](https://github.com/OriPekelman/tep/wiki). The full
