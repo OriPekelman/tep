@@ -228,6 +228,25 @@ class TestMCP < TepTest
     assert_includes res.body, "unknown resource"
   end
 
+  # ---- openapi.json (chunk 5.4) ----
+
+  def test_openapi_json_lists_tool_paths
+    res = get("/openapi.json")
+    assert_equal "200", res.code
+    assert_includes res["content-type"].to_s, "application/json"
+    assert_includes res.body, "\"openapi\":\"3.0.3\""
+    assert_includes res.body, "\"/tools/greet\""
+    assert_includes res.body, "\"/tools/add\""
+    # Integer params declared as integer in the OpenAPI schema.
+    assert_includes res.body, "\"type\":\"integer\""
+  end
+
+  def test_openapi_json_lists_resource_paths
+    res = get("/openapi.json")
+    assert_includes res.body, "\"/resources/server/status\""
+    assert_includes res.body, "\"/resources/server/version\""
+  end
+
   # ---- llms.txt discovery ----
 
   def test_llms_txt_lists_tools_with_descriptions
@@ -235,6 +254,7 @@ class TestMCP < TepTest
     assert_equal "200", res.code
     assert_includes res["content-type"].to_s, "text/markdown"
     assert_includes res.body, "MCP-endpoint: /mcp"
+    assert_includes res.body, "OpenAPI: /openapi.json"
     assert_includes res.body, "## Tools"
     assert_includes res.body, "greet -- Say hi to someone"
     assert_includes res.body, "add -- Add two integers"
