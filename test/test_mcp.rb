@@ -7,6 +7,17 @@ class TestMCP < TepTest
   app_source <<~RB
     require 'sinatra'
 
+    # Grant capabilities via an X-Test-Cap header for the auth
+    # gating tests. No real auth provider needed for the dispatch
+    # paths -- we just override req.identity with a synthetic one
+    # so req.identity.may?(:admin) returns true on demand.
+    before do
+      if req.req_headers["x-test-cap-admin"].length > 0
+        req.identity = Tep::Identity.new(
+          "user:42", nil, [:admin])
+      end
+    end
+
     mcp_tool 'greet', "Say hi to someone" do
       param :name, String, "person to greet"
 
@@ -25,6 +36,13 @@ class TestMCP < TepTest
 
       on_call do |a:, b:|
         Tep::MCP.text((a + b).to_s)
+      end
+    end
+
+    # Capped tool -- requires :admin in the calling identity.
+    mcp_tool 'wipe_db', "Drop everything (requires :admin)", caps: [:admin] do
+      on_call do
+        Tep::MCP.text("wiped")
       end
     end
   RB
@@ -111,6 +129,46 @@ class TestMCP < TepTest
     assert_equal "200", res.code
     assert_includes res.body, "\"code\":-32601"
     assert_includes res.body, "method not found"
+  end
+
+  # ---- caps gating (chunk 5.2) ----
+
+  def test_capped_tool_denies_anonymous_caller
+    res = post("/tools/wipe_db", "{}",
+               "Content-Type" => "application/json")
+    # Anonymous identity has empty caps, so :admin check fails.
+    # The tool returns an error Result; HTTP-direct surfaces it
+    # as 400 + the error text.
+    assert_equal "400", res.code
+    assert_includes res.body, "missing capability: admin"
+  end
+
+  def test_capped_tool_allows_caller_with_required_cap
+    res = post("/tools/wipe_db", "{}",
+               "Content-Type"   => "application/json",
+               "X-Test-Cap-Admin" => "1")
+    assert_equal "200", res.code
+    assert_equal "wiped", res.body
+  end
+
+  def test_capped_tool_over_mcp_returns_isError
+    # Same denial path through the JSON-RPC envelope: anonymous
+    # caller -> wipe_db -> error Result -> isError:true.
+    body = "{\"jsonrpc\":\"2.0\",\"id\":7,\"method\":\"tools/call\"," +
+           "\"params\":{\"name\":\"wipe_db\",\"arguments\":{}}}"
+    res = post("/mcp", body, "Content-Type" => "application/json")
+    assert_equal "200", res.code
+    assert_includes res.body, "\"isError\":true"
+    assert_includes res.body, "missing capability: admin"
+  end
+
+  # ---- notifications/initialized (chunk 5.2) ----
+
+  def test_notifications_initialized_returns_204_no_body
+    body = "{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\"}"
+    res = post("/mcp", body, "Content-Type" => "application/json")
+    assert_equal "204", res.code
+    assert_equal "", res.body.to_s
   end
 
   # ---- llms.txt discovery ----

@@ -486,6 +486,16 @@ def translate(input_path)
     mcp_tools.each_with_index do |t, i|
       body = rewrite_block(t[:call_body], force_string: false)
       out << "  def self.call_#{i}(req, args_json)"
+      # Per-cap may? checks (chunk 5.2). One inline check per cap
+      # rather than a loop -- spinel's symbol-array iteration is
+      # uneven, and a flat sequence of identical branches is the
+      # safest emit. Anonymous identity has empty caps so any
+      # capped tool denies anonymous callers cleanly.
+      t[:caps].each do |cap|
+        out << "    if !req.identity.may?(:#{cap})"
+        out << "      return Tep::MCP.error(\"missing capability: #{cap}\")"
+        out << "    end"
+      end
       t[:params].each do |p|
         if p[:type] == "Integer"
           out << "    #{p[:name]} = Tep::Json.get_int(args_json, #{p[:name].inspect})"
@@ -539,6 +549,13 @@ def translate(input_path)
     out << "    req_id = Tep::Json.get_int(body, \"id\")"
     out << "    if method == \"initialize\""
     out << "      return Tep::MCP.initialize_envelope(req_id, #{server_name.inspect}, #{server_version.inspect})"
+    out << "    end"
+    # notifications/initialized is a JSON-RPC notification (no
+    # response per spec). Return 204 No Content with an empty body
+    # to satisfy HTTP while honoring the no-response semantics.
+    out << "    if method == \"notifications/initialized\""
+    out << "      res.set_status(204)"
+    out << "      return \"\""
     out << "    end"
     out << "    if method == \"tools/list\""
     out << "      return Tep::MCP.tools_list_envelope(req_id, #{tools_const})"
@@ -696,6 +713,32 @@ def handle_mcp_tool(node, mcp_tools, warnings)
     return warnings << "skipped mcp_tool -- second arg must be a string literal description"
   end
 
+  # Optional caps: [:foo, :bar] keyword (chunk 5.2). Required
+  # capabilities checked against req.identity.may?(...) at the
+  # top of call_<i>. Missing any -> Tep::MCP.error("missing
+  # capability: <name>") returned without running the on_call
+  # body.
+  caps = []
+  if args.length >= 3 && args[2].is_a?(Prism::KeywordHashNode)
+    args[2].elements.each do |el|
+      next unless el.is_a?(Prism::AssocNode)
+      k = el.key
+      next unless k.is_a?(Prism::SymbolNode) && k.value.to_s == "caps"
+      v = el.value
+      unless v.is_a?(Prism::ArrayNode)
+        warnings << "mcp_tool #{name_node.unescaped}: caps: must be an array literal of symbols"
+        next
+      end
+      v.elements.each do |sym|
+        unless sym.is_a?(Prism::SymbolNode)
+          warnings << "mcp_tool #{name_node.unescaped}: caps: entry must be a symbol literal"
+          next
+        end
+        caps << sym.value.to_s
+      end
+    end
+  end
+
   params      = []
   call_body   = nil
   call_kwargs = []
@@ -767,6 +810,7 @@ def handle_mcp_tool(node, mcp_tools, warnings)
   mcp_tools << {
     name:        name_node.unescaped,
     description: desc_node.unescaped,
+    caps:        caps,
     params:      params,
     call_kwargs: call_kwargs,
     call_body:   call_body,
