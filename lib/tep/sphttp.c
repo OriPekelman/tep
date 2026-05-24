@@ -223,28 +223,6 @@ int sphttp_recv_frame_len(void) {
     return sphttp_frame_len;
 }
 
-/* Byte-level accessor. Workaround for the spinel `:str` FFI return
- * shape being NUL-bound (the Ruby-side String stops at the first
- * 0x00 byte regardless of the buffer's actual length). Callers that
- * need to walk arbitrary bytes -- WebSocket frame codec, file uploads
- * with embedded NULs, anything binary -- use this fn in a loop:
- *
- *   n = Sock.sphttp_recv_into_frame(fd)
- *   i = 0
- *   while i < n
- *     byte = Sock.sphttp_recv_frame_byte_at(i)
- *     ...
- *     i += 1
- *   end
- *
- * Returns the unsigned byte value (0..255), or -1 if `i` is out of
- * bounds. Slow but correct; replace with a bulk-read variant when
- * spinel grows a binary-safe FFI return shape. */
-int sphttp_recv_frame_byte_at(int i) {
-    if (i < 0 || i >= sphttp_frame_len) return -1;
-    return (int)(unsigned char)sphttp_frame_buf[i];
-}
-
 /* Send a file's contents straight from disk -- used for static
  * file serving. Returns -1 on open/read failure (caller falls back
  * to 404), 0 on success. */

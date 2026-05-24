@@ -59,13 +59,13 @@ module Tep
         (n & 0xff).chr
       end
 
-      # Parse one frame from the sphttp recv frame buffer (accessed
-      # via Sock.sphttp_recv_frame_byte_at because spinel's :str
-      # FFI return + the slice / .bytes[i] paths still NUL-truncate
-      # past the first 0x00 byte -- a frame with NULs anywhere in
-      # the payload would parse wrong via bulk-buffer + slice).
-      # Tracked at matz/spinel#657. `start` is the byte offset to
-      # begin reading; `avail` is the count of valid bytes.
+      # Parse one frame from the sphttp recv frame buffer. `start`
+      # is the byte offset to begin reading; `avail` is the count of
+      # valid bytes in the buffer. Byte reads go through the Ruby
+      # String binding sphttp_recv_frame_buf returns; matz/spinel#657
+      # made slice / bytes[i] survive embedded NULs so binary
+      # payloads parse correctly without the per-byte C accessor we
+      # used before.
       #
       # Returns a ParseResult with one of three shapes:
       #   .status == "ok"      -> .frame populated + .consumed bytes used
@@ -78,8 +78,10 @@ module Tep
           return out
         end
 
-        b0 = Sock.sphttp_recv_frame_byte_at(start)
-        b1 = Sock.sphttp_recv_frame_byte_at(start + 1)
+        buf = Sock.sphttp_recv_frame_buf
+        bs  = buf.bytes
+        b0 = bs[start]
+        b1 = bs[start + 1]
         fin    = (b0 & 0x80) != 0
         rsv    = b0 & 0x70
         opcode = b0 & 0x0f
@@ -125,8 +127,8 @@ module Tep
             out.outcome = "need"
             return out
           end
-          h = Sock.sphttp_recv_frame_byte_at(pos)
-          l = Sock.sphttp_recv_frame_byte_at(pos + 1)
+          h = bs[pos]
+          l = bs[pos + 1]
           plen = (h << 8) | l
           pos += 2
         else
@@ -138,7 +140,7 @@ module Tep
           plen = 0
           i = 0
           while i < 8
-            plen = (plen << 8) | Sock.sphttp_recv_frame_byte_at(pos + i)
+            plen = (plen << 8) | bs[pos + i]
             i += 1
           end
           pos += 8
@@ -149,10 +151,10 @@ module Tep
           out.outcome = "need"
           return out
         end
-        m0 = Sock.sphttp_recv_frame_byte_at(pos)
-        m1 = Sock.sphttp_recv_frame_byte_at(pos + 1)
-        m2 = Sock.sphttp_recv_frame_byte_at(pos + 2)
-        m3 = Sock.sphttp_recv_frame_byte_at(pos + 3)
+        m0 = bs[pos]
+        m1 = bs[pos + 1]
+        m2 = bs[pos + 2]
+        m3 = bs[pos + 3]
         pos += 4
 
         # Payload bytes.
@@ -165,7 +167,7 @@ module Tep
         payload = ""
         i = 0
         while i < plen
-          b = Sock.sphttp_recv_frame_byte_at(pos + i)
+          b = bs[pos + i]
           mask_byte = 0
           if (i & 3) == 0
             mask_byte = m0
