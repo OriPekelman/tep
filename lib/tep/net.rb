@@ -29,12 +29,6 @@ module Sock
   ffi_func :sphttp_recv_into_frame, [:int],         :int
   ffi_func :sphttp_recv_frame_buf, [],              :str
   ffi_func :sphttp_recv_frame_len, [],              :int
-  # Per-byte accessor -- workaround for spinel's slice + bytes[i]
-  # paths truncating past the first NUL (matz/spinel#657). The
-  # Ruby-side WS frame codec walks bytes one at a time via this;
-  # bulk read via sphttp_recv_frame_buf returns when the slice +
-  # bytes[i] sides land binary-safe.
-  ffi_func :sphttp_recv_frame_byte_at, [:int],     :int
 
   ffi_func :sphttp_sendfile,      [:int, :str],     :int
   ffi_func :sphttp_filesize,      [:str],           :int
