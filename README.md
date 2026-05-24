@@ -7,17 +7,35 @@
 A Sinatra-flavoured web framework that compiles to a native binary
 via [Spinel][spinel].
 
-> **Current release:** [v0.7.0](https://github.com/OriPekelman/tep/releases/tag/v0.7.0)
-> — the four-battery release (Auth, Broadcast, Presence, LiveView).
+> **Current release:** [v0.9.0](https://github.com/OriPekelman/tep/releases/tag/v0.9.0)
+> — the MCP battery (agent-as-driver) on top of the four-battery
+> agentic surface (Auth, Broadcast, Presence, LiveView).
 > Pre-alpha; API still in motion.
 
-> **Pre-alpha.** Tep exists primarily to exercise Spinel against
-> real-world Ruby code. The framework happens to be useful too —
-> it's a fast, single-binary HTTP server with the Sinatra DSL most
-> Rubyists already know — but the *point* of the project is to
-> shake bugs out of Spinel's codegen, file PRs upstream, and grow
-> Spinel's coverage of idiomatic Ruby. If something doesn't work
-> here, the bug is usually in Spinel, and that's interesting.
+> **Why Tep exists.** Two complementary goals:
+>
+> 1. **Exercise Spinel against real-world Ruby code.** Tep is the
+>    largest pure-Ruby application Spinel compiles end-to-end. Every
+>    Sinatra idiom, every battery, every demo doubles as a torture
+>    test for the AOT compiler's codegen + analyzer. Bugs surface
+>    here, get reduced to minimal repros, and land upstream as PRs
+>    or issues against [matz/spinel](https://github.com/matz/spinel).
+>    If something doesn't work in Tep, the bug is usually in Spinel,
+>    and that's the point.
+>
+> 2. **Be the harness for [toy][toy].** Toy is Tep's sibling
+>    project: a machine-learning framework written in pure Ruby and
+>    compiled by Spinel. Toy needs an HTTP/MCP layer for serving
+>    models, exposing training tools to agents (Claude Code et al.),
+>    streaming inference results, and wiring presence into
+>    collaborative training sessions. Tep is that layer. Every
+>    battery in Tep is shaped by what Toy actually needs to ship.
+>
+> Tep happens to be useful as a general web framework too — fast,
+> single-binary, Sinatra-shaped — but the design choices are made
+> through these two lenses.
+
+[toy]: https://github.com/OriPekelman/toy
 
 ## Quick start
 
