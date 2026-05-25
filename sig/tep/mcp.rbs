@@ -17,10 +17,6 @@ module Tep
     def self.text:  (String s) -> Tep::MCP::Result
     def self.error: (String s) -> Tep::MCP::Result
 
-    # JSON helpers (kept in this module to avoid the cross-module
-    # widening from Tep::Json.escape/quote).
-    def self.json_quote: (String s) -> String
-
     # Nested-key JSON value extraction (sub-string).
     def self.nested_extract: (String json, String key) -> String
 

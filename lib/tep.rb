@@ -571,10 +571,6 @@ module Tep
   # off both so attr_accessor types pin to String / Integer.
   _tep_seed_mcp_result     = Tep::MCP.text("seed")
   _tep_seed_mcp_result_err = Tep::MCP.error("seed")
-  _tep_seed_mcp_txt        = _tep_seed_mcp_result.text
-  _tep_seed_mcp_err_int    = _tep_seed_mcp_result_err.is_error
-  Tep::MCP.json_quote(_tep_seed_mcp_txt)
-  Tep::MCP.json_quote("")
   Tep::MCP.nested_extract("{}", "")
   Tep::MCP.initialize_envelope(0, "", "")
   Tep::MCP.tools_list_envelope(0, "[]")
