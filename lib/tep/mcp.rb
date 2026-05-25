@@ -79,38 +79,6 @@ module Tep
       c
     end
 
-    # JSON-quote a String for embedding in our envelope output.
-    # The escape body is inlined (vs split into a separate
-    # json_escape helper) because the helper-shape param kept
-    # widening to poly through spinel's iterative inference even
-    # with a concrete seed -- single-function scope keeps the type
-    # signal tight. Names live in Tep::MCP (not Tep::Json) to
-    # keep the param-type inference isolated from Tep::Json.quote's
-    # wider caller graph.
-    def self.json_quote(s)
-      out = "\""
-      i = 0
-      n = s.length
-      while i < n
-        c = s[i]
-        if c == "\""
-          out = out + "\\\""
-        elsif c == "\\"
-          out = out + "\\\\"
-        elsif c == "\n"
-          out = out + "\\n"
-        elsif c == "\r"
-          out = out + "\\r"
-        elsif c == "\t"
-          out = out + "\\t"
-        else
-          out = out + c
-        end
-        i += 1
-      end
-      out + "\""
-    end
-
     # Pull a nested JSON value out of `json` by top-level key,
     # returning the value's JSON-string form. Used by the
     # translator-emitted dispatcher to dig `params` out of the
@@ -141,8 +109,8 @@ module Tep
           "\"protocolVersion\":\"" + Tep::MCP::PROTOCOL_VERSION + "\"," +
           "\"capabilities\":{\"tools\":{},\"resources\":{}}," +
           "\"serverInfo\":{" +
-            "\"name\":"    + Tep::MCP.json_quote(server_name)    + "," +
-            "\"version\":" + Tep::MCP.json_quote(server_version) +
+            "\"name\":"    + Tep::Json.quote(server_name)    + "," +
+            "\"version\":" + Tep::Json.quote(server_version) +
           "}" +
         "}" +
       "}"
@@ -170,7 +138,7 @@ module Tep
       "{\"jsonrpc\":\"2.0\",\"id\":" + req_id.to_s + "," +
         "\"result\":{" +
           "\"content\":[" +
-            "{\"type\":\"text\",\"text\":" + Tep::MCP.json_quote(text) + "}" +
+            "{\"type\":\"text\",\"text\":" + Tep::Json.quote(text) + "}" +
           "]," +
           "\"isError\":" + is_err_str +
         "}" +
@@ -195,9 +163,9 @@ module Tep
     def self.resources_read_envelope(req_id, uri, mime, text)
       "{\"jsonrpc\":\"2.0\",\"id\":" + req_id.to_s + "," +
         "\"result\":{\"contents\":[" +
-          "{\"uri\":" + Tep::MCP.json_quote(uri) + "," +
-           "\"mimeType\":" + Tep::MCP.json_quote(mime) + "," +
-           "\"text\":" + Tep::MCP.json_quote(text) + "}" +
+          "{\"uri\":" + Tep::Json.quote(uri) + "," +
+           "\"mimeType\":" + Tep::Json.quote(mime) + "," +
+           "\"text\":" + Tep::Json.quote(text) + "}" +
         "]}" +
       "}"
     end
@@ -207,7 +175,7 @@ module Tep
     def self.unknown_resource_envelope(req_id, uri)
       "{\"jsonrpc\":\"2.0\",\"id\":" + req_id.to_s + "," +
         "\"error\":{\"code\":-32602," +
-          "\"message\":" + Tep::MCP.json_quote("unknown resource: " + uri) +
+          "\"message\":" + Tep::Json.quote("unknown resource: " + uri) +
         "}" +
       "}"
     end
@@ -217,7 +185,7 @@ module Tep
     def self.unknown_tool_envelope(req_id, tool_name)
       "{\"jsonrpc\":\"2.0\",\"id\":" + req_id.to_s + "," +
         "\"error\":{\"code\":-32602," +
-          "\"message\":" + Tep::MCP.json_quote("unknown tool: " + tool_name) +
+          "\"message\":" + Tep::Json.quote("unknown tool: " + tool_name) +
         "}" +
       "}"
     end
@@ -227,7 +195,7 @@ module Tep
     def self.method_not_found_envelope(req_id, method_name)
       "{\"jsonrpc\":\"2.0\",\"id\":" + req_id.to_s + "," +
         "\"error\":{\"code\":-32601," +
-          "\"message\":" + Tep::MCP.json_quote("method not found: " + method_name) +
+          "\"message\":" + Tep::Json.quote("method not found: " + method_name) +
         "}" +
       "}"
     end

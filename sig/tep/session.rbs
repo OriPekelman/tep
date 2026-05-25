@@ -4,7 +4,7 @@
 # session secret.
 module Tep
   class Session
-    # @data intentionally NOT an accessor: see lib/tep/session.rb.
+    attr_accessor data: Hash[String, String]
     attr_accessor dirty: bool
 
     def initialize: () -> void
