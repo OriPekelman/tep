@@ -1,21 +1,29 @@
 #!/usr/bin/env bash
-# spinel-fresh.sh -- ensure the spinel checkout is up to date with
-# matz/spinel master before tep tests / builds run against it.
+# spinel-fresh.sh -- ensure the spinel checkout is on the commit
+# tep expects to compile against before tests / builds run.
 #
-# Spinel moves quickly; tep regularly rides on its tip. Keeping a
-# stale local checkout is a fast way to chase ghost regressions.
+# Pin model
+# ---------
+# Tep keeps a SPINEL_PIN file at the repo root containing a single
+# git ref (commit SHA or tag). This script ensures the spinel
+# checkout is on that ref. The pin gets bumped via PR whenever
+# we verify a newer spinel commit works with tep -- so tep's
+# spinel-tracking stays explicit + reviewable rather than
+# silently floating on master.
+#
+# Without SPINEL_PIN, falls back to the pre-pin behavior (track
+# matz/spinel master).
+#
 # This script:
 #
 #   1. Locates the spinel checkout (env, sibling, or ~/sites/spinel).
-#   2. `git fetch origin master`.
-#   3. If origin/master is ahead of HEAD AND we're on master:
-#        pull + rebuild spinel_codegen.
-#   4. Otherwise, no-op.
+#   2. If SPINEL_PIN exists at tep root: fetches origin + checks
+#      out the pinned ref (detached HEAD).
+#   3. Otherwise: `git fetch origin master`, fast-forward if ahead.
+#   4. Rebuilds spinel_codegen if its source is newer than the binary.
 #
 # Skip with `TEP_SKIP_SPINEL_FRESH=1` (CI containers, frozen dev
-# loops, branch work, etc.). On a non-master branch we warn and
-# skip the pull but still rebuild if the binary is older than the
-# source -- the developer is presumably iterating on spinel itself.
+# loops, branch work, etc.).
 #
 # Set TEP_SPINEL_DIR to override the lookup. If no checkout is
 # found we exit 0 (don't fail the build) and warn -- callers may
@@ -48,15 +56,34 @@ fi
 
 cd "$candidate"
 
-current_branch="$(git rev-parse --abbrev-ref HEAD)"
-if [ "$current_branch" != "master" ]; then
-    echo "tep: spinel on branch '$current_branch' (not master); skipping fetch+pull" >&2
+pin_file="$TEP_DIR/SPINEL_PIN"
+if [ -f "$pin_file" ]; then
+    # Pin mode: read the ref + ensure HEAD matches it.
+    pinned_ref="$(head -n1 "$pin_file" | tr -d '[:space:]')"
+    cur_sha="$(git rev-parse HEAD)"
+    pin_sha="$(git rev-parse "$pinned_ref^{commit}" 2>/dev/null || echo "")"
+    if [ -z "$pin_sha" ]; then
+        # Pin not in local clone yet -- fetch + retry.
+        git fetch --quiet origin || true
+        pin_sha="$(git rev-parse "$pinned_ref^{commit}" 2>/dev/null || echo "")"
+    fi
+    if [ -z "$pin_sha" ]; then
+        echo "tep: SPINEL_PIN '$pinned_ref' not resolvable in $candidate; skipping checkout" >&2
+    elif [ "$cur_sha" != "$pin_sha" ]; then
+        echo "tep: pinning spinel to $pinned_ref ($pin_sha)..." >&2
+        git -c advice.detachedHead=false checkout --quiet "$pin_sha"
+    fi
 else
-    git fetch --quiet origin master || true
-    behind="$(git rev-list --count HEAD..origin/master 2>/dev/null || echo 0)"
-    if [ "$behind" -gt 0 ]; then
-        echo "tep: pulling $behind new spinel commit(s) from matz/spinel master..." >&2
-        git pull --ff-only --quiet origin master
+    current_branch="$(git rev-parse --abbrev-ref HEAD)"
+    if [ "$current_branch" != "master" ]; then
+        echo "tep: spinel on branch '$current_branch' (not master); skipping fetch+pull" >&2
+    else
+        git fetch --quiet origin master || true
+        behind="$(git rev-list --count HEAD..origin/master 2>/dev/null || echo 0)"
+        if [ "$behind" -gt 0 ]; then
+            echo "tep: pulling $behind new spinel commit(s) from matz/spinel master..." >&2
+            git pull --ff-only --quiet origin master
+        fi
     fi
 fi
 
