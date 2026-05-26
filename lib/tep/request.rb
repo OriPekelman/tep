@@ -111,9 +111,14 @@ module Tep
 
     # Pull any remaining body bytes from `client_fd` up to the
     # advertised Content-Length, then merge form / multipart fields
-    # into @params. Called once per request by both the prefork and
-    # scheduled servers right after Parser.parse populates the
-    # request headers + the body bytes already in the recv buffer.
+    # into @params. Used by Tep::Server (prefork, blocking fds) --
+    # under the prefork model recv() blocks naturally until bytes
+    # arrive, so `sphttp_drain_body` (a tight blocking-recv loop)
+    # is the right primitive.
+    #
+    # Tep::Server::Scheduled uses `consume_body_via_scheduler` below
+    # instead, because its client fd is non-blocking + a blocking
+    # recv would starve the whole worker.
     #
     # No-op on bodyless requests. Form parsing handles
     # `application/x-www-form-urlencoded`; multipart handles
@@ -127,6 +132,41 @@ module Tep
         rest = Sock.sphttp_drain_body(client_fd, cl - already)
         @raw_body = @raw_body + rest
       end
+      parse_form_body
+      0
+    end
+
+    # Scheduler-friendly body drain. Loops on
+    # `Sock.sphttp_recv_some` + `Tep::Scheduler.io_wait` so other
+    # fibers keep running while we wait for body bytes. Per-recv
+    # timeout caps the wait at 5s -- a client that opened the
+    # request but never sent the body gets dropped instead of
+    # hanging the fiber forever.
+    #
+    # Returns @raw_body.length after the drain. Body parsing
+    # (form / multipart -> @params) happens at the end via
+    # parse_form_body, same shape as consume_body.
+    def consume_body_via_scheduler(client_fd)
+      cl = content_length
+      while @raw_body.length < cl
+        ready = Tep::Scheduler.io_wait(client_fd, Tep::Scheduler::READ, 5)
+        if ready == 0
+          break   # timeout -- client never finished sending
+        end
+        chunk = Sock.sphttp_recv_some(client_fd, cl - @raw_body.length)
+        if chunk.length == 0
+          break   # peer closed mid-body
+        end
+        @raw_body = @raw_body + chunk
+      end
+      parse_form_body
+      0
+    end
+
+    # Shared form / multipart -> @params merge. Both server-side
+    # body-drain paths call this once their drain step has filled
+    # @raw_body to Content-Length.
+    def parse_form_body
       if form?
         Url.parse_query(@raw_body).each do |k, v|
           @params[k] = v
