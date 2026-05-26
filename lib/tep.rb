@@ -292,6 +292,9 @@ module Tep
   Tep::Presence.mirror_status("_seed", -1, :available, "", 0)
   Tep::Presence.list_global("_seed")
   Tep::Presence.count_global("_seed")
+  Tep::Presence.worker_schema_sql
+  Tep::Presence.heartbeat
+  Tep::Presence.prune_stale_workers(90)
   Tep::Presence.disable_pg_mirror
   # Same APP-setter-via-constant pattern as the broadcast_pg_conn
   # seed: PG::Connection.new can't run inside App#initialize
