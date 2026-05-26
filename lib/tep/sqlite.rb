@@ -55,6 +55,7 @@ module Sqlite
   ffi_func :tep_sqlite_close,             [:int],          :int
   ffi_func :tep_sqlite_exec,              [:int, :str],    :int
   ffi_func :tep_sqlite_prepare,           [:int, :str],    :int
+  ffi_func :tep_sqlite_prepare_cached,    [:int, :str],    :int
   ffi_func :tep_sqlite_bind_str,          [:int, :str],    :int
   ffi_func :tep_sqlite_bind_int,          [:int, :int],    :int
   ffi_func :tep_sqlite_step,              [],              :int
@@ -123,6 +124,27 @@ module Tep
         return false
       end
       Sqlite.tep_sqlite_prepare(@dbh, sql) == 0
+    end
+
+    # Cached variant. Same surface as `prepare`, but the underlying
+    # `sqlite3_stmt *` is memoised per-(db, sql); subsequent calls
+    # with the same SQL string reuse the prepared statement, paying
+    # the parse cost only once per process. Pair with `finalize` as
+    # usual; on the cached path `finalize` becomes
+    # `sqlite3_reset + sqlite3_clear_bindings` (the slot stays
+    # alive). The cache is bounded (currently 64 distinct SQL
+    # strings per process); apps that exceed the bound fall through
+    # to uncached prepare so correctness is preserved.
+    #
+    # Use for hot-path SQL where the string is known + fixed at
+    # codegen / boot time. Apps that build SQL with varying
+    # whitespace miss the cache (match is literal); format
+    # consistently.
+    def prepare_cached(sql)
+      if @dbh < 0
+        return false
+      end
+      Sqlite.tep_sqlite_prepare_cached(@dbh, sql) == 0
     end
 
     def bind_str(idx, value); Sqlite.tep_sqlite_bind_str(idx, value); end

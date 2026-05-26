@@ -340,6 +340,13 @@ module Tep
     _tep_seed_db.finalize
     _tep_seed_db.first_str("SELECT k FROM _seed", "")
     _tep_seed_db.first_int("SELECT v FROM _seed", "")
+    # Pin the prepare_cached param type so apps that don't call it
+    # still see the FFI shape (`Sqlite.tep_sqlite_prepare_cached(int,
+    # str)`) at module-load. Cache hit / miss / reuse paths are
+    # exercised by test/test_sqlite_cached.rb at runtime.
+    _tep_seed_db.prepare_cached("SELECT k FROM _seed")
+    _tep_seed_db.step
+    _tep_seed_db.finalize
     _tep_seed_db.close
   end
 

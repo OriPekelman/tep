@@ -43,12 +43,29 @@
 #include <string.h>
 #include <sqlite3.h>
 
-#define TEP_SQLITE_MAX_HANDLES   16
-#define TEP_SQLITE_COL_BUFSIZE   65536
-#define TEP_SQLITE_COL_BUF_SLOTS 16
+#define TEP_SQLITE_MAX_HANDLES    16
+#define TEP_SQLITE_COL_BUFSIZE    65536
+#define TEP_SQLITE_COL_BUF_SLOTS  16
+#define TEP_SQLITE_CACHE_SLOTS    64       /* prepare-statement cache */
+#define TEP_SQLITE_CACHE_SQL_MAX  512      /* longest cached SQL */
 
 static sqlite3      *tep_sqlite_handles[TEP_SQLITE_MAX_HANDLES] = {0};
 static sqlite3_stmt *tep_sqlite_stmt = NULL;
+/* When the current cursor came from the prepare-statement cache, we
+ * must NOT sqlite3_finalize it on tep_sqlite_finalize -- the slot
+ * stays alive for reuse, and finalize becomes reset+clear_bindings.
+ * Same applies to tep_sqlite_prepare's stmt-swap path. */
+static int           tep_sqlite_stmt_cached = 0;
+
+/* prepare-statement cache (chunk per #75). Linear scan by (h, sql);
+ * n is small so O(n) is fine. Bounded by TEP_SQLITE_CACHE_SLOTS;
+ * if full, prepare_cached falls through to an uncached prepare. */
+typedef struct {
+    int           h;                                 /* db handle index (1-based), 0 = empty */
+    sqlite3_stmt *stmt;
+    char          sql[TEP_SQLITE_CACHE_SQL_MAX];
+} tep_sqlite_cache_entry;
+static tep_sqlite_cache_entry tep_sqlite_cache[TEP_SQLITE_CACHE_SLOTS] = {0};
 /* Rotating return buffers for col_str. spinel's `:str` return type
  * wants a pointer that stays valid until "the caller is done with
  * it", but in practice callers stash multiple col_str results into
@@ -93,8 +110,23 @@ int tep_sqlite_close(int h) {
     /* Finalize any cursor that was on this handle to avoid
      * sqlite_close returning SQLITE_BUSY. */
     if (tep_sqlite_stmt && sqlite3_db_handle(tep_sqlite_stmt) == db) {
-        sqlite3_finalize(tep_sqlite_stmt);
+        if (!tep_sqlite_stmt_cached) {
+            sqlite3_finalize(tep_sqlite_stmt);
+        }
+        /* Cached stmts get finalized below by the cache walk. */
         tep_sqlite_stmt = NULL;
+        tep_sqlite_stmt_cached = 0;
+    }
+    /* Finalize every cached statement that belongs to this handle
+     * before closing the db. Cache slots are owner-keyed by `h`. */
+    int i;
+    for (i = 0; i < TEP_SQLITE_CACHE_SLOTS; i++) {
+        if (tep_sqlite_cache[i].h == h && tep_sqlite_cache[i].stmt) {
+            sqlite3_finalize(tep_sqlite_cache[i].stmt);
+            tep_sqlite_cache[i].stmt = NULL;
+            tep_sqlite_cache[i].h    = 0;
+            tep_sqlite_cache[i].sql[0] = '\0';
+        }
     }
     sqlite3_close(db);
     tep_sqlite_handles[h - 1] = NULL;
@@ -111,18 +143,93 @@ int tep_sqlite_exec(int h, const char *sql) {
     return rc == SQLITE_OK ? 0 : -1;
 }
 
+/* Drop or reset whatever's currently on the singleton cursor before
+ * we install a new one. Cached stmts get reset+clear_bindings (so
+ * the cached slot stays valid); uncached stmts get finalized. */
+static void tep_sqlite_release_current(void) {
+    if (!tep_sqlite_stmt) return;
+    if (tep_sqlite_stmt_cached) {
+        sqlite3_reset(tep_sqlite_stmt);
+        sqlite3_clear_bindings(tep_sqlite_stmt);
+    } else {
+        sqlite3_finalize(tep_sqlite_stmt);
+    }
+    tep_sqlite_stmt = NULL;
+    tep_sqlite_stmt_cached = 0;
+}
+
 int tep_sqlite_prepare(int h, const char *sql) {
     if (h < 1 || h > TEP_SQLITE_MAX_HANDLES) return -1;
     sqlite3 *db = tep_sqlite_handles[h - 1];
     if (db == NULL) return -1;
-    if (tep_sqlite_stmt) {
-        sqlite3_finalize(tep_sqlite_stmt);
-        tep_sqlite_stmt = NULL;
-    }
+    tep_sqlite_release_current();
     if (sqlite3_prepare_v2(db, sql, -1, &tep_sqlite_stmt, NULL) != SQLITE_OK) {
         tep_sqlite_stmt = NULL;
         return -1;
     }
+    /* uncached */
+    return 0;
+}
+
+/* Cached variant: looks up `sql` for db handle `h` in the cache;
+ * on hit reuses the prepared statement (with reset + clear_bindings);
+ * on miss prepares + stashes in the first free slot; if the cache is
+ * full, falls back to an uncached prepare so the caller still works.
+ *
+ * SQL is matched literally (no normalization). Apps that generate
+ * SQL with varying whitespace miss the cache; format consistently. */
+int tep_sqlite_prepare_cached(int h, const char *sql) {
+    if (h < 1 || h > TEP_SQLITE_MAX_HANDLES) return -1;
+    sqlite3 *db = tep_sqlite_handles[h - 1];
+    if (db == NULL) return -1;
+    /* SQL longer than the cache's per-slot buffer: just do an
+     * uncached prepare. The caller still gets correct behavior. */
+    size_t sql_len = strlen(sql);
+    if (sql_len >= TEP_SQLITE_CACHE_SQL_MAX) {
+        return tep_sqlite_prepare(h, sql);
+    }
+    tep_sqlite_release_current();
+    /* Cache lookup. */
+    int i;
+    for (i = 0; i < TEP_SQLITE_CACHE_SLOTS; i++) {
+        if (tep_sqlite_cache[i].h == h &&
+            tep_sqlite_cache[i].stmt &&
+            strcmp(tep_sqlite_cache[i].sql, sql) == 0) {
+            tep_sqlite_stmt = tep_sqlite_cache[i].stmt;
+            sqlite3_reset(tep_sqlite_stmt);
+            sqlite3_clear_bindings(tep_sqlite_stmt);
+            tep_sqlite_stmt_cached = 1;
+            return 0;
+        }
+    }
+    /* Cache miss -- find an empty slot. */
+    int empty = -1;
+    for (i = 0; i < TEP_SQLITE_CACHE_SLOTS; i++) {
+        if (tep_sqlite_cache[i].h == 0) { empty = i; break; }
+    }
+    if (empty < 0) {
+        /* Cache full: prepare uncached so the caller works. The
+         * existing tep_sqlite_finalize path will sqlite3_finalize
+         * this one as today. */
+        if (sqlite3_prepare_v2(db, sql, -1, &tep_sqlite_stmt, NULL) != SQLITE_OK) {
+            tep_sqlite_stmt = NULL;
+            return -1;
+        }
+        tep_sqlite_stmt_cached = 0;
+        return 0;
+    }
+    /* Prepare + stash. */
+    sqlite3_stmt *new_stmt = NULL;
+    if (sqlite3_prepare_v2(db, sql, -1, &new_stmt, NULL) != SQLITE_OK) {
+        tep_sqlite_stmt = NULL;
+        return -1;
+    }
+    tep_sqlite_cache[empty].h    = h;
+    tep_sqlite_cache[empty].stmt = new_stmt;
+    memcpy(tep_sqlite_cache[empty].sql, sql, sql_len);
+    tep_sqlite_cache[empty].sql[sql_len] = '\0';
+    tep_sqlite_stmt        = new_stmt;
+    tep_sqlite_stmt_cached = 1;
     return 0;
 }
 
@@ -171,10 +278,21 @@ int tep_sqlite_col_count(void) {
     return sqlite3_column_count(tep_sqlite_stmt);
 }
 
+/* Finalize semantics depend on whether the current stmt came from
+ * the prepare-statement cache. Cached stmts get reset + clear_bindings
+ * and stay alive in their slot (the whole point of the cache); only
+ * uncached stmts actually sqlite3_finalize. The Ruby-side API
+ * (`db.finalize`) is unchanged either way. */
 int tep_sqlite_finalize(void) {
     if (!tep_sqlite_stmt) return 0;
-    sqlite3_finalize(tep_sqlite_stmt);
+    if (tep_sqlite_stmt_cached) {
+        sqlite3_reset(tep_sqlite_stmt);
+        sqlite3_clear_bindings(tep_sqlite_stmt);
+    } else {
+        sqlite3_finalize(tep_sqlite_stmt);
+    }
     tep_sqlite_stmt = NULL;
+    tep_sqlite_stmt_cached = 0;
     return 0;
 }
 
