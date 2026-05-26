@@ -72,6 +72,14 @@ module Tep
         Driver.send_frame(@fd, Tep::WebSocket::OPCODE_TEXT, s)
       end
 
+      # Streamer-shape alias for `text` so a Driver can stand in
+      # anywhere `Tep::Streamer`-style code calls `out.write(s)`.
+      # Used by Tep::Llm.chat_stream to write LLM deltas as WS
+      # frames (one frame per SSE-shaped chunk).
+      def write(s)
+        Driver.send_frame(@fd, Tep::WebSocket::OPCODE_TEXT, s)
+      end
+
       # Send a binary frame.
       def binary(bytes)
         Driver.send_frame(@fd, Tep::WebSocket::OPCODE_BINARY, bytes)
