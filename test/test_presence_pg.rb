@@ -122,6 +122,51 @@ class TestPresencePg < TepTest
       ""
     end
 
+    # Heartbeat + prune-stale-workers helpers (chunk per #47).
+    get '/heartbeat' do
+      Tep::Presence.heartbeat.to_s
+    end
+
+    get '/prune_stale_workers' do
+      ttl = params[:ttl].to_i
+      Tep::Presence.prune_stale_workers(ttl).to_s
+    end
+
+    # Inject a heartbeat row at an arbitrary past timestamp so
+    # the prune test can simulate a stale-then-pruned worker.
+    get '/inject_worker_heartbeat' do
+      worker = params[:worker]
+      ts     = params[:ts].to_i
+      c = Tep::APP.presence_pg_conn
+      r = c.exec_params(
+        "INSERT INTO tep_presence_worker (worker_id, last_seen_ts) " +
+        "VALUES ($1, $2) " +
+        "ON CONFLICT (worker_id) DO UPDATE SET last_seen_ts = EXCLUDED.last_seen_ts",
+        [worker, ts.to_s])
+      ok = r.ok? ? "1" : "0"
+      r.clear
+      ok
+    end
+
+    get '/worker_count' do
+      c = Tep::APP.presence_pg_conn
+      r = c.exec("SELECT count(*) FROM tep_presence_worker")
+      n = "0"
+      if r.ok? && r.ntuples > 0
+        n = r.values[0][0]
+      end
+      r.clear
+      n
+    end
+
+    get '/reset_worker_table' do
+      c = Tep::APP.presence_pg_conn
+      r = c.exec("DELETE FROM tep_presence_worker")
+      n = r.cmd_tuples
+      r.clear
+      n.to_s
+    end
+
     # Simulate a row written by ANOTHER worker (different worker_id)
     # so list_global has cross-worker data to aggregate.
     get '/inject_other_worker_row' do
@@ -191,5 +236,54 @@ class TestPresencePg < TepTest
     get("/inject_other_worker_row?topic=room:other&principal=user:100&fd=6&worker=worker-B")
     assert_equal "1", get("/count_global?topic=room:lobby").body
     assert_equal "1", get("/count_global?topic=room:other").body
+  end
+
+  # ---- heartbeat + prune_stale_workers (#47) ----
+
+  def test_enable_pg_mirror_registers_heartbeat
+    # enable_pg_mirror already ran in on_start; its heartbeat
+    # row should be present.
+    n = get("/worker_count").body.to_i
+    assert n >= 1, "expected at least one heartbeat row, got #{n}"
+  end
+
+  def test_heartbeat_is_idempotent
+    # Calling heartbeat multiple times shouldn't multiply rows;
+    # the upsert keeps it at one per worker_id.
+    n_before = get("/worker_count").body.to_i
+    3.times { get("/heartbeat") }
+    n_after = get("/worker_count").body.to_i
+    assert_equal n_before, n_after
+  end
+
+  def test_prune_drops_stale_worker_and_its_presence_rows
+    get("/reset_worker_table")
+    # Inject one fresh + one stale worker, each with their own
+    # presence row.
+    fresh_ts = Time.now.to_i
+    stale_ts = fresh_ts - 3600
+    get("/inject_worker_heartbeat?worker=worker-fresh&ts=#{fresh_ts}")
+    get("/inject_worker_heartbeat?worker=worker-stale&ts=#{stale_ts}")
+    get("/inject_other_worker_row?topic=room:prune&principal=user:1&fd=1&worker=worker-fresh")
+    get("/inject_other_worker_row?topic=room:prune&principal=user:2&fd=2&worker=worker-stale")
+    assert_equal "2", get("/count_global?topic=room:prune").body
+
+    # Prune with a 60s TTL: stale (3600s old) gets dropped; fresh
+    # (just now) stays. count_global drops to 1.
+    pruned = get("/prune_stale_workers?ttl=60").body.to_i
+    assert pruned >= 1, "expected at least one tep_presence row deleted, got #{pruned}"
+    assert_equal "1", get("/count_global?topic=room:prune").body
+  end
+
+  def test_prune_preserves_live_worker_rows
+    get("/reset_worker_table")
+    # Single fresh worker -- prune should leave it alone.
+    fresh_ts = Time.now.to_i
+    get("/inject_worker_heartbeat?worker=worker-live&ts=#{fresh_ts}")
+    get("/inject_other_worker_row?topic=room:keep&principal=user:9&fd=99&worker=worker-live")
+    assert_equal "1", get("/count_global?topic=room:keep").body
+    pruned = get("/prune_stale_workers?ttl=60").body.to_i
+    assert_equal 0, pruned, "expected no rows deleted for live worker, got #{pruned}"
+    assert_equal "1", get("/count_global?topic=room:keep").body
   end
 end

@@ -278,8 +278,9 @@ module Tep
     # Worker ID is PID + boot epoch second so a same-PID restart
     # doesn't alias a prior worker's stale rows. On
     # disable_pg_mirror (or clean shutdown), this worker's rows
-    # get DELETE'd. A crashed worker leaves stale rows -- the
-    # periodic-prune follow-up tracks at OriPekelman/tep#47.
+    # get DELETE'd. Crashed workers leave stale rows; the
+    # heartbeat + prune_stale_workers pair below handles the
+    # garbage-collection.
     #
     # Returns 0 on success, -1 on connect / schema failure.
     def self.enable_pg_mirror(conninfo)
@@ -288,6 +289,14 @@ module Tep
         return -1
       end
       r = conn.exec(Tep::Presence.schema_sql)
+      if !r.ok?
+        r.clear
+        conn.finish
+        return -1
+      end
+      r.clear
+      # Heartbeat table for the prune-stale-workers path (#47).
+      r = conn.exec(Tep::Presence.worker_schema_sql)
       if !r.ok?
         r.clear
         conn.finish
@@ -305,6 +314,10 @@ module Tep
         "DELETE FROM tep_presence WHERE worker_id = $1",
         [worker_id])
       r.clear
+      # Register this worker's heartbeat row immediately. Apps
+      # refresh it periodically via Tep::Presence.heartbeat;
+      # prune_stale_workers deletes rows whose heartbeat is stale.
+      Tep::Presence.heartbeat
       0
     end
 
@@ -314,6 +327,12 @@ module Tep
       end
       r = Tep::APP.presence_pg_conn.exec_params(
         "DELETE FROM tep_presence WHERE worker_id = $1",
+        [Tep::APP.presence_pg_worker_id])
+      r.clear
+      # Remove the heartbeat row so prune_stale_workers doesn't
+      # see this worker as live after we're gone.
+      r = Tep::APP.presence_pg_conn.exec_params(
+        "DELETE FROM tep_presence_worker WHERE worker_id = $1",
         [Tep::APP.presence_pg_worker_id])
       r.clear
       Tep::APP.presence_pg_conn.finish
@@ -338,6 +357,85 @@ module Tep
         "status_until BIGINT NOT NULL, " +
         "PRIMARY KEY (worker_id, topic, fd)" +
       ")"
+    end
+
+    # Heartbeat table -- one row per worker that's mirroring
+    # presence right now. Used by prune_stale_workers to identify
+    # crashed workers (no heartbeat updates in N seconds) and
+    # garbage-collect their orphan tep_presence rows.
+    def self.worker_schema_sql
+      "CREATE TABLE IF NOT EXISTS tep_presence_worker (" +
+        "worker_id    TEXT PRIMARY KEY, " +
+        "last_seen_ts BIGINT NOT NULL" +
+      ")"
+    end
+
+    # Refresh this worker's heartbeat row to the current Unix
+    # timestamp. Apps call this periodically (typical: from a
+    # before-filter, a Tep::Job tick, or an explicit timer fiber)
+    # so prune_stale_workers can tell live workers from crashed
+    # ones. No-op when the PG mirror isn't enabled, or when the
+    # mirror was opened on a different process and we're the
+    # post-fork child (worker_id is empty until enable_pg_mirror
+    # runs locally).
+    #
+    # Returns 1 if the heartbeat row was upserted, 0 if the call
+    # short-circuited (mirror disabled or no worker_id).
+    def self.heartbeat
+      if Tep::APP.presence_pg_enabled == 0
+        return 0
+      end
+      wid = Tep::APP.presence_pg_worker_id
+      if wid.length == 0
+        return 0
+      end
+      r = Tep::APP.presence_pg_conn.exec_params(
+        "INSERT INTO tep_presence_worker (worker_id, last_seen_ts) " +
+        "VALUES ($1, $2) " +
+        "ON CONFLICT (worker_id) DO UPDATE SET " +
+        "  last_seen_ts = EXCLUDED.last_seen_ts",
+        [wid, Time.now.to_i.to_s])
+      r.clear
+      1
+    end
+
+    # Prune crashed-worker rows. Deletes:
+    #   1. tep_presence_worker rows whose last_seen_ts is older than
+    #      ttl_seconds (the worker's heartbeat is stale).
+    #   2. tep_presence rows whose worker_id has no surviving
+    #      heartbeat (orphans left by the crashed worker).
+    #
+    # Apps call this periodically -- the canonical shape is a
+    # before-filter on a "/health" route that internal monitoring
+    # hits every 30s, or a Tep::Job that fires from a cron-like
+    # tick. Returns the number of tep_presence rows deleted.
+    #
+    # ttl_seconds should be at least 3x the app's typical
+    # heartbeat interval so a transient slow response doesn't
+    # evict a live worker. Default callers pass 90 (assumes 30s
+    # heartbeats).
+    def self.prune_stale_workers(ttl_seconds)
+      if Tep::APP.presence_pg_enabled == 0
+        return 0
+      end
+      cutoff = Time.now.to_i - ttl_seconds
+      conn = Tep::APP.presence_pg_conn
+      # Drop dead heartbeats first; the second DELETE then walks
+      # the worker_id space that's still alive.
+      r1 = conn.exec_params(
+        "DELETE FROM tep_presence_worker WHERE last_seen_ts < $1",
+        [cutoff.to_s])
+      r1.clear
+      # Now drop presence rows whose worker_id isn't in the live
+      # heartbeat table. NOT IN handles both crashed-and-pruned
+      # workers and workers that never registered (legacy rows
+      # from before this prune feature shipped).
+      r2 = conn.exec(
+        "DELETE FROM tep_presence " +
+        "WHERE worker_id NOT IN (SELECT worker_id FROM tep_presence_worker)")
+      n = r2.cmd_tuples
+      r2.clear
+      n
     end
 
     # Mirror a track to PG. Called from track() when the PG
