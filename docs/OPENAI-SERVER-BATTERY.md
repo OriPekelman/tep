@@ -230,46 +230,79 @@ same downstream consumers.
 
 ```json
 {
-  "kind": "run_start",
-  "t": 0,
-  "host": "gx10",
-  "backend": {"kind": "cpu"},
-  "git": {"sha": "abc123...", "dirty": false},
-  "model": {"name": "smollm2-135m", "path": "/srv/runs/.../weights/100.gguf"},
-  "config": {"server": "tep-llm-openai", "cap": "infer", "events_jsonl": "..."}
+  "kind":       "run_start",
+  "schema":     "toy/v1",
+  "t":          0,
+  "started_at": "2026-05-25T10:42:01Z",
+  "host":       "gx10",
+  "backend":    {"kind": "cpu"},
+  "git":        {"sha": "abc123...", "dirty": false},
+  "model":      {"name": "smollm2-135m", "path": "/srv/runs/.../weights/100.gguf"},
+  "config":     {"server": "tep-llm-openai", "cap": "infer", "events_jsonl": "..."}
 }
 ```
 
 Emitted once at `Tep::Llm::OpenAI::Server.serve!` invocation.
-`backend.kind` reads from `backend.device_kind` so `DEVICE=cuda`
-at boot propagates into the stream cleanly.
 
-### `eval` (one per request)
+- **`schema: "toy/v1"`** makes the stream self-identifying; a
+  downstream ingest that reads any line first looks at the
+  `run_start` for the schema version.
+- **`started_at`** is the absolute ISO-8601 wall-clock; subsequent
+  events use the relative `t` (float seconds since `run_start`).
+  Mirrors the training stream's shape so a single ingest reads
+  both without special-casing.
+- **`backend.kind`** reads from `backend.device_kind`, so
+  `DEVICE=cuda` at boot propagates into the stream cleanly.
 
-Serving telemetry rides on toy/v1's existing `eval` event with a
-new `phase: "serve"` value:
+### `inference` (one per request)
+
+Per-request serving telemetry is a **distinct event kind** rather
+than an overload of toy/v1's `eval` (which is reserved for
+held-out evaluation results during training: `loss`, `ppl`,
+`samples`, etc.). Sharing the `kind` would break tao's existing
+ingest (which keys on `kind` alone to find the "final eval"),
+and a served completion has none of `eval`'s defining fields
+anyway. Same envelope shape — only the `kind` value is new.
 
 ```json
 {
-  "kind": "eval",
-  "phase": "serve",
-  "t": 87.42,
-  "name": "request",
+  "kind":              "inference",
+  "phase":             "serve",
+  "t":                 12.4,
+  "model":             "smollm2-135m",
+  "prompt_tokens":     12,
+  "completion_tokens": 8,
+  "wall_us":           87000,
   "extra": {
-    "model": "smollm2-135m",
-    "prompt_tokens": 12,
-    "completion_tokens": 8,
-    "latency_us": 87000,
-    "sampling": {"temperature": 0.7, "max_tokens": 256},
-    "request_id": "cmpl-abc",
+    "sampling":     {"temperature": 0.7, "max_tokens": 256},
+    "request_id":   "cmpl-abc",
     "principal_id": "user:42"
   }
 }
 ```
 
-Per-request fields go in `extra` (the open-bag pattern toy/v1
-uses). Tep doesn't add new top-level fields beyond `kind / phase
-/ t / name / extra` — keeps the envelope stable.
+Stable per-request fields (`model`, `prompt_tokens`,
+`completion_tokens`, `wall_us`) are named top-level; caller-
+specific fields (`sampling`, `request_id`, `principal_id`) live
+in `extra` (the open-bag pattern toy/v1 uses for fields that
+vary per producer).
+
+**Status of the `kind` choice.** Tao's `ISSUES-FOR-TEP` makes
+the case for `kind: "inference"`; toy's earlier review proposed
+`kind: "eval", phase: "serve"`. The schema owner (toy) has the
+final say. This doc currently encodes tao's recommendation
+because:
+
+- Tao's downstream ingest breaks under the `eval` overload
+  (concrete cost).
+- Toy's "single envelope, single consumer" benefit is delivered
+  identically by either choice (the envelope shape doesn't
+  change; only the `kind` value does).
+- toy/v1's §Versioning explicitly welcomes new kinds as minor
+  revisions.
+
+If toy revises in favor of `eval+phase:"serve"`, this doc
+updates in lockstep and tao adds a one-line ingest guard.
 
 ### `step` (optional, per-token during streaming)
 
@@ -283,16 +316,21 @@ token in the streaming response:
 ```
 
 For backends that don't surface logprobs (toy today), the step
-event is not emitted — the `eval` event at request end is the
-only per-request record. Wiring logprobs into the decode loop is
-a separate toy-side issue; defer until a real consumer (e.g., a
-research-lab spec) needs it.
+event is not emitted — the `inference` event at request end is
+the only per-request record. Wiring logprobs into the decode
+loop is a separate backend-side issue; defer until a real
+consumer (e.g., a research-lab spec) needs it.
 
 ### `run_end` (one per server shutdown)
 
 ```json
-{ "kind": "run_end", "t": 28845.12, "reason": "ok",
-  "stats": {"requests": 4823, "errors": 2, "tokens_out": 1284013} }
+{
+  "kind":     "run_end",
+  "t":        28845.12,
+  "ended_at": "2026-05-26T03:34:46Z",
+  "reason":   "ok",
+  "stats":    {"requests": 4823, "errors": 2, "tokens_out": 1284013}
+}
 ```
 
 `reason` semantics (consistent with toy/v1):
@@ -316,24 +354,60 @@ correctness.
 
 ## Checkpoint loading
 
-Backend-side concern, not tep's. Common patterns:
+Backend-side concern, not tep's. Two modes, landing
+independently:
+
+### Mode A — Fixed model path (ships in 7.1)
 
 ```sh
-# Fixed model path (works today with toy's existing demo).
 MODEL_PATH=/srv/models/smollm2-135m.gguf ./serve -p 4567
-
-# Run directory + `latest` symlink (works once backends can
-# scan dirs + projects emit checkpoints to a known shape).
-TAO_RUN_DIR=/srv/runs/abc-2026-05-25 ./serve -p 4567
 ```
 
-The backend reads whichever env var(s) it cares about at boot,
-populates `list_models`, loads on demand from `generate_*`. Tep
-itself doesn't know about either env var.
+Works today against toy's existing
+`tep_demo/openai_api_smollm2.rb`. Backend reads the env var at
+boot, populates `list_models` with the single resolved file,
+loads on demand. **Tep's chunk 7.1 ships against this mode.**
 
-A future `Tep::Llm::OpenAI::Server.reload!` admin route can
-trigger a re-scan without restart — opt-in, lives in a 7.4+
-chunk if real demand surfaces.
+### Mode B — Run-directory auto-discovery (waits on backend)
+
+```sh
+TAO_RUN_DIR=/srv/runs/<run_key> ./serve -p 4567
+```
+
+Tao's run-directory layout convention:
+
+```
+runs/<run_key>/
+├── events.jsonl          # training stream (toy-emitted)
+├── run.json              # provenance manifest
+├── weights/
+│   ├── step_2000.gguf
+│   ├── step_4000.gguf
+│   └── latest -> step_4000.gguf
+└── artifacts/
+```
+
+Backend scans `weights/` for checkpoints, lists each via
+`list_models`, serves the latest by default. The
+`weights/latest` symlink convention lets the running server
+pick up new weights without restart (backend re-checks the
+symlink target on a TTL or per-request).
+
+**Blocked on a toy-side enable**: toy's training currently emits
+`events.jsonl` only, not weights. Once toy adds checkpoint
+writing (tracked toy-side), tao's scheduler maintains
+`weights/latest` after each successful step, and tep's
+run-directory mode is end-to-end.
+
+Tep doesn't know about either env var — that's a backend-side
+convention. `list_models` is the seam that supports both modes
+without tep caring which.
+
+### Future: hot reload
+
+A `Tep::Llm::OpenAI::Server.reload!` admin route can trigger a
+re-scan without restart — opt-in, lives in 7.4+ if demand
+surfaces. Backends can also self-watch.
 
 ## Identity and capabilities
 

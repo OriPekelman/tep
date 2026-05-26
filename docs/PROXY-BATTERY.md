@@ -57,15 +57,16 @@ Tep.get  "/v1/models",           api
 
 ## Filter shape
 
-Three filter chains, each runs in declaration order:
+Four filter chains, each runs in declaration order:
 
 ```ruby
-# before(req, upstream_req) — runs after request body is fully
-# received, before forwarding. upstream_req is mutable; tweak
-# its headers / path / query / body. Halt the chain entirely
-# by setting res.set_status + returning early (the proxy will
-# skip forwarding and send res directly to the client).
-api.before do |req, upstream_req|
+# before(req, res, upstream_req) — runs after request body is
+# fully received, before forwarding. upstream_req is mutable;
+# tweak its headers / path / query / body. res is the client-
+# facing response; setting res.set_status + returning early
+# short-circuits the chain (the proxy skips forwarding and
+# sends res directly to the client).
+api.before do |req, res, upstream_req|
   if !req.identity.may?(:call_upstream)
     res.set_status(403)
     res.body = "missing capability: call_upstream"
@@ -74,27 +75,70 @@ api.before do |req, upstream_req|
   upstream_req.headers["X-Forwarded-For"] = req.remote_host
 end
 
-# after(upstream_res, res) — runs after upstream sends its full
-# (non-streaming) response, before res is written to the client.
-# upstream_res is read-only; res is mutable. Use to transform
-# the final response, emit logs/metrics, etc.
-api.after do |upstream_res, res|
-  res.headers["X-Proxy-Latency-Ms"] = (...).to_s
+# after(req, upstream_res, res) — runs after upstream sends its
+# full (non-streaming) response, before res is written to the
+# client. upstream_res is read-only; res is mutable. Use to
+# transform the final response, emit logs/metrics, etc.
+#
+# ALSO runs when a `before` filter short-circuited: in that case
+# upstream_res is nil and res carries the short-circuit body. This
+# is deliberate — audit logging should see rejected requests too.
+api.after do |req, upstream_res, res|
+  res.headers["X-Proxy-Latency-Us"] = (...).to_s
 end
 
 # on_stream_chunk(chunk, out) — runs for each chunk of a
-# streaming response (chunked transfer encoding or SSE). out is
-# a Tep::Stream-shape writer; whatever you write goes to the
-# client. Drop a chunk by not calling out.write. Transform by
-# writing modified bytes. Emit additional chunks by calling
-# out.write multiple times.
+# streaming response (chunked transfer encoding or SSE). For
+# text/event-stream upstreams, each chunk is one complete SSE
+# event record (`event: ...\n` + zero or more `data: ...\n`
+# lines + `\n`). out is a Tep::Stream-shape writer; whatever
+# you write goes to the client. Drop a chunk by not calling
+# out.write. Transform by writing modified bytes. Emit
+# additional chunks by calling out.write multiple times.
 api.on_stream_chunk do |chunk, out|
   out.write(chunk)
 end
+
+# on_stream_end(req, out, stats) — fires exactly once when a
+# streaming response finishes (last chunk seen + upstream closed).
+# stats is a Hash the on_stream_chunk filters accumulated into
+# (chunk count, byte count, whatever the filter chain stored on
+# stats[:foo] = ...). Use this to emit one final telemetry event
+# at end-of-stream -- the streaming analog of `after`.
+api.on_stream_end do |req, out, stats|
+  EVENTS.write(req_id: req.headers["x-request-id"],
+               tokens_out: stats[:tokens],
+               wall_us: stats[:wall_us])
+end
 ```
 
-Filters run in order; multiple `before` / `after` / `on_stream_chunk`
-declarations stack.
+Filters run in order; multiple `before` / `after` /
+`on_stream_chunk` / `on_stream_end` declarations stack.
+
+The `stats` Hash passed to `on_stream_end` is the same Hash
+each `on_stream_chunk` invocation receives as a fourth optional
+argument (`|chunk, out, _, stats|`). Filters that accumulate
+across chunks (token counting, byte counting, parsing for an
+end-of-stream `[DONE]` marker) write to it.
+
+### SSE caveat
+
+For `text/event-stream` upstreams, tep dispatches each SSE event
+record as one chunk to `on_stream_chunk`. An event record can
+contain **multiple `data:` lines** per the SSE spec:
+
+```
+event: message
+data: line one
+data: line two
+
+```
+
+A filter that extracts data payloads must handle the multi-line
+shape, not just the first `data:` line. For OpenAI-shaped
+streams the events are single-line and the simple
+`event[/data:\s*(.+)/, 1]` pattern works; for other producers
+join the `data:` lines with `\n` per spec.
 
 ## DSL
 
@@ -109,9 +153,10 @@ proxy = Tep::Proxy.new(
   path_rewrite: ->(p) { p },
 )
 
-proxy.before { |req, up| ... }
-proxy.after  { |up_res, res| ... }
-proxy.on_stream_chunk { |chunk, out| ... }
+proxy.before          { |req, res, upstream_req|       ... }
+proxy.after           { |req, upstream_res, res|       ... }
+proxy.on_stream_chunk { |chunk, out, stats|            ... }
+proxy.on_stream_end   { |req, out, stats|              ... }
 
 # Mount as a handler at any tep route. One proxy serves many
 # routes; routing decisions happen at Tep.<verb> declaration time.
@@ -237,8 +282,8 @@ discovery on top of a proxy, they declare it explicitly
 | Chunk | Scope |
 |---|---|
 | **6.1** | `Tep::Proxy.new(upstream:)` base; `before` + `after` filter chains; non-streaming bodies; mount as `Tep::Handler` at any verb/path. |
-| **6.2** | Streaming proxy — chunked transfer encoding pass-through, SSE-aware `on_stream_chunk` for `text/event-stream` upstreams. |
-| **6.3** | `examples/api_gateway` (auth-attach + observability composition) + `examples/llm_gateway` (proxy a remote OpenAI with token-counting filter + events emission). |
+| **6.2** | Streaming proxy — chunked transfer encoding pass-through, SSE-aware `on_stream_chunk` for `text/event-stream` upstreams, **`on_stream_end` finalizer hook** for one-shot end-of-stream telemetry. |
+| **6.3** | `examples/api_gateway` (auth-attach + observability composition) + `examples/llm_gateway` (proxy a remote OpenAI with token-counting filter + per-request `inference` event emission via `on_stream_end`). |
 | **6.4+** | Multi-upstream router helper, request-body buffering limits, automatic retries with exponential backoff (opt-in), upstream connection pooling. |
 
 ## Spinel-related risks
@@ -284,9 +329,11 @@ discovery on top of a proxy, they declare it explicitly
 ## Open questions
 
 - **Filter ordering vs short-circuit.** When a `before` filter
-  short-circuits (sets `res` + returns early), should later
-  `before` filters run? v1 stops at the short-circuit. If
-  symmetry with Rack-style middleware matters, we revisit.
+  short-circuits (sets `res` + returns early), later `before`
+  filters do NOT run. The `after` chain DOES run — with
+  `upstream_res = nil` and `res` carrying the short-circuit
+  body — so audit logging sees rejected requests. (Set in this
+  revision; was open in the first draft.)
 - **Header allow-list / deny-list defaults.** Should hop-by-hop
   headers (`Connection`, `Keep-Alive`, `Transfer-Encoding`,
   `Upgrade`, `Proxy-Authorization`, `TE`, `Trailers`) be
