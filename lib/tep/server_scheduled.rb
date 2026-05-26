@@ -141,7 +141,7 @@ module Tep
             break
           end
 
-          req.consume_body(client)
+          req.consume_body_via_scheduler(client)
 
           res = Response.new
           Tep::APP.dispatch(req, res)
