@@ -946,6 +946,45 @@ post '/api/c/:id/stream' do
   stream s
 end
 
+# WebSocket variant of the streaming endpoint (Phase F). Client
+# opens one WS, sends one TEXT frame per user turn:
+#
+#     {"conv_id": 42, "content": "hello"}
+#
+# Server persists the user message, calls Tep::Llm.chat_stream
+# directly against the driver (Driver#write is a Streamer-shape
+# alias for #text), then persists the assistant reply once
+# chat_stream returns. One frame per delta — same wire shape as
+# the SSE route, just framed as WS TEXT chunks the JS receives
+# via onmessage. Multiple turns on the same socket; client just
+# keeps sending message frames.
+websocket "/api/c/ws" do |ws|
+  on_message do |evt|
+    conv_id = Tep::Json.get_int(evt.data, "conv_id")
+    content = Tep::Json.get_str(evt.data, "content")
+    if conv_id > 0 && content.length > 0
+      append_message(conv_id, "user", content)
+      msgs = conversation_history(conv_id)
+      client = Tep::Llm.new(BACKEND_URL)
+      client.set_model(MODEL)
+      if API_KEY.length > 0
+        client.set_api_key(API_KEY)
+      end
+      if SYSTEM_PROMPT.length > 0
+        client.set_system_prompt(SYSTEM_PROMPT)
+      end
+      full_reply = client.chat_stream(msgs, ws)
+      if full_reply.length > 0
+        append_message(conv_id, "assistant", full_reply)
+        if needs_title?(conv_id) && assistant_msg_count(conv_id) == 1
+          Tep::Job.enqueue("TitleJob", conv_id.to_s, DB_PATH)
+          JobWorker.process_one
+        end
+      end
+    end
+  end
+end
+
 # JSON: append user message, call backend, append assistant reply,
 # return the assistant reply. Synchronous; kept as a fallback /
 # debugging endpoint. Phase B's default for the JS client is the

@@ -93,6 +93,55 @@
     statusEl.textContent = on ? 'Thinking…' : '';
   }
 
+  // WebSocket streaming (Phase F). Single long-lived WS to
+  // /api/c/ws; each user turn sends one TEXT frame
+  // {"conv_id":N,"content":"..."}; server sends back SSE-shaped
+  // chunks (`data: {...}\n\n`) per LLM delta, the same wire
+  // shape the SSE route uses -- so the parsing loop below is
+  // shared. Falls back to SSE if WebSocket isn't available or
+  // the upgrade fails.
+  var chatWs = null;
+  var chatWsLi = null;
+  var chatWsFinalize = null;
+  function openChatWs() {
+    if (chatWs && chatWs.readyState === WebSocket.OPEN) return chatWs;
+    var proto = location.protocol === 'https:' ? 'wss://' : 'ws://';
+    var ws = new WebSocket(proto + location.host + '/api/c/ws');
+    var buf = '';
+    ws.onmessage = function (evt) {
+      // Each frame is one SSE-shaped chunk: `data: {...}\n\n`.
+      buf += evt.data;
+      var sep;
+      while ((sep = buf.indexOf('\n\n')) >= 0) {
+        var ev = buf.slice(0, sep);
+        buf = buf.slice(sep + 2);
+        if (!ev.startsWith('data: ')) continue;
+        var data = ev.slice(6);
+        if (data === '[DONE]') {
+          if (chatWsFinalize) { chatWsFinalize(); chatWsFinalize = null; }
+          continue;
+        }
+        try {
+          var obj = JSON.parse(data);
+          if (obj.content && chatWsLi) {
+            chatWsLi.dataset.raw = (chatWsLi.dataset.raw || '') + obj.content;
+            chatWsLi.innerHTML = renderMarkdown(chatWsLi.dataset.raw);
+            scrollToEnd();
+          }
+        } catch (e) { /* ignore malformed */ }
+      }
+    };
+    ws.onclose = function () {
+      chatWs = null;
+      if (chatWsFinalize) { chatWsFinalize(); chatWsFinalize = null; }
+    };
+    ws.onerror = function () {
+      // Let onclose fire; the caller's finalize closes out the UI.
+    };
+    chatWs = ws;
+    return ws;
+  }
+
   formEl.addEventListener('submit', function (ev) {
     ev.preventDefault();
     var content = inputEl.value.trim();
@@ -108,9 +157,35 @@
     assistantLi.dataset.raw = '';
     messagesEl.appendChild(assistantLi);
 
+    chatWsLi = assistantLi;
+    chatWsFinalize = function () {
+      setSending(false);
+      inputEl.focus();
+      setTimeout(refreshConvList, 6000);
+      chatWsLi = null;
+    };
+
+    if ('WebSocket' in window) {
+      try {
+        var ws = openChatWs();
+        var sendIt = function () {
+          ws.send(JSON.stringify({ conv_id: currentConvId, content: content }));
+        };
+        if (ws.readyState === WebSocket.OPEN) {
+          sendIt();
+        } else {
+          ws.addEventListener('open', sendIt, { once: true });
+        }
+        return;
+      } catch (e) {
+        // fall through to SSE
+      }
+    }
+
+    // SSE fallback (also handles older browsers + when WS
+    // can't open).
     var body = new URLSearchParams();
     body.set('content', content);
-
     fetch('/api/c/' + currentConvId + '/stream', {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -131,8 +206,6 @@
       .finally(function () {
         setSending(false);
         inputEl.focus();
-        // First reply may have triggered TitleJob -- refresh
-        // sidebar sooner than the 10s tick.
         setTimeout(refreshConvList, 6000);
       });
   });

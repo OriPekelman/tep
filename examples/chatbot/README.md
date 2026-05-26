@@ -73,18 +73,21 @@ closed):
 | `Tep::Security::Headers` | HSTS + X-Content-Type-Options + X-Frame-Options |
 | `Tep::Security::Cors` | API surface CORS preflight (`/api/v1/...`) |
 | `Tep::Jwt` | API bearer-token auth on `/api/v1/chat/completions` |
-| `Tep::Streamer` | SSE streaming of LLM chunks back to the browser |
+| `Tep::Streamer` | SSE streaming of LLM chunks (the `/api/c/:id/stream` fallback route) |
+| `Tep::WebSocket` | live chat over WS (the default `/api/c/ws` route); `Driver#write` is a Streamer-shape alias so `Tep::Llm.chat_stream` drives the socket directly |
 | `Tep::Job` | background conversation-title summarisation |
 | `Tep::Parallel` | multi-backend compare endpoint (sequential dispatch today; the genuine fork fan-out is blocked on [matz/spinel#575](https://github.com/matz/spinel/issues/575)) |
 | `Tep::Logger` | per-request trace to stderr |
 
-Phase F (migrate the live-chat transport from SSE to
-`Tep::WebSocket`) tracks inside
-[tep#8](https://github.com/OriPekelman/tep/issues/8). The
-`Tep::WebSocket` battery itself shipped in v0.5 -- see
-[`examples/websocket_echo.rb`](../websocket_echo.rb) for the DSL
-surface and `test/test_websocket_echo.rb` for an end-to-end
-handshake + frame round-trip.
+Phase F is done (closes [tep#11](https://github.com/OriPekelman/tep/issues/11)):
+the JS client opens one WebSocket to `/api/c/ws` and sends
+`{"conv_id":N,"content":"..."}` per turn; the server emits SSE-
+shaped chunks (`data: {...}\n\n`) per LLM delta as TEXT frames.
+The SSE-shaped wire keeps the parsing loop on both sides — the
+JS code that turned an SSE chunk into a markdown update now
+runs against WS-framed input unchanged. The HTTP SSE route
+(`POST /api/c/:id/stream`) stays as a fallback for older
+browsers / curl debugging.
 
 ## Source layout
 
