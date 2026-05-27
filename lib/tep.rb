@@ -61,6 +61,7 @@ require_relative "tep/assets"
 require_relative "tep/scheduler"
 require_relative "tep/shell"
 require_relative "tep/http"
+require_relative "tep/proxy"
 require_relative "tep/llm"
 require_relative "tep/websocket"
 require_relative "tep/parallel"
@@ -538,6 +539,23 @@ module Tep
   # parse_response and index_from are internal; let spinel infer
   # their types from the send_req call site rather than seeding
   # separately (which widens `out` to poly).
+
+  # Tep::Proxy seed -- a base-class Proxy instance pins the handler
+  # slot + every overridable hook signature so subclass call sites
+  # in user code resolve cleanly (same idiom as set_before(Filter.new)
+  # and the Parallel/Job seeds). handle() exercises the full forward
+  # path against a dead port (status 0 -> 502), which fails fast like
+  # the Tep::Http seed above.
+  _tep_seed_proxy     = Tep::Proxy.new("http://127.0.0.1:1")
+  _tep_seed_proxy_req = Tep::Request.new
+  _tep_seed_proxy_res = Response.new
+  _tep_seed_proxy_ureq = Tep::Proxy::UpstreamRequest.new
+  _tep_seed_proxy_ureq.set_header("k", "v")
+  _tep_seed_proxy.rewrite_path("/")
+  _tep_seed_proxy.before_forward(_tep_seed_proxy_req, _tep_seed_proxy_res, _tep_seed_proxy_ureq)
+  _tep_seed_proxy.after_forward(_tep_seed_proxy_req, Tep::Http::Response.new, _tep_seed_proxy_res)
+  _tep_seed_proxy.handle(_tep_seed_proxy_req, _tep_seed_proxy_res)
+  Tep::Proxy.hop_by_hop?("connection")
 
   # Tep::Shell.write seed.
   Tep::Shell.write("/dev/null", "")
