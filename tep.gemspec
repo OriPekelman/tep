@@ -37,8 +37,16 @@ Gem::Specification.new do |s|
   s.executables         = ["tep"]
   s.require_paths       = ["lib"]
 
-  # `bin/tep` uses Prism (bundled with Ruby >= 3.3) at build-time to
-  # parse the user's Sinatra-style source. No runtime Ruby
-  # dependencies -- the compiled binary embeds everything.
-  s.add_runtime_dependency "prism", "~> 1.0"
+  # `bin/tep` uses Prism (bundled with Ruby >= 3.4) at build-time to
+  # parse the user's Sinatra-style source. It is NOT a runtime
+  # dependency -- the compiled binary embeds everything, and Prism
+  # ships with the Ruby that runs the translator.
+  #
+  # Declared development-only on purpose: a consumer that does
+  # `gem "tep", path:/git:` + `bundle lock` (e.g. toy vendoring tep
+  # via the bundler-spinel / spinelgems convention) must NOT pull
+  # prism into its runtime lock -- prism is a native C-extension
+  # Spinel can't compile, so the compat probe would (correctly)
+  # reject it. Keeping it dev-only leaves the consumer's lock clean.
+  s.add_development_dependency "prism", "~> 1.0"
 end
