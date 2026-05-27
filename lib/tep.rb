@@ -64,6 +64,7 @@ require_relative "tep/http"
 require_relative "tep/proxy"
 require_relative "tep/events"
 require_relative "tep/llm"
+require_relative "tep/openai_server"
 require_relative "tep/websocket"
 require_relative "tep/parallel"
 require_relative "tep/job"
@@ -589,6 +590,20 @@ module Tep
   _tep_seed_events.run_end("ok")
   _tep_seed_events.rel_t
   Sock.sphttp_iso8601_utc(0)
+
+  # Tep::Llm::OpenAI::Server seed (Battery 7, chunk 7.1a). Pin the
+  # Backend slot + interface + the ModelsHandler dispatch through
+  # APP.openai_backend. serve! is NOT called here -- it mounts a route
+  # (a global side effect); its types self-pin from its body.
+  _tep_seed_oai_backend = Tep::Llm::OpenAI::Backend.new
+  Tep::APP.set_openai_backend(_tep_seed_oai_backend)
+  Tep::Llm::OpenAI::Server.use(_tep_seed_oai_backend)
+  _tep_seed_oai_backend.list_models
+  _tep_seed_oai_backend.supports_chat?
+  _tep_seed_oai_backend.device_kind
+  _tep_seed_oai_backend.supports_embeddings?
+  _tep_seed_oai_models = Tep::Llm::OpenAI::ModelsHandler.new
+  _tep_seed_oai_models.handle(_tep_seed_proxy_req, _tep_seed_proxy_res)
 
   # Tep::Shell.write seed.
   Tep::Shell.write("/dev/null", "")
