@@ -77,6 +77,15 @@ module Tep
       end
     end
 
+    # Unconditional body setter. Same poly-write rationale as
+    # set_body_if_empty (self is unambiguously Response here, so the
+    # `@body = s` codegens correctly), but always assigns -- used by
+    # Tep::Proxy, which writes the upstream body whether or not it's
+    # empty (a 204 / empty upstream body must overwrite, not skip).
+    def set_body(s)
+      @body = s
+    end
+
     def set_status(n); @status = n; end
 
     def halted_close?
