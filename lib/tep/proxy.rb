@@ -85,6 +85,61 @@ module Tep
       0
     end
 
+    # Streaming opt-in predicate. Return true to forward this request
+    # over a held-open connection and pump the upstream response
+    # through on_stream_chunk / on_stream_end (chunk 6.2) instead of
+    # the buffered before/after path. Default: false (buffered).
+    #
+    # tep uses a request-side opt-in rather than sniffing the upstream
+    # response Content-Type because (a) it keeps the non-streaming path
+    # on the unchanged buffered Tep::Http.send_req (no manual-connect
+    # tax on the common case), and (b) it matches how streaming APIs
+    # actually signal intent -- an OpenAI client sets `"stream": true`
+    # in the request body, so the proxy knows before it connects.
+    # An LLM gateway typically overrides this as:
+    #
+    #   def stream_request?(req)
+    #     Tep::Json.get_bool(req.raw_body, "stream")
+    #   end
+    def stream_request?(req)
+      false
+    end
+
+    # Per-chunk streaming hook (chunk 6.2). Called once per upstream
+    # body chunk -- one dechunked HTTP chunk for a chunked upstream,
+    # or one complete SSE event record ("...\n\n", including the
+    # trailing blank line) for a text/event-stream upstream. `out` is
+    # the Tep::Stream writer to the client; `stats` is a
+    # Tep::Proxy::StreamStats carried across the whole stream (the
+    # framework maintains stats.byte_count / stats.chunk_count;
+    # accumulate your own counters in stats.meta_bag["key"]). Default:
+    # pass the chunk through unchanged. Drop it by not calling
+    # out.write; transform by writing modified bytes; fan out by
+    # writing more than once.
+    #
+    # `chunk` is a Tep::Proxy::StreamChunk, NOT a bare String: read
+    # the bytes via `chunk.chunk_text`. The wrapper exists because spinel
+    # boxes a primitive String arg to poly when it flows through the
+    # poly-receiver dispatch into this overridable hook -- a bare
+    # String param would arrive poly and block String methods
+    # (chunk.include? etc.). An object param survives the dispatch as
+    # a typed pointer (same reason Tep::WebSocket passes `evt` with an
+    # evt.data accessor). See [[spinel-widening-dispatch]].
+    def on_stream_chunk(chunk, out, stats)
+      out.write(chunk.chunk_text)
+      0
+    end
+
+    # End-of-stream finalizer (chunk 6.2, #81). Fires exactly once
+    # after the last chunk has been emitted and the upstream closed
+    # (cleanly or via error -- stats.errored distinguishes). `out` is
+    # still writable, so a finalizer can emit one last frame (e.g. a
+    # closing SSE event). `stats` is the same object on_stream_chunk
+    # accumulated into. Default: no-op.
+    def on_stream_end(req, out, stats)
+      0
+    end
+
     # ---- Tep::Handler interface ----
 
     def handle(req, res)
@@ -110,6 +165,18 @@ module Tep
         # runs (audit), with an empty upstream Response.
         after_forward(req, Tep::Http::Response.new, res)
         return res.body
+      end
+
+      # Streaming branch (chunk 6.2). When the handler opts the
+      # request into streaming, forward over a held-open connection
+      # and pump the upstream body through on_stream_chunk to the
+      # client, firing on_stream_end once at the end. Requires the
+      # scheduled server (cooperative io_wait), same constraint as
+      # WebSocket. after_forward is NOT run for streamed responses
+      # (it's the non-streaming analog; on_stream_end is its
+      # streaming counterpart).
+      if stream_request?(req)
+        return start_streaming_forward(req, res, ureq)
       end
 
       url  = @upstream + ureq.path
@@ -139,6 +206,219 @@ module Tep
 
       after_forward(req, ures, res)
       res.body
+    end
+
+    # Streaming forward (chunk 6.2). Connects to the upstream, writes
+    # the request, reads just the response head, then hands the still-
+    # open fd to a ProxyStreamer via res.start_stream -- the server
+    # later drives streamer.pump, which recv-loops the upstream body
+    # and dispatches it through on_stream_chunk / on_stream_end.
+    #
+    # Returns "" (the streamed body goes out via the streamer, not the
+    # buffered res.body). On connect/scheme/head-read failure, sets a
+    # 502 and returns "" without starting a stream.
+    def start_streaming_forward(req, res, ureq)
+      url   = @upstream + ureq.path
+      parts = Tep::Url.split_url(url)
+      if parts["scheme"] != "http"
+        res.set_status(502)
+        return ""
+      end
+      host = parts["host"]
+      port = parts["port"].to_i
+      path = parts["path"]
+      if parts["query"].length > 0
+        path = path + "?" + parts["query"]
+      end
+
+      fd = Sock.sphttp_connect(host, port)
+      if fd < 0
+        res.set_status(502)
+        return ""
+      end
+      Sock.sphttp_set_nonblock(fd)
+
+      head = ureq.verb + " " + path + " HTTP/1.1\r\n" +
+             "Host: " + host + "\r\n" +
+             "Connection: close\r\n"
+      ureq.headers.each do |k, v|
+        head = head + k + ": " + v + "\r\n"
+      end
+      if ureq.body.length > 0
+        head = head + "Content-Length: " + ureq.body.length.to_s + "\r\n"
+      end
+      head = head + "\r\n"
+      if Sock.sphttp_write_str(fd, head) < 0
+        Sock.sphttp_close(fd)
+        res.set_status(502)
+        return ""
+      end
+      if ureq.body.length > 0
+        if Sock.sphttp_write_str(fd, ureq.body) < 0
+          Sock.sphttp_close(fd)
+          res.set_status(502)
+          return ""
+        end
+      end
+
+      uh = Tep::Proxy.read_upstream_head(fd)
+      if !uh.ok
+        Sock.sphttp_close(fd)
+        res.set_status(502)
+        return ""
+      end
+
+      res.set_status(uh.status)
+      # Copy upstream headers minus hop-by-hop, content-length (the
+      # client side is chunked -- no fixed length), and transfer-
+      # encoding (the server writer re-applies chunked itself).
+      uh.headers.each do |k, v|
+        lc = k.downcase
+        if !Tep::Proxy.hop_by_hop?(k) && lc != "content-length"
+          res.headers[k] = v
+        end
+      end
+
+      streamer = Tep::Proxy::ProxyStreamer.new
+      streamer.proxy      = self
+      streamer.fd         = fd
+      streamer.leftover   = uh.leftover
+      streamer.is_chunked = uh.is_chunked
+      streamer.is_sse     = uh.is_sse
+      streamer.req        = req
+      res.start_stream(streamer)
+      ""
+    end
+
+    # The streaming pump, called from ProxyStreamer#pump as
+    # @proxy.run_stream(...). It lives here, on Tep::Proxy, rather
+    # than on the streamer so that on_stream_chunk / on_stream_end
+    # below are invoked as plain (implicit-self) calls. spinel
+    # resolves an implicit-self call inside a base-class method
+    # polymorphically -- it includes every subclass arm -- so a
+    # subclass's overrides are reached. A call through the streamer's
+    # @proxy slot (statically Tep::Proxy) would bind only the base
+    # hooks. Same reason rewrite_path / stream_request? (implicit-self
+    # from handle) dispatch to overrides but a slot call would not.
+    #
+    # Recv-loops the held-open upstream fd: dechunks (chunked
+    # upstream), splits SSE event records (text/event-stream), and
+    # dispatches each unit through dispatch_one. Fires on_stream_end
+    # once at EOF / timeout. Cooperative -- parks on io_wait between
+    # recvs, so requires Tep::Server::Scheduled.
+    def run_stream(out, fd, leftover, is_chunked, is_sse, req)
+      stats    = Tep::Proxy::StreamStats.new
+      buf      = leftover    # raw (possibly chunked) bytes
+      body_buf = ""          # dechunked bytes awaiting SSE split
+      done     = false
+      while !done
+        if is_chunked
+          consumed = Tep::Llm.dechunk_consume(buf)
+          buf      = Tep::Llm.dechunk_leftover(buf)
+          if consumed.length > 0
+            body_buf = body_buf + consumed
+          end
+        else
+          body_buf = body_buf + buf
+          buf      = ""
+        end
+
+        if is_sse
+          body_buf = drain_events(out, stats, body_buf)
+        else
+          if body_buf.length > 0
+            dispatch_one(out, stats, body_buf)
+            body_buf = ""
+          end
+        end
+
+        ready = Tep::Scheduler.io_wait(fd, Tep::Scheduler::READ, 60)
+        if ready == 0
+          stats.errored = true
+          done = true
+        else
+          more = Sock.sphttp_recv_some(fd, 4096)
+          if more.length == 0
+            done = true        # clean EOF
+          else
+            buf = buf + more
+          end
+        end
+      end
+
+      # Flush a trailing partial SSE event (some upstreams omit the
+      # final blank line before closing).
+      if is_sse && body_buf.length > 0
+        drain_events(out, stats, body_buf + "\n\n")
+      end
+
+      Sock.sphttp_close(fd)
+      on_stream_end(req, out, stats)
+      0
+    end
+
+    # Split body_buf into complete "\n\n"-terminated SSE event records
+    # and dispatch each (the record includes the trailing blank line,
+    # per the doc's "data: {...}\n\n" contract). Returns the
+    # unconsumed tail.
+    def drain_events(out, stats, body_buf)
+      while true
+        sep = Tep.str_find(body_buf, "\n\n", 0)
+        if sep < 0
+          return body_buf
+        end
+        relay_buf = body_buf[0, sep + 2]
+        body_buf  = body_buf[sep + 2, body_buf.length - sep - 2]
+        dispatch_one(out, stats, relay_buf)
+      end
+      body_buf
+    end
+
+    # Count one unit + dispatch it to on_stream_chunk via implicit
+    # self (polymorphic -- reaches subclass overrides). `relay_buf`
+    # is named distinctly from `chunk` / `frame`: spinel unifies
+    # param types by name file-wide, and both of those names carry
+    # foreign types (poly hook param / WS int-array) that would
+    # mis-type this String. See [[spinel-widening-dispatch]].
+    def dispatch_one(out, stats, relay_buf)
+      stats.byte_count  = stats.byte_count + relay_buf.length
+      stats.chunk_count = stats.chunk_count + 1
+      on_stream_chunk(Tep::Proxy::StreamChunk.new(relay_buf), out, stats)
+      0
+    end
+
+    # Read an upstream response head (status line + headers up to the
+    # blank line) cooperatively. Returns a Tep::Proxy::UpstreamHead
+    # carrying the parsed status, the per-name header bag, the
+    # chunked / SSE flags, the body bytes already read past the head
+    # (leftover -- handed to the streamer so no bytes are lost), and
+    # an ok flag (false on timeout / EOF before the head completed).
+    def self.read_upstream_head(fd)
+      out = Tep::Proxy::UpstreamHead.new
+      buf = ""
+      while true
+        ready = Tep::Scheduler.io_wait(fd, Tep::Scheduler::READ, 60)
+        if ready == 0
+          return out          # timeout -- ok stays false
+        end
+        chunk = Sock.sphttp_recv_some(fd, 4096)
+        if chunk.length == 0
+          return out          # EOF before head completed
+        end
+        buf = buf + chunk
+        eoh = Tep.str_find(buf, "\r\n\r\n", 0)
+        if eoh >= 0
+          header_blob = buf[0, eoh]
+          out.leftover = buf[eoh + 4, buf.length - eoh - 4]
+          out.fill_from(header_blob)
+          out.ok = true
+          return out
+        end
+        if buf.length > 65535
+          return out          # head too large -- bail
+        end
+      end
+      out
     end
 
     # RFC 7230 §6.1 hop-by-hop headers: meaningful only for a single
@@ -173,6 +453,143 @@ module Tep
 
       def set_header(k, v)
         @headers[k] = v
+      end
+    end
+
+    # Parsed upstream response head, produced by read_upstream_head.
+    # `fill_from` parses a header blob ("Status-Line\r\nH: v\r\n...",
+    # no trailing blank line) into status + the downcased-name header
+    # bag + the chunked / SSE transport flags.
+    class UpstreamHead
+      attr_accessor :status, :headers, :is_chunked, :is_sse, :leftover, :ok
+
+      def initialize
+        @status     = 0
+        @headers    = Tep.str_hash
+        @is_chunked = false
+        @is_sse     = false
+        @leftover   = ""
+        @ok         = false
+      end
+
+      def fill_from(blob)
+        eol = Tep.str_find(blob, "\r\n", 0)
+        if eol < 0
+          return 0
+        end
+        line = blob[0, eol]
+        sp1 = Tep.str_find(line, " ", 0)
+        if sp1 >= 0
+          rest = line[sp1 + 1, line.length - sp1 - 1]
+          sp2 = Tep.str_find(rest, " ", 0)
+          if sp2 >= 0
+            @status = rest[0, sp2].to_i
+          else
+            @status = rest.to_i
+          end
+        end
+        # Header lines.
+        pos = eol + 2
+        while pos < blob.length
+          neol = Tep.str_find(blob, "\r\n", pos)
+          stop = neol
+          if stop < 0
+            stop = blob.length
+          end
+          line2 = blob[pos, stop - pos]
+          ci = Tep.str_find(line2, ":", 0)
+          if ci > 0
+            name = line2[0, ci].downcase
+            vpos = ci + 1
+            # skip one leading space
+            if vpos < line2.length && line2[vpos, 1] == " "
+              vpos += 1
+            end
+            val = line2[vpos, line2.length - vpos]
+            @headers[name] = val
+            if name == "transfer-encoding" && Tep.str_find(val.downcase, "chunked", 0) >= 0
+              @is_chunked = true
+            end
+            if name == "content-type" && val.downcase.start_with?("text/event-stream")
+              @is_sse = true
+            end
+          end
+          if neol < 0
+            return 0
+          end
+          pos = neol + 2
+        end
+        0
+      end
+    end
+
+    # One unit handed to on_stream_chunk: a dechunked HTTP chunk or a
+    # complete SSE event record. Read the bytes via `chunk_text`.
+    #
+    # Two spinel constraints shape this:
+    #  * The hook param is poly-boxed (it flows through the poly
+    #    on_stream_chunk dispatch), so a bare String would arrive poly
+    #    and block String methods. Wrapping in an object lets the hook
+    #    recover a concrete String via the accessor.
+    #  * The accessor is named `chunk_text`, not `text`: a poly value's
+    #    method call resolves by name across ALL classes, and `text`
+    #    collides with Tep::WebSocket::Driver#text (returns int). A
+    #    name with exactly one definition resolves cleanly to a String.
+    #    See [[spinel-widening-dispatch]].
+    class StreamChunk
+      attr_accessor :chunk_text
+
+      def initialize(chunk_text)
+        @chunk_text = chunk_text
+      end
+    end
+
+    # Per-stream telemetry, carried across every on_stream_chunk call
+    # and into on_stream_end. The framework maintains byte_count /
+    # chunk_count (input bytes dispatched, chunk/event count) and
+    # errored (set when the upstream stalls past the io_wait timeout
+    # or closes mid-frame). Accumulate custom counters (tokens, etc.)
+    # in the `meta_bag` bag -- a typed object rather than the doc's
+    # stats[:sym] hash because spinel hashes are single-value-typed
+    # (same reason Tep::Llm::StreamState is a class).
+    #
+    # Field names are deliberately collision-free: spinel unifies
+    # field/accessor types by NAME file-wide. `bytes` collides with
+    # String#bytes (int-array) and `data` collides with WebSocket
+    # Event#data (String) -- either would mis-type these fields. Hence
+    # byte_count / chunk_count / meta_bag. See [[spinel-widening-dispatch]].
+    class StreamStats
+      attr_accessor :byte_count, :chunk_count, :errored, :meta_bag
+
+      def initialize
+        @byte_count  = 0
+        @chunk_count = 0
+        @errored     = false
+        @meta_bag    = Tep.str_hash
+      end
+    end
+
+    # Thin Streamer shim. Holds the held-open upstream fd + state and
+    # delegates the actual pump to @proxy.run_stream. The work lives
+    # on Tep::Proxy (not here) so the per-chunk / end hooks dispatch
+    # through `self` -- a polymorphic-self call inside a base-Proxy
+    # method reaches subclass overrides, whereas a call through this
+    # object's @proxy slot (statically base-typed) would only ever hit
+    # the base hooks. See run_stream's comment + [[spinel-widening-dispatch]].
+    class ProxyStreamer < Tep::Streamer
+      attr_accessor :proxy, :fd, :leftover, :is_chunked, :is_sse, :req
+
+      def initialize
+        @proxy      = Tep::Proxy.new("")
+        @fd         = -1
+        @leftover   = ""
+        @is_chunked = false
+        @is_sse     = false
+        @req        = Tep::Request.new
+      end
+
+      def pump(out)
+        @proxy.run_stream(out, @fd, @leftover, @is_chunked, @is_sse, @req)
       end
     end
   end
