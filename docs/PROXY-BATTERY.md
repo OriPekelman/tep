@@ -385,7 +385,7 @@ discovery on top of a proxy, they declare it explicitly
 |---|---|
 | **6.1** ✅ | `Tep::Proxy.new(upstream)` base; `before_forward` + `after_forward` overridable hooks; non-streaming bodies; hop-by-hop header stripping; connect-failure → 502; mount as `Tep::Handler` at any verb/path. Block-form DSL deferred to #88. |
 | **6.2** ✅ | Streaming proxy — `stream_request?` opt-in, chunked + SSE-aware `on_stream_chunk(chunk, out, stats)` (chunk = `StreamChunk`, read `chunk.chunk_text`), **`on_stream_end(req, out, stats)` finalizer** + carried `StreamStats`. Requires the scheduled server. |
-| **6.3** | `examples/api_gateway` (auth-attach + observability composition) + `examples/llm_gateway` (proxy a remote OpenAI with token-counting filter + per-request `inference` event emission via `on_stream_end`). |
+| **6.3** ✅ | `examples/api_gateway` (capability gate + auth-attach + observability, buffered path) + `examples/llm_gateway` (streaming proxy + per-request `inference` event via `on_stream_end` + `Tep::Events`). |
 | **6.4+** | Multi-upstream router helper, request-body buffering limits, automatic retries with exponential backoff (opt-in), upstream connection pooling. |
 
 ## Spinel-related risks
