@@ -6,7 +6,17 @@ gateways, observability layers, key-swap proxies, multi-upstream
 routing, mirror-to-staging, fan-out, LLM proxies. Whatever sits
 between a client and a real upstream HTTP server.
 
-> Status: **chunk 6.1 shipped** (`lib/tep/proxy.rb` — non-streaming
+> Status: **chunks 6.1 + 6.2 shipped** (`lib/tep/proxy.rb`). 6.1:
+> non-streaming forward + `before_forward` / `after_forward`. 6.2:
+> streaming forward (chunked + SSE) via `stream_request?` opt-in,
+> `on_stream_chunk(chunk, out, stats)` (chunk is a `StreamChunk` —
+> read `chunk.chunk_text`), `on_stream_end(req, out, stats)`, carried
+> `StreamStats` (byte_count / chunk_count / errored / meta_bag).
+> Streaming requires the scheduled server. The block-form DSL (#88)
+> and https:// upstreams are still draft. (Older one-shot note below.)
+>
+> Old status line follows for context:
+> **chunk 6.1 shipped** (`lib/tep/proxy.rb` — non-streaming
 > forward + `before_forward` / `after_forward` hooks via subclass-
 > override; see "Filter shape" note below). Streaming (6.2) and the
 > block-form DSL are still draft. Sister doc:
@@ -155,6 +165,50 @@ each `on_stream_chunk` invocation receives as a fourth optional
 argument (`|chunk, out, _, stats|`). Filters that accumulate
 across chunks (token counting, byte counting, parsing for an
 end-of-stream `[DONE]` marker) write to it.
+
+> **Shipped form (chunk 6.2): subclass + override + opt-in.** As with
+> 6.1, the block DSL above is the target API; the shipped form is
+> subclass-override, and streaming is opt-in per request:
+>
+> ```ruby
+> class LlmGateway < Tep::Proxy
+>   # Opt this request into streaming (default: false -> buffered
+>   # before_forward/after_forward path). Request-side, not response
+>   # sniffing -- the client signals intent ("stream": true), and the
+>   # buffered path stays on the unchanged Tep::Http.send_req.
+>   def stream_request?(req)
+>     Tep::Json.get_bool(req.raw_body, "stream")
+>   end
+>
+>   # One call per dechunked HTTP chunk / per SSE event record.
+>   # `chunk` is a Tep::Proxy::StreamChunk -- read the bytes via
+>   # chunk.chunk_text (an object, not a bare String, so String
+>   # methods work in the override despite spinel's poly-boxing of
+>   # virtual-hook params). `out` writes to the client.
+>   def on_stream_chunk(chunk, out, stats)
+>     out.write(chunk.chunk_text)        # transform / drop / fan out
+>     0
+>   end
+>
+>   # Fires exactly once at end-of-stream (clean EOF or error --
+>   # stats.errored distinguishes). `stats` is a Tep::Proxy::StreamStats:
+>   # framework-maintained byte_count / chunk_count, plus meta_bag (a
+>   # String=>String bag) for your own counters. This is the seam for
+>   # one per-request telemetry event.
+>   def on_stream_end(req, out, stats)
+>     EVENTS.write(chunks: stats.chunk_count, bytes: stats.byte_count)
+>     0
+>   end
+> end
+> ```
+>
+> Notes vs the block sketch: `after_forward` does NOT run for streamed
+> responses (`on_stream_end` is its streaming counterpart); `stats` is
+> a typed `StreamStats` object, not a `stats[:sym]` hash (spinel hashes
+> are single-value-typed); and streaming requires the scheduled server
+> (the pump parks on `io_wait`). Field/param names are collision-free
+> on purpose (`chunk_text` not `text`, `byte_count`/`chunk_count`/
+> `meta_bag` not `bytes`/`chunks`/`data`) — see lib/tep/proxy.rb for why.
 
 ### SSE caveat
 
@@ -317,7 +371,7 @@ discovery on top of a proxy, they declare it explicitly
 | Chunk | Scope |
 |---|---|
 | **6.1** ✅ | `Tep::Proxy.new(upstream)` base; `before_forward` + `after_forward` overridable hooks; non-streaming bodies; hop-by-hop header stripping; connect-failure → 502; mount as `Tep::Handler` at any verb/path. Block-form DSL deferred to #88. |
-| **6.2** | Streaming proxy — chunked transfer encoding pass-through, SSE-aware `on_stream_chunk` for `text/event-stream` upstreams, **`on_stream_end` finalizer hook** for one-shot end-of-stream telemetry. |
+| **6.2** ✅ | Streaming proxy — `stream_request?` opt-in, chunked + SSE-aware `on_stream_chunk(chunk, out, stats)` (chunk = `StreamChunk`, read `chunk.chunk_text`), **`on_stream_end(req, out, stats)` finalizer** + carried `StreamStats`. Requires the scheduled server. Block-form DSL deferred to #88. |
 | **6.3** | `examples/api_gateway` (auth-attach + observability composition) + `examples/llm_gateway` (proxy a remote OpenAI with token-counting filter + per-request `inference` event emission via `on_stream_end`). |
 | **6.4+** | Multi-upstream router helper, request-body buffering limits, automatic retries with exponential backoff (opt-in), upstream connection pooling. |
 

@@ -556,6 +556,25 @@ module Tep
   _tep_seed_proxy.after_forward(_tep_seed_proxy_req, Tep::Http::Response.new, _tep_seed_proxy_res)
   _tep_seed_proxy.handle(_tep_seed_proxy_req, _tep_seed_proxy_res)
   Tep::Proxy.hop_by_hop?("connection")
+  # Streaming surface (chunk 6.2). Pin the hook signatures + the
+  # UpstreamHead parser + the proxy's non-IO pump helpers. run_stream,
+  # pump and read_upstream_head are NOT called here -- they do blocking
+  # io_wait on a real fd; their param/return types self-pin from their
+  # bodies, and ProxyStreamer flows into res.start_stream from
+  # start_streaming_forward (statically reachable from handle), which
+  # wires ProxyStreamer.pump (-> run_stream) into the Streamer dispatch.
+  _tep_seed_proxy.stream_request?(_tep_seed_proxy_req)
+  _tep_seed_pstats = Tep::Proxy::StreamStats.new
+  _tep_seed_pchunk = Tep::Proxy::StreamChunk.new("data: x\n\n")
+  _tep_seed_proxy.on_stream_chunk(_tep_seed_pchunk, _tep_seed_stream, _tep_seed_pstats)
+  _tep_seed_proxy.on_stream_end(_tep_seed_proxy_req, _tep_seed_stream, _tep_seed_pstats)
+  _tep_seed_proxy.drain_events(_tep_seed_stream, _tep_seed_pstats, "data: x\n\n")
+  _tep_seed_proxy.dispatch_one(_tep_seed_stream, _tep_seed_pstats, "data: x\n\n")
+  _tep_seed_uhead = Tep::Proxy::UpstreamHead.new
+  _tep_seed_uhead.fill_from("HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked")
+  _tep_seed_pstreamer = Tep::Proxy::ProxyStreamer.new
+  _tep_seed_pstreamer.proxy = _tep_seed_proxy
+  _tep_seed_proxy_res.start_stream(_tep_seed_pstreamer)
 
   # Tep::Shell.write seed.
   Tep::Shell.write("/dev/null", "")
