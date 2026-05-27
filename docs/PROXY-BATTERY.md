@@ -6,20 +6,16 @@ gateways, observability layers, key-swap proxies, multi-upstream
 routing, mirror-to-staging, fan-out, LLM proxies. Whatever sits
 between a client and a real upstream HTTP server.
 
-> Status: **chunks 6.1 + 6.2 shipped** (`lib/tep/proxy.rb`). 6.1:
-> non-streaming forward + `before_forward` / `after_forward`. 6.2:
-> streaming forward (chunked + SSE) via `stream_request?` opt-in,
-> `on_stream_chunk(chunk, out, stats)` (chunk is a `StreamChunk` —
-> read `chunk.chunk_text`), `on_stream_end(req, out, stats)`, carried
-> `StreamStats` (byte_count / chunk_count / errored / meta_bag).
-> Streaming requires the scheduled server. The block-form DSL (#88)
-> and https:// upstreams are still draft. (Older one-shot note below.)
->
-> Old status line follows for context:
-> **chunk 6.1 shipped** (`lib/tep/proxy.rb` — non-streaming
-> forward + `before_forward` / `after_forward` hooks via subclass-
-> override; see "Filter shape" note below). Streaming (6.2) and the
-> block-form DSL are still draft. Sister doc:
+> Status: **chunks 6.1 + 6.2 + block-DSL (#88) shipped**
+> (`lib/tep/proxy.rb` + bin/tep). 6.1: non-streaming forward +
+> `before_forward` / `after_forward`. 6.2: streaming forward (chunked
+> + SSE) via `stream_request?` opt-in, `on_stream_chunk(chunk, out,
+> stats)` (chunk is a `StreamChunk` — read `chunk.chunk_text`),
+> `on_stream_end(req, out, stats)`, carried `StreamStats` (byte_count
+> / chunk_count / errored / meta_bag). #88: the `api.before do … end`
+> block DSL lowers to a generated subclass (see "Filter shape").
+> Streaming requires the scheduled server. https:// upstreams are
+> still draft. Sister doc:
 > [`OPENAI-SERVER-BATTERY.md`](OPENAI-SERVER-BATTERY.md) covers
 > the *origin-server* case (no upstream — tep is the source of
 > truth). The two batteries are independent; an OpenAI gateway
@@ -70,17 +66,34 @@ Tep.get  "/v1/models",           api
 
 ## Filter shape
 
-> **Shipped form (chunk 6.1): subclass + override.** The block DSL
-> below (`api.before do … end`) is the *target* API, but it needs a
-> bin/tep translator pass that doesn't exist yet (#88) — a
-> receiver-method call with a block can't lower to spinel without it
-> (`PtrArray<Block>` isn't representable). So 6.1 ships the lowering
-> target directly: subclass `Tep::Proxy` and override the hooks. The
-> imeths are named `before_forward` / `after_forward` (not bare
-> `before` / `after`) to avoid colliding with the 2-arg `before` /
-> `after` on `Tep::Filter` / `Security` / `Auth` under spinel's
-> same-name virtual dispatch. Same staging `Tep::LiveView` used
-> before its `Tep.live` auto-wire helper.
+> **Two equivalent forms now ship.** As of #88 the block DSL below
+> (`api.before do … end`) works — the bin/tep translator lowers it
+> into a generated `Tep::Proxy` subclass (the block bodies become
+> `before_forward` / `after_forward` / `on_stream_chunk` /
+> `on_stream_end` / `stream_request?` imeths, with `before`/`after`
+> renamed to `*_forward` to dodge spinel's same-name dispatch
+> collision with `Filter`/`Security`/`Auth`). The subclass-override
+> form (below the block example) is the direct equivalent — both
+> compile to the same thing; use whichever reads better.
+>
+> Block-DSL specifics: `chunk` in `on_stream_chunk` is a
+> `StreamChunk` (read `chunk.chunk_text`); the proxy var is mounted
+> via `Tep.<verb> "path", api` (the translator rewrites it to a
+> generated constant — passing a Proxy subclass through a *local* into
+> `Tep.<verb>` trips a spinel inference bug, a constant doesn't). Use
+> the proxy var only for mounts.
+>
+> ```ruby
+> api = Tep::Proxy.new("http://api.internal:8080")
+> api.before do |req, res, ureq|
+>   ureq.set_header("Authorization", "Bearer " + ENV["OPENAI_KEY"])
+>   false                                  # true short-circuits
+> end
+> api.after { |req, ures, res| Tep::Logger.info("up " + ures.status.to_s); 0 }
+> Tep.post "/v1/chat/completions", api
+> ```
+>
+> Subclass-override equivalent:
 >
 > ```ruby
 > class OpenAIProxy < Tep::Proxy
@@ -371,7 +384,7 @@ discovery on top of a proxy, they declare it explicitly
 | Chunk | Scope |
 |---|---|
 | **6.1** ✅ | `Tep::Proxy.new(upstream)` base; `before_forward` + `after_forward` overridable hooks; non-streaming bodies; hop-by-hop header stripping; connect-failure → 502; mount as `Tep::Handler` at any verb/path. Block-form DSL deferred to #88. |
-| **6.2** ✅ | Streaming proxy — `stream_request?` opt-in, chunked + SSE-aware `on_stream_chunk(chunk, out, stats)` (chunk = `StreamChunk`, read `chunk.chunk_text`), **`on_stream_end(req, out, stats)` finalizer** + carried `StreamStats`. Requires the scheduled server. Block-form DSL deferred to #88. |
+| **6.2** ✅ | Streaming proxy — `stream_request?` opt-in, chunked + SSE-aware `on_stream_chunk(chunk, out, stats)` (chunk = `StreamChunk`, read `chunk.chunk_text`), **`on_stream_end(req, out, stats)` finalizer** + carried `StreamStats`. Requires the scheduled server. |
 | **6.3** | `examples/api_gateway` (auth-attach + observability composition) + `examples/llm_gateway` (proxy a remote OpenAI with token-counting filter + per-request `inference` event emission via `on_stream_end`). |
 | **6.4+** | Multi-upstream router helper, request-body buffering limits, automatic retries with exponential backoff (opt-in), upstream connection pooling. |
 
