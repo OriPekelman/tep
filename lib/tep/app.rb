@@ -51,6 +51,12 @@ module Tep
     attr_accessor :broadcast_pg_enabled
     attr_accessor :broadcast_pg_channel
     attr_accessor :broadcast_pg_conn
+    # Tep::Llm::OpenAI::Server backend (Battery 7). Set by
+    # Server.use(backend) at boot; the route handlers dispatch through
+    # it per request. Seeded with a base Backend in lib/tep.rb (after
+    # openai_server.rb loads -- not in initialize, since the class
+    # isn't defined yet there), same pattern as broadcast_pg_conn.
+    attr_accessor :openai_backend
     attr_accessor :asset_bodies, :asset_mimes
     attr_accessor :sched_fibers, :sched_wake_at, :sched_current
     attr_accessor :sched_io_fd, :sched_io_mode, :sched_io_ready
@@ -151,6 +157,7 @@ module Tep
     def set_presence_pg_enabled(v);   @presence_pg_enabled   = v; end
     def set_presence_pg_worker_id(s); @presence_pg_worker_id = s; end
     def set_presence_pg_conn(c);      @presence_pg_conn      = c; end
+    def set_openai_backend(b);        @openai_backend        = b; end
     def set_not_found(h);         @nf_handler = h; end
 
     def dispatch(req, res)
