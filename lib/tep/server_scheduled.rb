@@ -146,7 +146,11 @@ module Tep
           res = Response.new
           Tep::APP.dispatch(req, res)
 
-          keep_alive = req.keep_alive? && !res.halted_close?
+          # Streaming responses use chunked Connection: close (same
+          # simplification as the prefork server) -- force the
+          # keep-alive loop to end after this response so the stream's
+          # terminator isn't followed by a stale read on the same fd.
+          keep_alive = req.keep_alive? && !res.halted_close? && !res.streaming
           Tep::Server::Scheduled.write_response(client, req, res, keep_alive)
           keep_going = keep_alive
         end
@@ -200,6 +204,38 @@ module Tep
           conn.run
           return 0
         end
+
+        # Streaming branch -- cooperative mirror of Tep::Server's
+        # streaming path (server.rb). Set by res.start_stream(streamer)
+        # in the handler. Writes a chunked-encoding head immediately,
+        # hands a Tep::Stream writer to the user's Streamer#pump, then
+        # emits the end-of-stream terminator. pump runs cooperatively:
+        # it parks on Tep::Scheduler.io_wait between writes (e.g. the
+        # proxy streamer waits on the upstream fd), so other fibers keep
+        # running while this stream is in flight. Connection: close --
+        # chunked keep-alive is legal but we keep it simple, matching
+        # the prefork server.
+        if res.streaming
+          res.headers["Transfer-Encoding"] = "chunked"
+          if !res.headers.key?("Content-Type")
+            res.headers["Content-Type"] = "text/event-stream"
+          end
+          reason = Tep.reason(res.status)
+          head = req.http_version + " " + res.status.to_s + " " + reason + "\r\n"
+          res.headers.each do |k, v|
+            head = head + k + ": " + v + "\r\n"
+          end
+          res.set_cookies.each do |line|
+            head = head + "Set-Cookie: " + line + "\r\n"
+          end
+          head = head + "Connection: close\r\n\r\n"
+          Sock.sphttp_write_str(client, head)
+          out = Tep::Stream.new(client)
+          res.streamer.pump(out)
+          Sock.sphttp_write_chunk_end(client)
+          return 0
+        end
+
         # Default Content-Type for inline-body responses. Matches
         # Tep::Server#send; without it, the Security::Headers nosniff
         # default leaves the browser refusing to interpret an erb
