@@ -604,6 +604,14 @@ module Tep
   _tep_seed_oai_backend.supports_embeddings?
   _tep_seed_oai_models = Tep::Llm::OpenAI::ModelsHandler.new
   _tep_seed_oai_models.handle(_tep_seed_proxy_req, _tep_seed_proxy_res)
+  # 7.1b /v1/completions surface.
+  Tep::Json.get_int_array("{}", "prompt")
+  _tep_seed_oai_sampling = Tep::Llm::OpenAI::Sampling.new
+  _tep_seed_oai_sampling.max_tokens = 0
+  _tep_seed_oai_comp = Tep::Llm::OpenAI::Completion.new
+  _tep_seed_oai_backend.generate_from_tokens("m", Tep::Json.get_int_array("{}", "prompt"), _tep_seed_oai_sampling)
+  _tep_seed_oai_completions = Tep::Llm::OpenAI::CompletionsHandler.new
+  _tep_seed_oai_completions.handle(_tep_seed_proxy_req, _tep_seed_proxy_res)
 
   # Tep::Shell.write seed.
   Tep::Shell.write("/dev/null", "")
