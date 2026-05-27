@@ -71,6 +71,10 @@ def translate(input_path)
   live_views    = []
   mcp_tools     = []
   mcp_resources = []
+  proxies       = []   # Tep::Proxy block-DSL (#88): one entry per
+                       # `var = Tep::Proxy.new(...)` + its .before/.after/
+                       # .on_stream_chunk/.on_stream_end/.stream_request?
+                       # block calls, lowered to a generated subclass.
   filters       = { "before" => [], "after" => [] }
   not_founds    = []
   startup_block = nil
@@ -100,6 +104,62 @@ def translate(input_path)
        node.receiver.name == :Tep
       handle_tep_live(node, live_views, warnings)
       return
+    end
+
+    # Proxy block-DSL (#88), part 1: `var = Tep::Proxy.new(...)`.
+    # Record the proxy var + rewrite the assignment to instantiate
+    # the generated subclass (TepProxy_<idx>), which carries the
+    # before/after/stream hooks collected below. The base
+    # `Tep::Proxy.new` would forward with no customization; the
+    # subclass is only emitted when at least one hook block is seen,
+    # but we always rewrite so the var name stays consistent.
+    if node.is_a?(Prism::LocalVariableWriteNode) && proxy_new_call?(node.value)
+      idx    = proxies.length
+      up_src = proxy_upstream_src(node.value, warnings)
+      proxies << { var: node.name.to_s, idx: idx, upstream: up_src, hooks: {} }
+      # Assign to a CONSTANT, not the original local. A Tep::Proxy
+      # subclass instance flowing through a *local* into Tep.<verb>
+      # widens rewrite_path's virtual `path` param to poly (poisoning
+      # Tep::App.guess_mime's `path` file-wide); the same instance via
+      # a constant compiles clean. Mounts are rewritten to the
+      # constant below.
+      passthrough << "TEPPROXY_#{idx} = TepProxy_#{idx}.new(#{up_src})"
+      return
+    end
+
+    # Proxy block-DSL (#88), part 2: `proxyvar.before do ... end`
+    # (and .after / .on_stream_chunk / .on_stream_end /
+    # .stream_request?). Collect the block onto the proxy entry +
+    # suppress from passthrough (a receiver-method call with a block
+    # can't lower -- spinel has no PtrArray<Block>; the block becomes
+    # an imeth on the generated subclass instead).
+    if call?(node) && node.receiver.is_a?(Prism::LocalVariableReadNode) &&
+       PROXY_HOOK_IMETH.key?(node.name.to_s) && node.block.is_a?(Prism::BlockNode)
+      pv = proxies.find { |p| p[:var] == node.receiver.name.to_s }
+      if pv
+        pv[:hooks][node.name.to_s] = {
+          params: block_param_list(node.block),
+          src:    block_source(node.block),
+        }
+        return
+      end
+    end
+
+    # Proxy block-DSL (#88), part 3: rewrite a mount of a proxy var --
+    # `Tep.<verb> "path", proxyvar` or bare `<verb> "path", proxyvar`
+    # (no block) -- to reference the generated constant instead of the
+    # (dropped) local. Reconstructed structurally so the handler arg
+    # becomes TEPPROXY_<idx>.
+    if call?(node) && PROXY_MOUNT_VERBS.include?(node.name.to_s) && node.block.nil?
+      margs = node.arguments&.arguments || []
+      if margs.length == 2 && margs[1].is_a?(Prism::LocalVariableReadNode)
+        pv = proxies.find { |p| p[:var] == margs[1].name.to_s }
+        if pv
+          recv = node.receiver ? "#{node.receiver.location.slice}." : ""
+          passthrough << "#{recv}#{node.name}(#{margs[0].location.slice}, TEPPROXY_#{pv[:idx]})"
+          return
+        end
+      end
     end
 
     # Only bare top-level method calls (no receiver) are candidates
@@ -163,6 +223,32 @@ def translate(input_path)
   # Top-level non-DSL statements (constants, classes, defs, ...).
   # Emitted verbatim before any DSL registrations so handler bodies
   # can refer to them.
+  # Proxy block-DSL subclasses (#88). Emitted BEFORE passthrough so
+  # the rewritten `var = TepProxy_<idx>.new(...)` assignment (which
+  # stays in passthrough, in its original position so its upstream
+  # argument can reference earlier top-level code) finds the class
+  # defined. Each subclass's imeths are the user's `.before` /
+  # `.after` / `.on_stream_chunk` / `.on_stream_end` /
+  # `.stream_request?` block bodies, lowered verbatim with the user's
+  # param names -- a thin 1:1 sugar over the subclass-override form.
+  # Method bodies run at request time, so referencing user constants
+  # defined later in passthrough is fine. A hookless proxy still gets
+  # a (trivial) subclass so its assignment resolves.
+  unless proxies.empty?
+    out << "# --- proxy block-DSL subclasses (#88) ---"
+    proxies.each do |p|
+      out << "class TepProxy_#{p[:idx]} < Tep::Proxy"
+      p[:hooks].each do |dsl_name, info|
+        imeth = PROXY_HOOK_IMETH[dsl_name]
+        out << "  def #{imeth}(#{info[:params]})"
+        out << indent(rewrite_block(info[:src], force_string: false), 4)
+        out << "  end"
+      end
+      out << "end"
+    end
+    out << ""
+  end
+
   unless passthrough.empty?
     out << "# --- top-level passthrough from #{File.basename(input_path)} ---"
     passthrough.each { |s| out << s }
@@ -1247,6 +1333,68 @@ def block_source(block_node)
   return "" if body.nil?
   src = body.location.slice
   src
+end
+
+# ---- Tep::Proxy block-DSL lowering (#88) ----
+
+# Maps a proxy block-DSL method name to the Tep::Proxy imeth the
+# generated subclass overrides. `before`/`after` rename to
+# `before_forward`/`after_forward` (the runtime hook names -- bare
+# before/after collide with Filter/Security/Auth under spinel's
+# same-name dispatch); the rest map 1:1.
+PROXY_HOOK_IMETH = {
+  "before"          => "before_forward",
+  "after"           => "after_forward",
+  "on_stream_chunk" => "on_stream_chunk",
+  "on_stream_end"   => "on_stream_end",
+  "stream_request?" => "stream_request?",
+}.freeze
+
+# Route verbs a proxy var can be mounted on (`Tep.<verb> "p", api`).
+PROXY_MOUNT_VERBS = %w[get post put patch delete head].freeze
+
+# True for a `Tep::Proxy.new(...)` / `Proxy.new(...)` call node.
+def proxy_new_call?(node)
+  return false unless node.is_a?(Prism::CallNode) && node.name == :new
+  recv = node.receiver
+  return false if recv.nil?
+  slice = recv.location.slice
+  slice == "Tep::Proxy" || slice == "Proxy"
+end
+
+# Extract the upstream argument source from a `Tep::Proxy.new(...)`
+# call, normalising the doc's keyword form (`upstream: "..."`) to the
+# positional arg the runtime initialize(upstream) takes. Returns the
+# raw source slice of the value expression.
+def proxy_upstream_src(node, warnings)
+  args = node.arguments&.arguments || []
+  if args.empty?
+    warnings << "Tep::Proxy.new needs an upstream argument; emitting empty"
+    return '""'
+  end
+  first = args.first
+  if first.is_a?(Prism::KeywordHashNode)
+    first.elements.each do |el|
+      next unless el.is_a?(Prism::AssocNode)
+      k = el.key
+      kn = k.is_a?(Prism::SymbolNode) ? k.unescaped : nil
+      return el.value.location.slice if kn == "upstream"
+    end
+    warnings << "Tep::Proxy.new: no `upstream:` key found; emitting empty"
+    return '""'
+  end
+  first.location.slice
+end
+
+# Comma-joined block parameter names ("req, res, ureq"). The generated
+# imeth uses the user's chosen names verbatim, so their block body
+# references resolve. Empty string for a paramless block.
+def block_param_list(block_node)
+  bp = block_node.parameters
+  return "" unless bp.is_a?(Prism::BlockParametersNode)
+  pp = bp.parameters
+  return "" unless pp.is_a?(Prism::ParametersNode)
+  pp.requireds.map { |r| r.is_a?(Prism::RequiredParameterNode) ? r.name.to_s : nil }.compact.join(", ")
 end
 
 def literal_string(node)
