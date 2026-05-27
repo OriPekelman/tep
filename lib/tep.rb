@@ -62,6 +62,7 @@ require_relative "tep/scheduler"
 require_relative "tep/shell"
 require_relative "tep/http"
 require_relative "tep/proxy"
+require_relative "tep/events"
 require_relative "tep/llm"
 require_relative "tep/websocket"
 require_relative "tep/parallel"
@@ -575,6 +576,19 @@ module Tep
   _tep_seed_pstreamer = Tep::Proxy::ProxyStreamer.new
   _tep_seed_pstreamer.proxy = _tep_seed_proxy
   _tep_seed_proxy_res.start_stream(_tep_seed_pstreamer)
+
+  # Tep::Events seed (toy/v1 emitter). Seeded with a disabled ("")
+  # path so the guards short-circuit before any File I/O at boot;
+  # the JSON-building bodies + sphttp_iso8601_utc call still compile
+  # statically, and the call args pin every param type.
+  _tep_seed_events = Tep::Events.new("")
+  _tep_seed_events.enabled?
+  _tep_seed_events.run_start("host", "cpu", "model", "/path", "{}")
+  _tep_seed_events.inference("model", 0, 0, 0, "{}")
+  _tep_seed_events.record_error
+  _tep_seed_events.run_end("ok")
+  _tep_seed_events.rel_t
+  Sock.sphttp_iso8601_utc(0)
 
   # Tep::Shell.write seed.
   Tep::Shell.write("/dev/null", "")

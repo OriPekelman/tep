@@ -469,4 +469,21 @@ const char *sphttp_shell_capture(const char *cmd, int max_bytes) {
     return sphttp_shell_buf;
 }
 
+/* ISO-8601 UTC timestamp ("2026-05-27T13:40:01Z") for the given
+ * Unix epoch seconds. Used by Tep::Events for the run_start /
+ * run_end wall-clock fields -- spinel's Time.now only exposes
+ * integer epoch seconds, and hand-rolling the calendar math (leap
+ * years, etc.) in Ruby isn't worth it. gmtime_r + strftime do it
+ * in one line. Returns a pointer to a static buffer (single-
+ * threaded server model; copy on the Ruby side if retained). */
+static char sphttp_iso8601_buf[32];
+const char *sphttp_iso8601_utc(int epoch_secs) {
+    time_t t = (time_t)epoch_secs;
+    struct tm tmv;
+    gmtime_r(&t, &tmv);
+    strftime(sphttp_iso8601_buf, sizeof(sphttp_iso8601_buf),
+             "%Y-%m-%dT%H:%M:%SZ", &tmv);
+    return sphttp_iso8601_buf;
+}
+
 /* File read/write moved to spinel's built-in File.read / File.write */

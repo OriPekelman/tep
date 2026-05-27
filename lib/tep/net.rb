@@ -30,6 +30,11 @@ module Sock
   ffi_func :sphttp_recv_frame_buf, [],              :str
   ffi_func :sphttp_recv_frame_len, [],              :int
 
+  # ISO-8601 UTC timestamp for an epoch-seconds value. Used by
+  # Tep::Events (toy/v1 envelope) for run_start/run_end wall-clock
+  # fields -- spinel's Time.now is integer-epoch only.
+  ffi_func :sphttp_iso8601_utc,   [:int],           :str
+
   ffi_func :sphttp_sendfile,      [:int, :str],     :int
   ffi_func :sphttp_filesize,      [:str],           :int
   ffi_func :sphttp_close,         [:int],           :int
