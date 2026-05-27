@@ -35,6 +35,10 @@ Gem::Specification.new do |s|
   s.files = Dir[
     "README.md", "LICENSE", "SINATRA_COMPAT.md",
     "Makefile",
+    # Declares tep's Spinel C-extension shape (the @TEP_*@ placeholder
+    # substitutions). Read by bin/tep and by `spinel-compat vendor` --
+    # must ship at the gem root so it survives `gem unpack`. See #98.
+    "spinel-ext.json",
     "bin/tep",
     "lib/**/*",
     "examples/**/*",
