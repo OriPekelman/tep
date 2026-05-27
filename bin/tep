@@ -30,6 +30,12 @@ require "pathname"
 
 LIB_DIR = File.expand_path("../lib", __dir__)
 
+# Build-time only: the FFI manifest declares the @TEP_*@ placeholder
+# shape (which file / .o / libs) so this substitution isn't a
+# hardcoded list duplicated across consumers. CRuby-only; lib/tep.rb
+# never requires it (see the file header). See OriPekelman/tep#97.
+require_relative "../lib/tep/ffi_manifest"
+
 # Resolve spinel: explicit env var wins, then a sibling
 # `../spinel/spinel` checkout (matches the typical dev layout where
 # tep and spinel are checked out side by side), then plain `spinel`
@@ -1798,15 +1804,14 @@ def inlined_tep_library
   end
   visit.call(File.join(LIB_DIR, "tep.rb"))
   combined = loaded.map { |l| "# --- inlined: " + relative_to_lib(l[:path]) + " ---\n" + l[:body] }.join("\n")
-  sphttp_o = ENV.fetch("TEP_SPHTTP_O", File.join(LIB_DIR, "tep", "sphttp.o"))
-  sqlite_o = ENV.fetch("TEP_SQLITE_O", File.join(LIB_DIR, "tep", "tep_sqlite.o"))
-  pg_o     = ENV.fetch("TEP_PG_O",     File.join(LIB_DIR, "tep", "tep_pg.o"))
-  pg_cflg  = ENV.fetch("TEP_PG_CFLAGS", "")
-  pg_libs  = ENV.fetch("TEP_PG_LIBS",  "-lpq")
-  combined = combined.gsub("@TEP_SPHTTP_O@", sphttp_o)
-  combined = combined.gsub("@TEP_SQLITE_O@", sqlite_o)
-  combined = combined.gsub("@TEP_PG_O@",     pg_o)
-  combined = combined.gsub("@TEP_PG_CFLAGS@", pg_cflg + " " + pg_libs)
+  # Resolve the @TEP_*@ placeholders from the FFI manifest (the single
+  # source of truth) rather than a hardcoded list. Same env-first
+  # behavior as before -- the Makefile exports TEP_SPHTTP_O /
+  # TEP_SQLITE_O / TEP_PG_O / TEP_PG_CFLAGS / TEP_PG_LIBS, which the
+  # manifest's resolver reads, defaulting to <LIB_DIR>/tep/*.o.
+  Tep::FFIManifest.bin_tep_subs(LIB_DIR).each do |placeholder, value|
+    combined = combined.gsub(placeholder, value)
+  end
   combined
 end
 
