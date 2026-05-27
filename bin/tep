@@ -28,7 +28,15 @@ require "fileutils"
 require "tmpdir"
 require "pathname"
 
-LIB_DIR = File.expand_path("../lib", __dir__)
+LIB_DIR   = File.expand_path("../lib", __dir__)
+REPO_ROOT = File.dirname(LIB_DIR)
+
+# The @TEP_*@ placeholder shape lives in spinel-ext.json at the gem
+# root -- the single source of truth shared with `spinel-compat
+# vendor` (which wires the C-ext for downstream consumers), so the
+# substitution list isn't duplicated per consumer. See
+# OriPekelman/tep#97 + #98 and spinelgems' docs/c-ext.md.
+require "json"
 
 # Resolve spinel: explicit env var wins, then a sibling
 # `../spinel/spinel` checkout (matches the typical dev layout where
@@ -1798,16 +1806,47 @@ def inlined_tep_library
   end
   visit.call(File.join(LIB_DIR, "tep.rb"))
   combined = loaded.map { |l| "# --- inlined: " + relative_to_lib(l[:path]) + " ---\n" + l[:body] }.join("\n")
-  sphttp_o = ENV.fetch("TEP_SPHTTP_O", File.join(LIB_DIR, "tep", "sphttp.o"))
-  sqlite_o = ENV.fetch("TEP_SQLITE_O", File.join(LIB_DIR, "tep", "tep_sqlite.o"))
-  pg_o     = ENV.fetch("TEP_PG_O",     File.join(LIB_DIR, "tep", "tep_pg.o"))
-  pg_cflg  = ENV.fetch("TEP_PG_CFLAGS", "")
-  pg_libs  = ENV.fetch("TEP_PG_LIBS",  "-lpq")
-  combined = combined.gsub("@TEP_SPHTTP_O@", sphttp_o)
-  combined = combined.gsub("@TEP_SQLITE_O@", sqlite_o)
-  combined = combined.gsub("@TEP_PG_O@",     pg_o)
-  combined = combined.gsub("@TEP_PG_CFLAGS@", pg_cflg + " " + pg_libs)
+  # Resolve the @TEP_*@ placeholders from spinel-ext.json (the single
+  # source of truth) rather than a hardcoded list. Same env-first
+  # behavior as before -- the Makefile exports TEP_SPHTTP_O /
+  # TEP_SQLITE_O / TEP_PG_O / TEP_PG_CFLAGS / TEP_PG_LIBS, which this
+  # reads, defaulting `.o` paths to the entry's source-derived path.
+  tep_ext_subs.each do |placeholder, value|
+    combined = combined.gsub(placeholder, value)
+  end
   combined
+end
+
+# Build the {@TEP_*@ => value} substitution dict from spinel-ext.json
+# for tep's OWN builds. Faithful to the historical env-first behavior:
+#   * a `.o` placeholder (entry has "source") resolves to its env
+#     override (TEP_<NAME>, the placeholder sans @) else the prebuilt
+#     .o derived from the entry's source (sphttp.c -> sphttp.o);
+#   * a cflags-only placeholder (no "source", e.g. @TEP_PG_CFLAGS@)
+#     resolves to TEP_PG_CFLAGS + TEP_PG_LIBS, the libs defaulting from
+#     the entry's pkg_config (libpq -> -lpq).
+# `spinel-compat vendor` reads the same file but resolves differently
+# (compiles the .c, runs pkg-config at the consumer) -- that's the
+# point: one declaration, two build paths. See spinelgems/docs/c-ext.md.
+def tep_ext_subs
+  ext_path = File.join(REPO_ROOT, "spinel-ext.json")
+  return {} unless File.exist?(ext_path)
+  subs = {}
+  JSON.parse(File.read(ext_path)).each do |entry|
+    placeholder = entry["placeholder"]
+    env_var = placeholder.delete("@")          # @TEP_SPHTTP_O@ -> TEP_SPHTTP_O
+    if entry["source"]
+      default_o = File.expand_path(entry["source"].sub(/\.c\z/, ".o"), REPO_ROOT)
+      subs[placeholder] = ENV.fetch(env_var, default_o)
+    else
+      cflags       = ENV.fetch(env_var, "")
+      libs_var     = env_var.sub(/_CFLAGS\z/, "_LIBS")
+      default_libs = entry["pkg_config"] ? "-l" + entry["pkg_config"].sub(/\Alib/, "") : ""
+      libs         = ENV.fetch(libs_var, default_libs)
+      subs[placeholder] = "#{cflags} #{libs}".strip
+    end
+  end
+  subs
 end
 
 # Split a Sinatra-style source on `__END__` and parse the trailing

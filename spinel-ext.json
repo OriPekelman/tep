@@ -1,0 +1,33 @@
+[
+  {
+    "name": "sphttp",
+    "placeholder": "@TEP_SPHTTP_O@",
+    "source": "lib/tep/sphttp.c",
+    "cflags": ["-O2"]
+  },
+  {
+    "name": "sqlite",
+    "placeholder": "@TEP_SQLITE_O@",
+    "source": "lib/tep/tep_sqlite.c",
+    "cflags": ["-O2"],
+    "pkg_config": "sqlite3",
+    "pkg_config_fallback": "-lsqlite3",
+    "optional": true,
+    "disabled_cflags": "-DNO_SQLITE"
+  },
+  {
+    "name": "pg",
+    "placeholder": "@TEP_PG_O@",
+    "source": "lib/tep/tep_pg.c",
+    "cflags": ["-O2"],
+    "optional": true,
+    "disabled_cflags": "-DNO_PG"
+  },
+  {
+    "name": "pg",
+    "placeholder": "@TEP_PG_CFLAGS@",
+    "pkg_config": "libpq",
+    "optional": true,
+    "disabled_cflags": "-lc"
+  }
+]
