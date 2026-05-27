@@ -208,6 +208,50 @@ module Tep
       Json.find_value_start(s, key) >= 0
     end
 
+    # Decode a flat JSON array of integers at `key` -> Array[Integer].
+    # The `prompt` of /v1/completions is a token-id array
+    # (`[464, 6193, ...]`). A missing or non-array value yields []
+    # (the tep typed-empty-array idiom); non-int elements are skipped.
+    def self.get_int_array(s, key)
+      out = [0]
+      out.delete_at(0)
+      pos = Json.find_value_start(s, key)
+      if pos < 0
+        return out
+      end
+      pos = Json.skip_ws(s, pos)
+      if pos >= s.length || s[pos] != "["
+        return out
+      end
+      pos += 1
+      while pos < s.length
+        pos = Json.skip_ws(s, pos)
+        if pos >= s.length
+          return out
+        end
+        c = s[pos]
+        if c == "]"
+          return out
+        elsif c == ","
+          pos += 1
+        elsif (c >= "0" && c <= "9") || c == "-"
+          out.push(Json.parse_int_value(s, pos))
+          # Advance past the number parse_int_value just consumed
+          # (optional '-' then digits).
+          if s[pos] == "-"
+            pos += 1
+          end
+          while pos < s.length && s[pos] >= "0" && s[pos] <= "9"
+            pos += 1
+          end
+        else
+          # Non-int element (string / object / etc.): skip it.
+          pos = Json.skip_value(s, pos)
+        end
+      end
+      out
+    end
+
     # ---- Internal helpers ----
 
     # Skip whitespace starting at `pos`, return the new position.
