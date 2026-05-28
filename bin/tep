@@ -1360,6 +1360,10 @@ PROXY_HOOK_IMETH = {
   # lowers to a subclass override; default behavior (return @upstream)
   # is preserved when the block isn't supplied.
   "pick_upstream"   => "pick_upstream",
+  # 6.5: per-request retry policy. `retry_policy do |req| ... end`
+  # lowers to a subclass override returning a Tep::Proxy::RetryPolicy.
+  # Default (no override) returns a no-retry policy.
+  "retry_policy"    => "retry_policy",
 }.freeze
 
 # Route verbs a proxy var can be mounted on (`Tep.<verb> "p", api`).

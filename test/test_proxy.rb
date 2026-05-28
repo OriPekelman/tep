@@ -378,3 +378,150 @@ class TestProxyBodyCaps < TepTest
                  body["error"]["message"])
   end
 end
+
+# Tep::Proxy 6.5: retries on transient upstream failures.
+class TestProxyRetries < TepTest
+  app_source <<~RB
+    require 'sinatra'
+
+    set :scheduler, :scheduled
+    set :workers, 1
+
+    # Upstream with a per-process attempt counter -- returns 503 on
+    # the first hit, 200 on every subsequent hit. Resets via a
+    # /reset route between tests so each test gets a clean slate.
+    class FlakyState
+      attr_accessor :hits
+      def initialize; @hits = 0; end
+    end
+    STATE = FlakyState.new
+
+    get '/upstream/flaky' do
+      STATE.hits = STATE.hits + 1
+      if STATE.hits == 1
+        res.set_status(503)
+        return "{\\"error\\":\\"unavailable\\"}"
+      end
+      res.headers["Content-Type"] = "text/plain"
+      "ok"
+    end
+
+    get '/upstream/always_503' do
+      res.set_status(503)
+      "{\\"error\\":\\"unavailable\\"}"
+    end
+
+    post '/reset_flaky' do
+      STATE.hits = 0
+      "0"
+    end
+
+    # Direct-subclass shape (same workaround as the body-caps tests:
+    # an intermediate-class initialize that sets new attrs widens
+    # incorrectly across multiple grandchildren).
+    class FlakyProxy < Tep::Proxy
+      def retry_policy(req)
+        p = Tep::Proxy::RetryPolicy.new
+        p.max_attempts = 3
+        # base_backoff_seconds stays 0 (test-friendly).
+        p
+      end
+      def rewrite_path(path)
+        "/upstream/flaky"
+      end
+    end
+
+    class GiveUpProxy < Tep::Proxy
+      def retry_policy(req)
+        p = Tep::Proxy::RetryPolicy.new
+        p.max_attempts = 2   # 1 retry; both hit the always-503
+        p
+      end
+      def rewrite_path(path)
+        "/upstream/always_503"
+      end
+    end
+
+    class NoRetryProxy < Tep::Proxy
+      # Default retry_policy (max_attempts=1) -- 503 surfaces as 503.
+      def rewrite_path(path)
+        "/upstream/flaky"
+      end
+    end
+
+    # Same flaky upstream but with an explicit 200ms backoff. Used
+    # to verify the ms-grained sleep actually fires.
+    class FlakyBackoffProxy < Tep::Proxy
+      def retry_policy(req)
+        p = Tep::Proxy::RetryPolicy.new
+        p.max_attempts    = 2
+        p.base_backoff_ms = 200
+        p
+      end
+      def rewrite_path(path)
+        "/upstream/flaky"
+      end
+    end
+
+    get '/p/flaky/:port' do
+      FlakyProxy.new("http://127.0.0.1:" + params[:port]).handle(req, res)
+      res.body
+    end
+
+    get '/p/giveup/:port' do
+      GiveUpProxy.new("http://127.0.0.1:" + params[:port]).handle(req, res)
+      res.body
+    end
+
+    get '/p/noretry/:port' do
+      NoRetryProxy.new("http://127.0.0.1:" + params[:port]).handle(req, res)
+      res.body
+    end
+
+    get '/p/flaky-backoff/:port' do
+      FlakyBackoffProxy.new("http://127.0.0.1:" + params[:port]).handle(req, res)
+      res.body
+    end
+  RB
+
+  def reset_flaky
+    post("/reset_flaky", "")
+  end
+
+  def test_retries_recover_from_one_503
+    reset_flaky
+    res = get("/p/flaky/#{@port}")
+    assert_equal "200", res.code
+    assert_equal "ok", res.body
+  end
+
+  def test_gives_up_after_max_attempts
+    res = get("/p/giveup/#{@port}")
+    assert_equal "503", res.code
+    # always_503 returns the error JSON body verbatim through the proxy.
+    body = JSON.parse(res.body)
+    assert_equal "unavailable", body["error"]
+  end
+
+  def test_no_retry_default_surfaces_503
+    reset_flaky
+    res = get("/p/noretry/#{@port}")
+    assert_equal "503", res.code   # would have been 200 with retry
+  end
+
+  def test_backoff_ms_is_actually_sub_second
+    # RetryPolicy uses sphttp_sleep_ms; verify a single retry with a
+    # 200ms backoff DOES sleep (call takes >= ~150ms) but isn't
+    # whole-second-resolution (i.e. nowhere near 1s for a 200ms cap).
+    # Sentinel: 200ms backoff + 1 retry => total elapsed < 1s but
+    # > 100ms. Spinel has no Float so we measure in epoch-int via
+    # the test driver's Time.now.
+    reset_flaky
+    t0 = Time.now
+    res = get("/p/flaky-backoff/#{@port}")
+    elapsed = Time.now - t0
+    assert_equal "200", res.code
+    assert_operator elapsed, :>, 0.1, "expected >= ~100ms (the 200ms backoff) but got #{elapsed}s"
+    assert_operator elapsed, :<, 1.0, "expected sub-second (ms-grained backoff) but got #{elapsed}s"
+  end
+end

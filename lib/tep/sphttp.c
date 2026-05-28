@@ -56,6 +56,24 @@ int sphttp_shutdown_requested(void) {
     return (int)sphttp_term_flag;
 }
 
+/* Sub-second sleep, granular to a millisecond. spinel's Time / sleep
+ * surface deals in integer epoch-seconds only; this helper exposes
+ * usleep for callers that need finer-grained pacing (e.g. Tep::Proxy's
+ * retry backoff loop). Returns 0 on success, -1 on EINTR (the caller
+ * decides whether to retry). ms <= 0 returns immediately. */
+int sphttp_sleep_ms(int ms) {
+    if (ms <= 0) return 0;
+    /* usleep accepts useconds_t but is deprecated on some BSDs; the
+     * portable shape is nanosleep, which we use here. */
+    struct timespec ts;
+    ts.tv_sec  = ms / 1000;
+    ts.tv_nsec = (long)(ms % 1000) * 1000000L;
+    if (nanosleep(&ts, NULL) < 0) {
+        return -1;
+    }
+    return 0;
+}
+
 /* Bind & listen on 0.0.0.0:port. If `reuseport` != 0 we set
  * SO_REUSEPORT so multiple worker processes can listen on the same
  * port and the kernel will load-balance accept() across them. */
