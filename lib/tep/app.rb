@@ -64,13 +64,6 @@ module Tep
     attr_accessor :asset_bodies, :asset_mimes
     attr_accessor :sched_fibers, :sched_wake_at, :sched_current
     attr_accessor :sched_io_fd, :sched_io_mode, :sched_io_ready
-    # Tep::Server::Scheduled needs a stash for per-connection state
-    # that the connection-fiber reads on entry. Closure capture across
-    # a Fiber.new { ... } boundary mis-lowers under spinel (heap-cell
-    # access emitted without a declaration); the stash sidesteps that
-    # by writing the values to App-state and yielding so the new fiber
-    # reads them before the next accept iteration overwrites.
-    attr_accessor :pending_listen_fd, :pending_client_fd, :pending_quiet
     # Tep::Job background-worker idempotency flag. App-level so a
     # single-shot spawn from a before-filter doesn't fire repeatedly.
     # Per-worker (each prefork child has its own Tep::APP, so each
@@ -130,10 +123,6 @@ module Tep
       @sched_io_mode.delete_at(0)
       @sched_io_ready = [0]
       @sched_io_ready.delete_at(0)
-      # Tep::Server::Scheduled hand-off stash.
-      @pending_listen_fd = -1
-      @pending_client_fd = -1
-      @pending_quiet     = false
       @user_bg_started   = false
     end
 
