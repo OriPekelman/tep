@@ -71,8 +71,10 @@ tep build hello.rb       # -> ./hello (~80 KB binary, no Ruby runtime)
 ./hello -p 4567
 ```
 
-The translator (`bin/tep`) needs CRuby >= 3.4 — Prism ships with
-the stdlib from 3.4 onward. Recommended Ruby manager:
+The translator (`bin/tep`) needs CRuby >= 3.2 with the `prism` gem
+installed (a development-only dependency — `bundle install` brings it
+in). Prism ships with the stdlib from 3.4 onward; on 3.2/3.3 it's a
+gem install. Recommended Ruby manager:
 [`rv`](https://github.com/spinel-coop/rv) — fast version+gem
 manager from the Spinel Cooperative (separate project from the
 matz/spinel AOT compiler Tep compiles through; same Ruby
@@ -137,6 +139,9 @@ through Spinel.
 | `Tep::Shell`     | popen-based shell-out + small-file reader (`/proc`, `/sys`, `/etc`). |
 | `Tep::Http`      | Faraday-shaped outbound HTTP/1.0 client. |
 | `Tep::Llm`       | ruby-openai-shaped chat-completions client; backends interchangeable via base_url (Ollama / OpenAI / [toy](https://github.com/OriPekelman/toy)). Sync `chat()` + SSE `chat_stream()`. |
+| `Tep::Llm::OpenAI::Server` | The other side of the OpenAI fence — serve OpenAI-compatible HTTP from local compute. Subclass `Tep::Llm::OpenAI::Backend`, wire `Server.use(MyBackend.new)` + `Server.serve!(events_jsonl)`, get `/v1/models` + `/v1/completions` (non-streaming + SSE with `"stream": true`) + toy/v1 events out of the box. `/v1/embeddings` lives app-side (the lib stays float-free); see [`docs/OPENAI-SERVER-BATTERY.md`](docs/OPENAI-SERVER-BATTERY.md). |
+| `Tep::Proxy`     | Sinatra-flavored reverse proxy. Subclass `Tep::Proxy`, override `rewrite_path` / `before_forward` / `after_forward` (non-streaming), or `stream_request?` / `on_stream_chunk` / `on_stream_end` (SSE / chunked pass-through). Block-form DSL — `proxy.before_forward do \|req, res, ureq\| ... end` — lowers to a synthesized subclass; see [`docs/PROXY-BATTERY.md`](docs/PROXY-BATTERY.md). |
+| `Tep::Events`    | toy/v1 JSONL emitter (`run_start` / `inference` / `run_end`). Float-free by design — caller hands in integer `wall_us`, schema-side floats live in caller-built `extra_json`. The OpenAI-server battery wires it automatically; standalone for any per-request telemetry stream. |
 | `Tep::WebSocket` | RFC 6455 server-side WebSocket. `websocket '/chat' do \|ws\| ... end` DSL lowers to Frame + Handshake + Driver + Connection. Requires `set :scheduler, :scheduled`. |
 | `Tep::Parallel`  | grosser/parallel-shaped fork fan-out. |
 | `Tep::Job`       | sidekiq-shaped queue over SQLite. |
@@ -160,7 +165,7 @@ are first-class through every battery. The end-to-end design
 + a realistic chat-room scenario walked through every seam
 lives in [`docs/BATTERIES-DESIGN.md`](docs/BATTERIES-DESIGN.md).
 
-~360 tests pass `make test`. End-to-end demos that build and run:
+430 tests pass `make test` (serial, ~13 min on the gx10) or `make test-parallel` (subprocess fan-out, ~4 min — see [`test/run_parallel.rb`](test/run_parallel.rb)). End-to-end demos that build and run:
 
 - **[`examples/counter/`](examples/counter/app.rb)** — the
   smallest `Tep.live` demo. Shared integer counter; click in one
@@ -184,6 +189,14 @@ lives in [`docs/BATTERIES-DESIGN.md`](docs/BATTERIES-DESIGN.md).
   `Tep::Streamer` + `Tep::Session` + `Tep::Password` + `Tep::Jwt` +
   `Tep::Security::{Cors,Headers}` + `Tep::Assets` + `Tep::Json` +
   `Tep::Job` + `Tep::Logger`) in ~1500 lines of Ruby + HTML + CSS + JS.
+- **[`examples/llm_gateway/`](examples/llm_gateway/app.rb)** — the
+  `Tep::Proxy` streaming demo. Block-form DSL gateway in front of an
+  OpenAI-compatible upstream; pumps SSE token deltas straight through
+  to the client and emits one `Tep::Events` `inference` event per
+  completed stream.
+- **[`examples/api_gateway/`](examples/api_gateway/app.rb)** — the
+  buffered-proxy demo. Capability-gated forwarding with `before_forward`
+  + `after_forward` observability hooks; same DSL, non-streaming.
 - **[`examples/websocket_echo.rb`](examples/websocket_echo.rb)** —
   `Tep::WebSocket` in isolation; `test/test_websocket_echo.rb`
   performs a real RFC 6455 handshake over a raw socket and
