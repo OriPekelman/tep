@@ -878,9 +878,12 @@ module Tep
   # toy/v1 events stream's run_end; future shutdown hooks add their
   # cleanups here. Cheap when nothing is configured: openai_events is
   # seeded with an empty path, whose enabled? short-circuits.
+  #
+  # reason: "completed" — matches toy/v1 vocabulary (was "ok"; #115
+  # noted that Tao's renderer flags non-"completed" reasons visually).
   def self.on_shutdown
     if APP.openai_events.enabled?
-      APP.openai_events.run_end("ok")
+      APP.openai_events.run_end("completed")
     end
     0
   end

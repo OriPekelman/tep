@@ -62,7 +62,12 @@ class TestEvents < TepTest
     rs = scenario_lines[0]
     assert_equal "toy/v1", rs["schema"]
     assert_equal 0, rs["t"]
-    assert_equal "testhost", rs["host"]
+    # host is {name, os, arch} per toy/v1 (#115).
+    assert_equal "testhost", rs["host"]["name"]
+    assert_kind_of String, rs["host"]["os"]
+    assert_kind_of String, rs["host"]["arch"]
+    refute_empty rs["host"]["os"], "os field should be populated via uname()"
+    refute_empty rs["host"]["arch"], "arch field should be populated via uname()"
     assert_equal "cpu", rs["backend"]["kind"]
     assert_equal "smollm2-135m", rs["model"]["name"]
     assert_equal "/m.gguf", rs["model"]["path"]

@@ -519,4 +519,39 @@ const char *sphttp_iso8601_utc(int epoch_secs) {
     return sphttp_iso8601_buf;
 }
 
+/* uname-based host introspection for toy/v1's host:{name,os,arch}
+ * envelope (Tep::Events.run_start). One static buffer per field;
+ * we lowercase the os field to match the schema's "linux"/"darwin"
+ * convention (uname returns "Linux"/"Darwin" with leading caps).
+ * arch is returned as-is ("aarch64", "x86_64", ...). On uname()
+ * failure we return "unknown" so the field is always populated. */
+#include <sys/utsname.h>
+#include <ctype.h>
+static char sphttp_os_buf[32];
+static char sphttp_arch_buf[32];
+const char *sphttp_os_kind(void) {
+    struct utsname u;
+    if (uname(&u) != 0) {
+        return "unknown";
+    }
+    size_t i;
+    for (i = 0; i < sizeof(sphttp_os_buf) - 1 && u.sysname[i]; i++) {
+        sphttp_os_buf[i] = (char)tolower((unsigned char)u.sysname[i]);
+    }
+    sphttp_os_buf[i] = '\0';
+    return sphttp_os_buf;
+}
+const char *sphttp_arch_kind(void) {
+    struct utsname u;
+    if (uname(&u) != 0) {
+        return "unknown";
+    }
+    size_t i;
+    for (i = 0; i < sizeof(sphttp_arch_buf) - 1 && u.machine[i]; i++) {
+        sphttp_arch_buf[i] = u.machine[i];
+    }
+    sphttp_arch_buf[i] = '\0';
+    return sphttp_arch_buf;
+}
+
 /* File read/write moved to spinel's built-in File.read / File.write */

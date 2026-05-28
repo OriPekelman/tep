@@ -67,12 +67,19 @@ module Tep
         return 0
       end
       started = Sock.sphttp_iso8601_utc(@run_started)
+      # toy/v1 says host is {name, os, arch} (docs/events-schema.md);
+      # was a bare string before #115. os + arch come from uname() via
+      # Sock.sphttp_os_kind / sphttp_arch_kind.
       line = "{" +
         Json.encode_pair_str("kind", "run_start") + "," +
         Json.encode_pair_str("schema", "toy/v1") + "," +
         Json.encode_pair_int("t", 0) + "," +
         Json.encode_pair_str("started_at", started) + "," +
-        Json.encode_pair_str("host", host) + "," +
+        "\"host\":{" +
+          Json.encode_pair_str("name", host) + "," +
+          Json.encode_pair_str("os",   Sock.sphttp_os_kind) + "," +
+          Json.encode_pair_str("arch", Sock.sphttp_arch_kind) +
+        "}," +
         "\"backend\":{" + Json.encode_pair_str("kind", backend_kind) + "}," +
         "\"model\":{" +
           Json.encode_pair_str("name", model_name) + "," +
