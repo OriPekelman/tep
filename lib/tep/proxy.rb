@@ -47,10 +47,23 @@
 module Tep
   class Proxy < Tep::Handler
     attr_accessor :upstream, :timeout
+    # Body size caps (chunk 6.6). max_request_body_bytes bounds the
+    # inbound body the proxy will accept (over -> 413 Payload Too
+    # Large before any upstream call). max_response_body_bytes
+    # bounds the upstream response body the proxy will forward
+    # (over -> 502 with a proxy_error JSON). Defaults: 1 MiB request
+    # / 8 MiB response -- enough for typical JSON-API gateway use,
+    # small enough that a malicious / malfunctioning peer can't
+    # easily OOM the worker. Override in initialize() (or expose a
+    # block-DSL setter) for larger / smaller caps per deployment.
+    # Set either to 0 to disable that cap (not recommended).
+    attr_accessor :max_request_body_bytes, :max_response_body_bytes
 
     def initialize(upstream)
       @upstream = upstream
       @timeout  = 30
+      @max_request_body_bytes  = 1 * 1024 * 1024
+      @max_response_body_bytes = 8 * 1024 * 1024
     end
 
     # ---- Overridable hooks (subclasses customise these) ----
@@ -173,6 +186,23 @@ module Tep
     # ---- Tep::Handler interface ----
 
     def handle(req, res)
+      # Request-body cap (chunk 6.6). Reject oversize bodies BEFORE
+      # any upstream call. 413 Payload Too Large with an OpenAI-shape
+      # error JSON for symmetry with the other handler error paths.
+      # max_request_body_bytes == 0 disables the cap.
+      if @max_request_body_bytes > 0 && req.raw_body.length > @max_request_body_bytes
+        res.set_status(413)
+        res.headers["Content-Type"] = "application/json"
+        err_body = "{\"error\":{" +
+          Tep::Json.encode_pair_str("message",
+            "request body exceeds proxy cap of " +
+            @max_request_body_bytes.to_s + " bytes") + "," +
+          Tep::Json.encode_pair_str("type", "payload_too_large") +
+        "}}"
+        res.set_body(err_body)
+        return err_body
+      end
+
       ureq = Tep::Proxy::UpstreamRequest.new
       ureq.verb = req.verb
       ureq.path = rewrite_path(req.raw_path)
@@ -211,6 +241,26 @@ module Tep
 
       url  = pick_upstream(req) + ureq.path
       ures = Tep::Http.send_req(ureq.verb, url, ureq.body, ureq.headers)
+
+      # Response-body cap (chunk 6.6). If the upstream returned more
+      # bytes than the proxy will forward, fail with 502 + a
+      # proxy_error JSON. The body has already been buffered by
+      # Tep::Http (no streaming on the buffered path), so this is a
+      # post-hoc reject -- worst case the worker briefly holds the
+      # large body then drops it. A future streaming-aware cap can
+      # bail mid-recv.
+      if @max_response_body_bytes > 0 && ures.body.length > @max_response_body_bytes
+        res.set_status(502)
+        res.headers["Content-Type"] = "application/json"
+        err_body = "{\"error\":{" +
+          Tep::Json.encode_pair_str("message",
+            "upstream response body exceeds proxy cap of " +
+            @max_response_body_bytes.to_s + " bytes") + "," +
+          Tep::Json.encode_pair_str("type", "upstream_body_too_large") +
+        "}}"
+        res.set_body(err_body)
+        return err_body
+      end
 
       if ures.status > 0
         res.set_status(ures.status)

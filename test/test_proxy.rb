@@ -1,4 +1,5 @@
 require_relative "helper"
+require "json"
 
 # Tep::Proxy -- HTTP reverse-proxy battery (chunk 6.1, non-streaming).
 #
@@ -260,5 +261,120 @@ class TestProxyMultiUpstream < TepTest
     res = get("/p/route/#{@port}/b")
     assert_equal "200", res.code
     assert_equal "from-b", res.body
+  end
+end
+
+# Tep::Proxy 6.6: body size caps. max_request_body_bytes rejects
+# oversize POSTs with 413 before any upstream call; max_response_body_bytes
+# rejects oversize upstream responses with 502 + proxy_error JSON.
+class TestProxyBodyCaps < TepTest
+  app_source <<~RB
+    require 'sinatra'
+
+    set :scheduler, :scheduled
+    set :workers, 1
+
+    # Two upstream endpoints with hardcoded sizes -- 50-byte (under
+    # the 200-byte response cap) and 500-byte (over).
+    get '/upstream/small' do
+      res.headers["Content-Type"] = "application/octet-stream"
+      "x" * 50
+    end
+
+    get '/upstream/large' do
+      res.headers["Content-Type"] = "application/octet-stream"
+      "x" * 500
+    end
+
+    post '/upstream/echo' do
+      res.headers["Content-Type"] = "application/octet-stream"
+      req.raw_body
+    end
+
+    # Proxies with tiny caps to make over/under testable. 100-byte
+    # request cap; 200-byte response cap. Each one extends Tep::Proxy
+    # DIRECTLY (not via a shared intermediate parent) -- spinel's
+    # widening over an intermediate-class initialize that sets the
+    # new attrs lets the upstream dispatch widen and Tep::Http.send_req
+    # returns status=0 / connect-failure 502. Three direct subclasses
+    # type-pin cleanly; the duplicated initialize is a deliberate
+    # workaround.
+    class TinyEchoProxy < Tep::Proxy
+      def initialize(upstream)
+        super
+        self.max_request_body_bytes  = 100
+        self.max_response_body_bytes = 200
+      end
+      def rewrite_path(path)
+        "/upstream/echo"
+      end
+    end
+
+    class TinySmallProxy < Tep::Proxy
+      def initialize(upstream)
+        super
+        self.max_request_body_bytes  = 100
+        self.max_response_body_bytes = 200
+      end
+      def rewrite_path(path)
+        "/upstream/small"
+      end
+    end
+
+    class TinyLargeProxy < Tep::Proxy
+      def initialize(upstream)
+        super
+        self.max_request_body_bytes  = 100
+        self.max_response_body_bytes = 200
+      end
+      def rewrite_path(path)
+        "/upstream/large"
+      end
+    end
+
+    post '/p/tiny-echo/:port' do
+      TinyEchoProxy.new("http://127.0.0.1:" + params[:port]).handle(req, res)
+      res.body
+    end
+
+    get '/p/tiny-small/:port' do
+      TinySmallProxy.new("http://127.0.0.1:" + params[:port]).handle(req, res)
+      res.body
+    end
+
+    get '/p/tiny-large/:port' do
+      TinyLargeProxy.new("http://127.0.0.1:" + params[:port]).handle(req, res)
+      res.body
+    end
+  RB
+
+  def test_request_under_cap_passes
+    res = post("/p/tiny-echo/#{@port}", "x" * 50)
+    assert_equal "200", res.code
+    assert_equal "x" * 50, res.body
+  end
+
+  def test_request_over_cap_returns_413
+    res = post("/p/tiny-echo/#{@port}", "x" * 500)
+    assert_equal "413", res.code
+    body = JSON.parse(res.body)
+    assert_equal "payload_too_large", body["error"]["type"]
+    assert_match(/proxy cap of 100 bytes/, body["error"]["message"])
+  end
+
+  def test_response_under_cap_passes
+    res = get("/p/tiny-small/#{@port}")
+    assert_equal "200", res.code
+    assert_equal 50, res.body.length
+  end
+
+  def test_response_over_cap_returns_502
+    res = get("/p/tiny-large/#{@port}")
+    assert_equal "502", res.code
+    refute_empty res.body, "expected an error-shape body, got empty (502 from connect failure path?)"
+    body = JSON.parse(res.body)
+    assert_equal "upstream_body_too_large", body["error"]["type"]
+    assert_match(/upstream response body exceeds proxy cap of 200 bytes/,
+                 body["error"]["message"])
   end
 end

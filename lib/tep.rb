@@ -568,6 +568,10 @@ module Tep
   # 6.4 per-request upstream picker. Pin the Tep::Request param +
   # the :str return so subclass overrides resolve cleanly.
   _tep_seed_proxy.pick_upstream(_tep_seed_proxy_req)
+  # 6.6 body-cap accessors. Type-pin the int setters / getters so
+  # subclass overrides + block-DSL setters compile.
+  _tep_seed_proxy.max_request_body_bytes  = 1
+  _tep_seed_proxy.max_response_body_bytes = 1
   _tep_seed_proxy.stream_request?(_tep_seed_proxy_req)
   _tep_seed_pstats = Tep::Proxy::StreamStats.new
   _tep_seed_pchunk = Tep::Proxy::StreamChunk.new("data: x\n\n")
