@@ -53,7 +53,13 @@ module Tep
   # Backoff is integer-MILLISECONDS via Sock.sphttp_sleep_ms (a
   # nanosleep-backed C helper). Sub-second pacing is the right
   # default for HTTP retries -- whole-second backoffs throw away
-  # throughput on transient blips that resolve quickly.
+  # throughput on transient blips that resolve quickly. Two setters
+  # for the base backoff:
+  #   * base_backoff_ms = 100              # int, direct ms.
+  #   * base_backoff_secs = 0.1            # Float, converted to ms.
+  # Set whichever reads better at the call site; both feed the same
+  # ms-int through backoff_for. If both are set, the LAST write
+  # wins (whichever setter you called second).
   #
   # Default shape: max_attempts=1 (no retry, back-compat).
   class Proxy
@@ -68,6 +74,20 @@ module Tep
         # Default: transient upstream errors (gateway / unavailable /
         # timeout). 502 also catches our own connect-failure mapping.
         @retry_on_status = [502, 503, 504]
+      end
+
+      # Float-seconds convenience setter (e.g. 0.5 -> 500ms). Stores
+      # the value in @base_backoff_ms as an int so backoff_for / the
+      # sleep call stay int-only on the hot path.
+      def base_backoff_secs=(f)
+        @base_backoff_ms = (f * 1000.0).to_i
+      end
+
+      # Reader symmetric to the setter (Float seconds derived from
+      # the stored ms). Cheap; only the setter does the conversion
+      # in the common case.
+      def base_backoff_secs
+        @base_backoff_ms.to_f / 1000.0
       end
 
       # Milliseconds to sleep BEFORE attempt N (0-indexed). attempt=0

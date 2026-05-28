@@ -19,7 +19,11 @@ class TestOpenAIServer < TepTest
       end
       def generate_from_tokens(model, token_ids, sampling)
         c = Tep::Llm::OpenAI::Completion.new
-        c.text              = "echoed " + token_ids.length.to_s + " tokens"
+        # Echo back the sampling knobs so the test can assert they
+        # reached the backend with the values the client requested.
+        c.text              = "echoed " + token_ids.length.to_s +
+                              " tokens t=" + sampling.temperature.to_s +
+                              " p=" + sampling.top_p.to_s
         c.prompt_tokens     = token_ids.length
         c.completion_tokens = sampling.max_tokens
         c
@@ -67,18 +71,28 @@ class TestOpenAIServer < TepTest
   end
 
   def test_completions_returns_text_completion
+    # No temperature / top_p sent -> defaults of 1.0 reach the backend.
     res = post("/v1/completions",
                "{\"model\":\"echo-1\",\"prompt\":[10,20,30],\"max_tokens\":5}")
     assert_equal "200", res.code
     body = JSON.parse(res.body)
     assert_equal "text_completion", body["object"]
     assert_equal "echo-1", body["model"]
-    # generate_from_tokens saw the 3-token prompt + max_tokens=5.
-    assert_equal "echoed 3 tokens", body["choices"][0]["text"]
+    assert_equal "echoed 3 tokens t=1.0 p=1.0", body["choices"][0]["text"]
     assert_equal "stop", body["choices"][0]["finish_reason"]
     assert_equal 3, body["usage"]["prompt_tokens"]
     assert_equal 5, body["usage"]["completion_tokens"]
     assert_equal 8, body["usage"]["total_tokens"]
+  end
+
+  def test_completions_threads_temperature_and_top_p
+    # Explicit floats in the body -> Sampling.temperature/top_p set.
+    res = post("/v1/completions",
+               "{\"model\":\"echo-1\",\"prompt\":[1,2]," +
+               "\"max_tokens\":1,\"temperature\":0.7,\"top_p\":0.9}")
+    assert_equal "200", res.code
+    body = JSON.parse(res.body)
+    assert_equal "echoed 2 tokens t=0.7 p=0.9", body["choices"][0]["text"]
   end
 end
 

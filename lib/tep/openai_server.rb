@@ -215,18 +215,17 @@ module Tep
       end
 
       # Sampling parameters handed to the backend. v1 carries
-      # max_tokens; temperature / top_p (JSON-number floats) aren't
-      # parsed into this struct yet because Tep::Json has no float
-      # getter -- a follow-up chunk lands `Tep::Json.get_float` +
-      # `Sampling#temperature` / `#top_p`. (Spinel itself supports
-      # Float fully; this is a tep-side JSON-parser gap, not a
-      # codegen limitation.) Backends that need them today read the
-      # raw request body and parse out the floats themselves.
+      # max_tokens + temperature + top_p (the three OpenAI completion
+      # knobs every client sets). Floats parsed via Tep::Json.get_float.
+      # Defaults match OpenAI's API defaults so a backend that ignores
+      # sampling gets pass-through behavior.
       class Sampling
-        attr_accessor :max_tokens
+        attr_accessor :max_tokens, :temperature, :top_p
 
         def initialize
-          @max_tokens = 0
+          @max_tokens  = 0
+          @temperature = 1.0
+          @top_p       = 1.0
         end
       end
 
@@ -359,6 +358,15 @@ module Tep
           token_ids = Tep::Json.get_int_array(body, "prompt")
           sampling  = Tep::Llm::OpenAI::Sampling.new
           sampling.max_tokens = Tep::Json.get_int(body, "max_tokens")
+          # Floats from the JSON body; defaults stay at 1.0 if the
+          # key is absent (Tep::Json.get_float returns 0.0 for
+          # missing, but we only overwrite when present).
+          if Tep::Json.has_key?(body, "temperature")
+            sampling.temperature = Tep::Json.get_float(body, "temperature")
+          end
+          if Tep::Json.has_key?(body, "top_p")
+            sampling.top_p = Tep::Json.get_float(body, "top_p")
+          end
 
           # OpenAI signals streaming with "stream": true in the JSON
           # body; Tep::Json has no bool getter, so we sniff the literal
