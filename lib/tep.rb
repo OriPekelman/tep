@@ -572,6 +572,19 @@ module Tep
   # subclass overrides + block-DSL setters compile.
   _tep_seed_proxy.max_request_body_bytes  = 1
   _tep_seed_proxy.max_response_body_bytes = 1
+  # 6.5 retry policy. Pin the RetryPolicy slot via instantiation +
+  # the hook return type via a call to #retry_policy(req).
+  _tep_seed_retry_policy = Tep::Proxy::RetryPolicy.new
+  _tep_seed_retry_policy.max_attempts        = 1
+  _tep_seed_retry_policy.base_backoff_ms     = 0
+  _tep_seed_retry_policy.backoff_multiplier  = 2
+  _tep_seed_retry_policy.retry_on_status     = [502, 503, 504]
+  # Pin Sock.sphttp_sleep_ms's :int param so the backoff call site
+  # resolves (called from Tep::Proxy#handle).
+  Sock.sphttp_sleep_ms(0)
+  _tep_seed_retry_policy.backoff_for(0)
+  _tep_seed_retry_policy.retriable?(502)
+  _tep_seed_proxy.retry_policy(_tep_seed_proxy_req)
   _tep_seed_proxy.stream_request?(_tep_seed_proxy_req)
   _tep_seed_pstats = Tep::Proxy::StreamStats.new
   _tep_seed_pchunk = Tep::Proxy::StreamChunk.new("data: x\n\n")

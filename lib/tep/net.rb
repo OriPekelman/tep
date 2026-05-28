@@ -37,6 +37,12 @@ module Sock
   ffi_func :sphttp_install_term_handlers, [], :int
   ffi_func :sphttp_shutdown_requested,    [], :int
 
+  # Millisecond sleep helper for sub-second pacing. spinel's
+  # Tep::Scheduler.pause is integer-second only; this exposes the
+  # POSIX nanosleep path. Returns 0 on success, -1 on EINTR. Used by
+  # Tep::Proxy's retry-backoff loop.
+  ffi_func :sphttp_sleep_ms,              [:int], :int
+
   # uname-based host introspection for the toy/v1 envelope (see
   # docs/events-schema.md). sphttp_os_kind returns lowercased
   # uname.sysname ("linux" / "darwin" / ...); sphttp_arch_kind

@@ -45,6 +45,66 @@
 # must be reachable over plaintext http:// (https:// upstreams need
 # the TLS-capable outbound client deferred to a later chunk).
 module Tep
+  # Retry behaviour for the buffered forward path (chunk 6.5).
+  # Returned by Tep::Proxy#retry_policy(req); fresh instance per
+  # request so the policy can be derived from the request (e.g.
+  # idempotent verbs get more attempts, POSTs none).
+  #
+  # Backoff is integer-MILLISECONDS via Sock.sphttp_sleep_ms (a
+  # nanosleep-backed C helper). Sub-second pacing is the right
+  # default for HTTP retries -- whole-second backoffs throw away
+  # throughput on transient blips that resolve quickly.
+  #
+  # Default shape: max_attempts=1 (no retry, back-compat).
+  class Proxy
+    class RetryPolicy
+      attr_accessor :max_attempts, :base_backoff_ms, :backoff_multiplier
+      attr_accessor :retry_on_status
+
+      def initialize
+        @max_attempts        = 1
+        @base_backoff_ms     = 0
+        @backoff_multiplier  = 2
+        # Default: transient upstream errors (gateway / unavailable /
+        # timeout). 502 also catches our own connect-failure mapping.
+        @retry_on_status = [502, 503, 504]
+      end
+
+      # Milliseconds to sleep BEFORE attempt N (0-indexed). attempt=0
+      # is the first retry's pre-delay; attempt=1 the second's, etc.
+      # Returns 0 when base is 0 (test-friendly: no delay between
+      # retries by default).
+      def backoff_for(attempt)
+        if @base_backoff_ms <= 0
+          return 0
+        end
+        d = @base_backoff_ms
+        i = 0
+        while i < attempt
+          d = d * @backoff_multiplier
+          i += 1
+        end
+        d
+      end
+
+      # Should the proxy retry given the upstream response status?
+      # Connect/send failures (status == 0) always count as retriable.
+      def retriable?(status)
+        if status == 0
+          return true
+        end
+        i = 0
+        while i < @retry_on_status.length
+          if @retry_on_status[i] == status
+            return true
+          end
+          i += 1
+        end
+        false
+      end
+    end
+  end
+
   class Proxy < Tep::Handler
     attr_accessor :upstream, :timeout
     # Body size caps (chunk 6.6). max_request_body_bytes bounds the
@@ -67,6 +127,30 @@ module Tep
     end
 
     # ---- Overridable hooks (subclasses customise these) ----
+
+    # Per-request retry policy (chunk 6.5). Return a
+    # Tep::Proxy::RetryPolicy whose max_attempts > 1 to retry the
+    # buffered forward on transient upstream failure. Default: 1
+    # attempt (no retry). Override to enable retries; gate on the
+    # request shape so non-idempotent POSTs can skip retries while
+    # GETs use them:
+    #
+    #   class ApiGateway < Tep::Proxy
+    #     def retry_policy(req)
+    #       p = Tep::Proxy::RetryPolicy.new
+    #       p.max_attempts     = 3
+    #       p.base_backoff_ms  = 100   # exponential: 100ms, 200ms, 400ms
+    #       p
+    #     end
+    #   end
+    #
+    # Also available as a block-DSL hook (lowered by bin/tep).
+    # Streaming requests don't retry (the stream may have already
+    # written bytes to the client when failure occurs); only the
+    # buffered path consults the policy.
+    def retry_policy(req)
+      Tep::Proxy::RetryPolicy.new
+    end
 
     # Per-request upstream selection (chunk 6.4). Return the URL of
     # the upstream this request should be forwarded to. Default
@@ -239,8 +323,29 @@ module Tep
         return start_streaming_forward(req, res, ureq)
       end
 
-      url  = pick_upstream(req) + ureq.path
-      ures = Tep::Http.send_req(ureq.verb, url, ureq.body, ureq.headers)
+      url    = pick_upstream(req) + ureq.path
+      policy = retry_policy(req)
+      attempt = 0
+      ures = Tep::Http::Response.new
+      while attempt < policy.max_attempts
+        ures = Tep::Http.send_req(ureq.verb, url, ureq.body, ureq.headers)
+        # Success or non-retriable failure -- done.
+        if !policy.retriable?(ures.status)
+          break
+        end
+        attempt += 1
+        # Sleep before the NEXT attempt, only if there is one. Backoff
+        # is integer milliseconds via the nanosleep-backed C helper;
+        # default 0 (no delay) keeps tests fast.
+        if attempt < policy.max_attempts
+          backoff = policy.backoff_for(attempt - 1)
+          if backoff > 0
+            Sock.sphttp_sleep_ms(backoff)
+          end
+        end
+      end
+      # Expose retry count to observability filters via req.ivars.
+      req.ivars["proxy_retry_count"] = attempt.to_s
 
       # Response-body cap (chunk 6.6). If the upstream returned more
       # bytes than the proxy will forward, fail with 502 + a
