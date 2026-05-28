@@ -71,14 +71,24 @@ module Tep
             end
             i += 1
           end
+          # Reap children until none remain. After all workers exit,
+          # emit the single aggregated run_end (see #128 / Tep::Events
+          # #run_end_aggregated).
           loop do
             gone = Sock.sphttp_wait_any
             if gone < 0
               break
             end
           end
+          if Sock.sphttp_shutdown_requested != 0
+            Tep.on_shutdown
+          end
         else
           Tep::Server::Scheduled.run_worker
+          # Single-process: this IS the parent; emit run_end here.
+          if Sock.sphttp_shutdown_requested != 0
+            Tep.on_shutdown
+          end
         end
         0
       end
@@ -107,9 +117,10 @@ module Tep
           # SIGTERM/SIGINT: sphttp's term flag is set by the signal
           # handler; check before parking on io_wait so we don't sleep
           # past a shutdown request. The 1s io_wait timeout below
-          # bounds the sleep-side latency.
+          # bounds the sleep-side latency. The parent (or this same
+          # process for workers=1) emits the aggregated run_end after
+          # all workers exit (#128).
           if Sock.sphttp_shutdown_requested != 0
-            Tep.on_shutdown
             break
           end
           # Bounded wait so the flag check above runs once per second

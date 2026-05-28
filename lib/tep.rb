@@ -591,6 +591,11 @@ module Tep
   _tep_seed_events.inference("model", 0, 0, 0, "{}")
   _tep_seed_events.record_error
   _tep_seed_events.run_end("ok")
+  # #128: aggregated run_end (parent reads JSONL + sums). The seed
+  # path is "" so the call short-circuits before any File I/O at
+  # boot; this exists to pin the method's surface area so spinel's
+  # codegen emits it.
+  _tep_seed_events.run_end_aggregated("completed")
   _tep_seed_events.rel_t
   Sock.sphttp_iso8601_utc(0)
 
@@ -873,17 +878,19 @@ module Tep
     end
   end
 
-  # Called by server accept loops when SIGTERM/SIGINT is observed
-  # (via sphttp's term flag). Right now this flushes the openai-server
-  # toy/v1 events stream's run_end; future shutdown hooks add their
-  # cleanups here. Cheap when nothing is configured: openai_events is
-  # seeded with an empty path, whose enabled? short-circuits.
+  # Called by the SERVER PARENT (workers>1) or the single process
+  # (workers=1) at SIGTERM/SIGINT, AFTER the worker children have
+  # exited. Children no longer emit run_end themselves -- #128 moved
+  # the emission here so a multi-worker deployment writes exactly ONE
+  # run_end with aggregated stats from the events.jsonl, not N per
+  # worker.
   #
-  # reason: "completed" — matches toy/v1 vocabulary (was "ok"; #115
-  # noted that Tao's renderer flags non-"completed" reasons visually).
+  # reason: "completed" -- matches toy/v1 vocabulary (was "ok"; #115).
+  # Cheap when nothing is configured: openai_events is seeded with an
+  # empty path, whose enabled? short-circuits.
   def self.on_shutdown
     if APP.openai_events.enabled?
-      APP.openai_events.run_end("completed")
+      APP.openai_events.run_end_aggregated("completed")
     end
     0
   end
