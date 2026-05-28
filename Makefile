@@ -34,7 +34,7 @@ TEP_PG_LIBS   ?= $(shell \
     (pg_config --libdir 2>/dev/null | sed -e 's|^|-L|' ; echo "-lpq") | tr '\n' ' ')
 export TEP_PG_CFLAGS TEP_PG_LIBS
 
-.PHONY: all clean helper hello sinatra_style bench bench-tep bench-sinatra demo test spinel-fresh test-pg
+.PHONY: all clean helper hello sinatra_style bench bench-tep bench-sinatra demo test test-parallel spinel-fresh test-pg
 
 # Always check that the local spinel checkout is on tip-of-master
 # before we build / test against it -- spinel moves quickly and a
@@ -79,6 +79,16 @@ demo: hello
 test: helper
 	@pkill -f tep-test 2>/dev/null; true
 	ruby test/run_all.rb
+
+# `make test-parallel` -- dev fast loop. Runs each test/test_*.rb in
+# its own process in parallel (sidestepping the harness's "one thread
+# per class" constraint), with per-process port-base allocation. Cuts
+# wall time roughly by core count on the gx10 (~13min serial ->
+# ~1-2min). `make test` stays serial -- the canonical / CI path with
+# clean output ordering. Cap with TEP_TEST_PROCS=N.
+test-parallel: helper
+	@pkill -f tep-test 2>/dev/null; true
+	ruby test/run_parallel.rb
 
 # `make test-pg` -- runs test/test_pg.rb against a real PostgreSQL.
 # Reads PG_TEST_URL from the environment if set; otherwise expects
