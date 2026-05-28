@@ -30,13 +30,18 @@
 # eval's defining fields, and overloading `eval` would break tao's
 # ingest (which keys the "final eval" on `kind` alone).
 #
-# Float-free by design (spinel has no Float + tep ships zero floats):
+# Integer-only number fields by design (a tep choice, NOT a spinel
+# constraint -- spinel supports Float fully; this module deliberately
+# avoids it for serving telemetry):
 #   * `t` is integer seconds since run_start (a JSON number; consumers
 #     reading it as float get N.0). Sub-second ordering isn't needed
 #     for serving telemetry -- per-request latency rides in wall_us.
-#   * `wall_us` (microsecond latency) is caller-measured + passed in.
+#   * `wall_us` (microsecond latency) is caller-measured + passed in
+#     as an int.
 #   * Floats that the schema does carry (sampling.temperature) live in
 #     the caller-built `extra` JSON string, which tep emits verbatim.
+#     Apps that want native Float support in extra can build their
+#     own JSON encoder around the float values.
 #
 # `started_at` / `ended_at` are ISO-8601 UTC via Sock.sphttp_iso8601_utc
 # (spinel's Time.now exposes only integer epoch seconds).
@@ -94,7 +99,7 @@ module Tep
     # latency) are ints the caller measured. extra_json is a caller-
     # built JSON object ("{}" if none) carrying sampling / request_id /
     # principal_id -- emitted verbatim, so floats (temperature) live
-    # there, out of tep's float-free core.
+    # there, formatted by the caller.
     def inference(model, prompt_tokens, completion_tokens, wall_us, extra_json)
       @req_count = @req_count + 1
       @tok_out   = @tok_out + completion_tokens

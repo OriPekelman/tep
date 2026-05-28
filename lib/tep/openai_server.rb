@@ -214,11 +214,14 @@ module Tep
         Tep::Json.parse_str_value(body, pos)
       end
 
-      # Sampling parameters handed to the backend. v1 carries max_tokens
-      # (the int tep needs to bound generation); temperature / top_p are
-      # JSON-number floats, which tep can't represent natively (no
-      # Float) -- a float-capable chunk adds them. A backend that needs
-      # them today reads the raw request body itself.
+      # Sampling parameters handed to the backend. v1 carries
+      # max_tokens; temperature / top_p (JSON-number floats) aren't
+      # parsed into this struct yet because Tep::Json has no float
+      # getter -- a follow-up chunk lands `Tep::Json.get_float` +
+      # `Sampling#temperature` / `#top_p`. (Spinel itself supports
+      # Float fully; this is a tep-side JSON-parser gap, not a
+      # codegen limitation.) Backends that need them today read the
+      # raw request body and parse out the floats themselves.
       class Sampling
         attr_accessor :max_tokens
 
