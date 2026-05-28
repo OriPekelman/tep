@@ -31,6 +31,31 @@
 static char sphttp_req_buf[SPHTTP_BUFSIZE];
 static int  sphttp_req_len = 0;
 
+/* Shutdown-on-signal plumbing. SIGTERM/SIGINT set the flag; the
+ * server's accept loop checks it after accept() returns from EINTR
+ * and breaks out cleanly so Ruby-level run_end hooks can fire before
+ * the process exits. SA_RESETHAND restores the default handler after
+ * the first delivery so a second signal kills the process immediately
+ * if shutdown stalls (a non-cooperative second Ctrl-C). */
+static volatile sig_atomic_t sphttp_term_flag = 0;
+static void sphttp_term_signal(int sig) {
+    (void)sig;
+    sphttp_term_flag = 1;
+}
+int sphttp_install_term_handlers(void) {
+    struct sigaction sa;
+    memset(&sa, 0, sizeof(sa));
+    sa.sa_handler = sphttp_term_signal;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = SA_RESETHAND;       /* second signal -> default action */
+    sigaction(SIGTERM, &sa, NULL);
+    sigaction(SIGINT,  &sa, NULL);
+    return 0;
+}
+int sphttp_shutdown_requested(void) {
+    return (int)sphttp_term_flag;
+}
+
 /* Bind & listen on 0.0.0.0:port. If `reuseport` != 0 we set
  * SO_REUSEPORT so multiple worker processes can listen on the same
  * port and the kernel will load-balance accept() across them. */
@@ -72,10 +97,18 @@ int sphttp_accept(int sfd) {
     struct sockaddr_in caddr;
     socklen_t clen = sizeof(caddr);
     int fd;
-    do {
+    for (;;) {
         fd = accept(sfd, (struct sockaddr *)&caddr, &clen);
-    } while (fd < 0 && errno == EINTR);
-    return fd;
+        if (fd >= 0) return fd;
+        if (errno == EINTR) {
+            /* SIGTERM/SIGINT raises sphttp_term_flag; surface as a -1
+             * return so the Ruby accept loop can run shutdown hooks
+             * and exit. Unrelated signals (SIGCHLD, ...) just retry. */
+            if (sphttp_term_flag) return -1;
+            continue;
+        }
+        return -1;
+    }
 }
 
 /* Non-blocking accept. Returns the new fd on success, -1 with errno

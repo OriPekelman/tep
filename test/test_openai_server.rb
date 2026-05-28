@@ -51,6 +51,21 @@ class TestOpenAIServer < TepTest
     assert_includes ids, "echo-1"
   end
 
+  def test_chat_completions_returns_501_when_unsupported
+    # Default backend.supports_chat? is false (EchoBackend doesn't
+    # override it) -> the route returns 501 with an OpenAI-shape
+    # error JSON, not a 200 / not a 404. Closes the gap that
+    # /v1/chat/completions doesn't exist as a route until a backend
+    # opts in.
+    res = post("/v1/chat/completions",
+               "{\"model\":\"echo-1\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}")
+    assert_equal "501", res.code
+    assert_match(%r{application/json}, res["content-type"])
+    body = JSON.parse(res.body)
+    assert_equal "not_implemented", body["error"]["type"]
+    assert_match(/chat completions not supported/, body["error"]["message"])
+  end
+
   def test_completions_returns_text_completion
     res = post("/v1/completions",
                "{\"model\":\"echo-1\",\"prompt\":[10,20,30],\"max_tokens\":5}")
@@ -214,5 +229,112 @@ class TestOpenAIServerStreaming < TepTest
     assert_equal 3,             inf["prompt_tokens"]
     assert_equal 3,             inf["completion_tokens"]
     assert_equal "cmpl-tep",    inf["extra"]["request_id"]
+  end
+end
+
+# Tep::Llm::OpenAI::Server shutdown hook (SIGTERM/SIGINT -> run_end).
+# Boots the binary normally, hits one /v1/completions to advance the
+# stats, then SIGTERMs the spawned pid and asserts the events JSONL
+# acquired a `run_end` line with the expected stats.
+class TestOpenAIServerShutdown < TepTest
+  EVENTS_PATH = "/tmp/tep_test_openai_shutdown.jsonl"
+
+  app_source <<~RB
+    require 'sinatra'
+
+    class EchoBackend < Tep::Llm::OpenAI::Backend
+      def list_models
+        ["echo-1"]
+      end
+      def device_kind
+        "cpu"
+      end
+      def generate_from_tokens(model, token_ids, sampling)
+        c = Tep::Llm::OpenAI::Completion.new
+        c.text              = "ok"
+        c.prompt_tokens     = token_ids.length
+        c.completion_tokens = 1
+        c
+      end
+    end
+
+    Tep::Llm::OpenAI::Server.use(EchoBackend.new)
+    Tep::Llm::OpenAI::Server.serve!("#{EVENTS_PATH}")
+  RB
+
+  @@events_path_cleaned = false
+  def setup
+    unless @@events_path_cleaned
+      File.delete(EVENTS_PATH) if File.exist?(EVENTS_PATH)
+      @@events_path_cleaned = true
+    end
+    super
+  end
+
+  def test_sigterm_emits_run_end
+    # One request bumps requests=1, tokens_out=1.
+    res = post("/v1/completions",
+               "{\"model\":\"echo-1\",\"prompt\":[10,20,30],\"max_tokens\":1}")
+    assert_equal "200", res.code
+
+    # SIGTERM the server. accept(2) returns -1 with the term flag set;
+    # the worker loop runs Tep.on_shutdown -> Tep::Events#run_end.
+    TepHarness.terminate(@port)
+
+    lines = File.readlines(EVENTS_PATH).map { |l| JSON.parse(l) }
+    re = lines.find { |e| e["kind"] == "run_end" }
+    refute_nil re, "expected a run_end event after SIGTERM"
+    assert_equal "ok", re["reason"]
+    assert_equal 1,    re["stats"]["requests"]
+    assert_equal 1,    re["stats"]["tokens_out"]
+    assert_equal 0,    re["stats"]["errors"]
+  end
+end
+
+# Tep::Llm::OpenAI::Server chat completions when a backend opts in.
+# Default backend.supports_chat? is false (TestOpenAIServer covers the
+# 501 gate); here ChatBackend overrides supports_chat? + chat_completion
+# to prove the 200 path -- chat.completion envelope around the
+# assistant message.
+class TestOpenAIServerChat < TepTest
+  app_source <<~RB
+    require 'sinatra'
+
+    class ChatBackend < Tep::Llm::OpenAI::Backend
+      def list_models
+        ["chat-1"]
+      end
+      def supports_chat?
+        true
+      end
+      def chat_completion(req)
+        # Real backend would parse req.raw_body's messages array +
+        # apply its chat template; for the skeleton smoke test we
+        # just echo a fixed reply and pretend it cost a few tokens.
+        c = Tep::Llm::OpenAI::Completion.new
+        c.text              = "ack"
+        c.prompt_tokens     = 4
+        c.completion_tokens = 1
+        c
+      end
+    end
+
+    Tep::Llm::OpenAI::Server.use(ChatBackend.new)
+    Tep::Llm::OpenAI::Server.serve!
+  RB
+
+  def test_chat_completion_envelope_when_supported
+    res = post("/v1/chat/completions",
+               "{\"model\":\"chat-1\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}")
+    assert_equal "200", res.code
+    body = JSON.parse(res.body)
+    assert_equal "chat.completion", body["object"]
+    assert_equal "chat-1",          body["model"]
+    assert_equal "assistant", body["choices"][0]["message"]["role"]
+    assert_equal "ack",       body["choices"][0]["message"]["content"]
+    assert_equal "stop",      body["choices"][0]["finish_reason"]
+    assert_equal 4, body["usage"]["prompt_tokens"]
+    assert_equal 1, body["usage"]["completion_tokens"]
+    assert_equal 5, body["usage"]["total_tokens"]
   end
 end

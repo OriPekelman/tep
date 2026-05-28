@@ -1550,6 +1550,16 @@ def rewrite_block(src, force_string: true)
   # `params['x']` / `params["x"]` and bare `params`
   s = s.gsub(/(?<![\w.])params(?=[\[\.]|$|\s)/, "req.params")
 
+  # `request.body.read` -> `req.body` (a Sinatra app's request.body
+  # is an IO and apps commonly call `.read` on it; tep's req.body
+  # is already a String, so `.read` is a no-op). Run BEFORE the bare
+  # `request -> req` rewrite so we can pin the `.body.read` suffix
+  # exactly and not have to deal with the intermediate `req.body.read`
+  # state. The bare `request.body` form (no `.read`) is handled by
+  # the next rewrite, which leaves it as `req.body` -- already a
+  # String via Tep::Request#body's alias to @raw_body.
+  s = s.gsub(/(?<![\w.])request\.body\.read\b/, "req.body")
+
   # `request` -> req,  `response` -> res, when used as bare identifiers
   s = s.gsub(/(?<![\w.])request(?=[\.\[\s,)]|$)/, "req")
   s = s.gsub(/(?<![\w.])response(?=[\.\[\s,)]|$)/, "res")

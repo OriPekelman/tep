@@ -56,8 +56,37 @@ module TepHarness
     log  = File.join(tmp, "app.log")
     pid  = Process.spawn(bin, "-p", port.to_s, out: log, err: [:child, :out])
     wait_for_port(port, tmp: tmp, pid: pid)
-    @running << { pid: pid, tmp: tmp, log: log }
+    @running << { pid: pid, tmp: tmp, log: log, port: port }
     port
+  end
+
+  # Find the spawned record for a given bound port (used by tests
+  # that need to send signals to the process they booted, e.g.
+  # shutdown-hook tests asserting on run_end emission).
+  def self.find_by_port(port)
+    @running.find { |s| s[:port] == port }
+  end
+
+  # SIGTERM the process bound to `port` + wait for exit. Removes the
+  # entry from @running so kill_all's at_exit doesn't double-reap.
+  def self.terminate(port, timeout: 5.0)
+    s = find_by_port(port)
+    return unless s
+    begin
+      Process.kill("TERM", s[:pid])
+    rescue Errno::ESRCH
+    end
+    deadline = Time.now + timeout
+    until Time.now > deadline
+      begin
+        pid, _ = Process.waitpid2(s[:pid], Process::WNOHANG)
+        break if pid
+      rescue Errno::ECHILD
+        break
+      end
+      sleep 0.05
+    end
+    @running.delete(s)
   end
 
   def self.kill_all
@@ -100,6 +129,17 @@ module TepHarness
   end
 end
 
+# TODO: kill_all runs BEFORE tests in Ruby's LIFO at_exit chain
+# (require "minitest/autorun" registers the test-runner at_exit
+# FIRST; this one registers SECOND, so it fires FIRST). @running is
+# empty at this point so it's a no-op; tests then spawn apps that
+# leak as orphans to docker PID 1 when ruby exits. The parallel
+# runner masks the leak via per-file unique port ranges; serial
+# `make test` is one process so intra-process leak doesn't matter;
+# but manually chaining `ruby A.rb; ruby B.rb` with overlapping
+# default ports DOES surface the leak. Fix is to use
+# `Minitest.after_run { TepHarness.kill_all }` instead, which fires
+# AFTER tests run + @running is populated.
 at_exit { TepHarness.kill_all }
 
 # Kill any zombie tep test processes leaking from previous runs.

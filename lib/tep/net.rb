@@ -30,6 +30,13 @@ module Sock
   ffi_func :sphttp_recv_frame_buf, [],              :str
   ffi_func :sphttp_recv_frame_len, [],              :int
 
+  # Shutdown-on-signal plumbing. Install once at server start;
+  # sphttp_shutdown_requested polls the flag (sigaction sets it on
+  # SIGTERM/SIGINT). The server's accept loop checks the flag after
+  # sphttp_accept returns -1 and runs Tep.on_shutdown before exit.
+  ffi_func :sphttp_install_term_handlers, [], :int
+  ffi_func :sphttp_shutdown_requested,    [], :int
+
   # ISO-8601 UTC timestamp for an epoch-seconds value. Used by
   # Tep::Events (toy/v1 envelope) for run_start/run_end wall-clock
   # fields -- spinel's Time.now is integer-epoch only.

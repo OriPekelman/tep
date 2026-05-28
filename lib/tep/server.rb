@@ -30,6 +30,11 @@ module Tep
              " (workers=" + workers.to_s + ")"
       end
 
+      # Install SIGTERM/SIGINT handlers BEFORE fork so children inherit
+      # them; on signal, sphttp_accept returns -1 and the worker loop
+      # runs Tep.on_shutdown (flushes events.run_end + future hooks).
+      Sock.sphttp_install_term_handlers
+
       if workers <= 1
         sfd = Sock.sphttp_listen(port, 0)
         if sfd < 0
@@ -69,6 +74,14 @@ module Tep
       loop do
         client = Sock.sphttp_accept(sfd)
         if client < 0
+          # accept returns -1 with the term flag set after the first
+          # SIGTERM/SIGINT (sphttp_accept retries past unrelated
+          # signals). Run shutdown hooks once, then exit so the parent
+          # reap loop can move on.
+          if Sock.sphttp_shutdown_requested != 0
+            Tep.on_shutdown
+            break
+          end
           next
         end
         handle_connection(client)
