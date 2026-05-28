@@ -565,6 +565,9 @@ module Tep
   # bodies, and ProxyStreamer flows into res.start_stream from
   # start_streaming_forward (statically reachable from handle), which
   # wires ProxyStreamer.pump (-> run_stream) into the Streamer dispatch.
+  # 6.4 per-request upstream picker. Pin the Tep::Request param +
+  # the :str return so subclass overrides resolve cleanly.
+  _tep_seed_proxy.pick_upstream(_tep_seed_proxy_req)
   _tep_seed_proxy.stream_request?(_tep_seed_proxy_req)
   _tep_seed_pstats = Tep::Proxy::StreamStats.new
   _tep_seed_pchunk = Tep::Proxy::StreamChunk.new("data: x\n\n")

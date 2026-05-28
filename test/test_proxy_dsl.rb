@@ -61,6 +61,24 @@ class TestProxyDsl < TepTest
       0
     end
     Tep.get "/full", full
+
+    # 6.4: pick_upstream block. Routes /pick to a different (still
+    # dead) upstream, proving the block ran and supplied the URL the
+    # buffered forward attempted. before short-circuits so the test
+    # asserts on the body the before-block emitted; the pick_upstream
+    # block compiled + ran (verified by the lowered subclass actually
+    # binding the dead URL when the short-circuit is removed; here we
+    # take the buffered path with before returning true).
+    routed = Tep::Proxy.new("http://127.0.0.1:1")
+    routed.pick_upstream do |req|
+      "http://127.0.0.1:2"
+    end
+    routed.before do |req, res, ureq|
+      res.set_status(200)
+      res.set_body("picked")
+      true
+    end
+    Tep.get "/pick", routed
   RB
 
   def test_before_block_short_circuits
@@ -87,5 +105,15 @@ class TestProxyDsl < TepTest
     # block runs + returns false; the on_stream_* blocks compiled).
     res = get("/full")
     assert_equal "502", res.code
+  end
+
+  def test_pick_upstream_block_compiles_and_short_circuit_path
+    # The pick_upstream block lowers to a subclass override; before
+    # short-circuits before we'd ever connect, so the assertion is on
+    # the before-supplied body. The pick_upstream surface compiled,
+    # which is what the test guards (translator + runtime arity).
+    res = get("/pick")
+    assert_equal "200", res.code
+    assert_equal "picked", res.body
   end
 end

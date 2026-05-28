@@ -55,6 +55,36 @@ module Tep
 
     # ---- Overridable hooks (subclasses customise these) ----
 
+    # Per-request upstream selection (chunk 6.4). Return the URL of
+    # the upstream this request should be forwarded to. Default
+    # returns @upstream (the constructor's single-upstream value),
+    # preserving back-compat. Override to route by path / header /
+    # tenant / capability:
+    #
+    #   class ApiGateway < Tep::Proxy
+    #     def pick_upstream(req)
+    #       if req.path.start_with?("/api/v1/")
+    #         "http://upstream-v1.local:8080"
+    #       else
+    #         "http://upstream-v2.local:8080"
+    #       end
+    #     end
+    #   end
+    #
+    # Also available as a block-DSL hook (lowered by bin/tep):
+    #
+    #   gw = Tep::Proxy.new("http://default.local:8080")
+    #   gw.pick_upstream do |req|
+    #     ...
+    #   end
+    #
+    # The returned URL is prefix-joined with the rewrite_path output,
+    # so it should NOT include the request path (just scheme://host:port
+    # + optional fixed prefix).
+    def pick_upstream(req)
+      @upstream
+    end
+
     # Map the inbound request's path+query to the upstream
     # path+query. Default: forward verbatim. Override to strip a
     # mount prefix, pin a fixed upstream path, etc.
@@ -179,7 +209,7 @@ module Tep
         return start_streaming_forward(req, res, ureq)
       end
 
-      url  = @upstream + ureq.path
+      url  = pick_upstream(req) + ureq.path
       ures = Tep::Http.send_req(ureq.verb, url, ureq.body, ureq.headers)
 
       if ures.status > 0
@@ -218,7 +248,7 @@ module Tep
     # buffered res.body). On connect/scheme/head-read failure, sets a
     # 502 and returns "" without starting a stream.
     def start_streaming_forward(req, res, ureq)
-      url   = @upstream + ureq.path
+      url   = pick_upstream(req) + ureq.path
       parts = Tep::Url.split_url(url)
       if parts["scheme"] != "http"
         res.set_status(502)
