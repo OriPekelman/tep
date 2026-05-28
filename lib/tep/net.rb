@@ -37,6 +37,14 @@ module Sock
   ffi_func :sphttp_install_term_handlers, [], :int
   ffi_func :sphttp_shutdown_requested,    [], :int
 
+  # uname-based host introspection for the toy/v1 envelope (see
+  # docs/events-schema.md). sphttp_os_kind returns lowercased
+  # uname.sysname ("linux" / "darwin" / ...); sphttp_arch_kind
+  # returns uname.machine as-is ("aarch64" / "x86_64" / ...). Both
+  # return "unknown" on uname() failure.
+  ffi_func :sphttp_os_kind,       [],               :str
+  ffi_func :sphttp_arch_kind,     [],               :str
+
   # ISO-8601 UTC timestamp for an epoch-seconds value. Used by
   # Tep::Events (toy/v1 envelope) for run_start/run_end wall-clock
   # fields -- spinel's Time.now is integer-epoch only.

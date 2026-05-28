@@ -284,7 +284,8 @@ class TestOpenAIServerShutdown < TepTest
     lines = File.readlines(EVENTS_PATH).map { |l| JSON.parse(l) }
     re = lines.find { |e| e["kind"] == "run_end" }
     refute_nil re, "expected a run_end event after SIGTERM"
-    assert_equal "ok", re["reason"]
+    # reason: "completed" harmonised with toy/v1 vocabulary in #115.
+    assert_equal "completed", re["reason"]
     assert_equal 1,    re["stats"]["requests"]
     assert_equal 1,    re["stats"]["tokens_out"]
     assert_equal 0,    re["stats"]["errors"]
