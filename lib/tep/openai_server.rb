@@ -130,6 +130,90 @@ module Tep
         end
       end
 
+      # Parse the `messages` array from an OpenAI chat request body.
+      # Returns [Tep::Llm::Message, ...] (one per `{role, content}`
+      # object); empty if the key is missing or the value isn't an
+      # array.
+      #
+      # Helper for `chat_completion(req)` overrides — backends that
+      # need the parsed messages array (most do, for applying their
+      # chat template) can call this instead of writing their own
+      # JSON walker:
+      #
+      #   def chat_completion(req)
+      #     messages = Tep::Llm::OpenAI.parse_messages(req.raw_body)
+      #     # ...apply template, tokenize, generate...
+      #   end
+      #
+      # Honors only `role` + `content` (the v1 fields). Other fields
+      # in the message object (e.g. `name`, `tool_calls`) are ignored
+      # for now; future chunks may extend the shape.
+      def self.parse_messages(body)
+        out = [Tep::Llm::Message.new("", "")]
+        out.delete_at(0)
+        pos = Tep::Json.find_value_start(body, "messages")
+        if pos < 0
+          return out
+        end
+        pos = Tep::Json.skip_ws(body, pos)
+        if pos >= body.length || body[pos] != "["
+          return out
+        end
+        pos += 1
+        while pos < body.length
+          pos = Tep::Json.skip_ws(body, pos)
+          if pos >= body.length
+            return out
+          end
+          c = body[pos]
+          if c == "]"
+            return out
+          end
+          if c == ","
+            pos += 1
+            next
+          end
+          if c == "{"
+            obj_end = Tep::Json.skip_container(body, pos)
+            # Parse role + content within this object range. Run two
+            # passes scoped via Tep::Json's existing key search: the
+            # body-wide find could match a key in a sibling object so
+            # we instead walk the bytes between `pos` and `obj_end`
+            # manually, looking only for `"role"` / `"content"`.
+            role = Tep::Llm::OpenAI.find_obj_key_str(body, pos, obj_end, "role")
+            cont = Tep::Llm::OpenAI.find_obj_key_str(body, pos, obj_end, "content")
+            out.push(Tep::Llm::Message.new(role, cont))
+            pos = obj_end
+          else
+            pos = Tep::Json.skip_value(body, pos)
+          end
+        end
+        out
+      end
+
+      # Scan body[obj_start..obj_end) for `"key":"<value>"` and return
+      # the unescaped value. Returns "" if the key isn't present. Used
+      # by parse_messages above to extract per-message fields without
+      # crossing into adjacent message objects.
+      def self.find_obj_key_str(body, obj_start, obj_end, key)
+        needle = "\"" + key + "\""
+        pos = Tep.str_find(body, needle, obj_start)
+        if pos < 0 || pos >= obj_end
+          return ""
+        end
+        pos = pos + needle.length
+        pos = Tep::Json.skip_ws(body, pos)
+        if pos >= obj_end || body[pos] != ":"
+          return ""
+        end
+        pos += 1
+        pos = Tep::Json.skip_ws(body, pos)
+        if pos >= obj_end
+          return ""
+        end
+        Tep::Json.parse_str_value(body, pos)
+      end
+
       # Sampling parameters handed to the backend. v1 carries max_tokens
       # (the int tep needs to bound generation); temperature / top_p are
       # JSON-number floats, which tep can't represent natively (no

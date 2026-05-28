@@ -308,12 +308,22 @@ class TestOpenAIServerChat < TepTest
         true
       end
       def chat_completion(req)
-        # Real backend would parse req.raw_body's messages array +
-        # apply its chat template; for the skeleton smoke test we
-        # just echo a fixed reply and pretend it cost a few tokens.
+        # Demonstrates Tep::Llm::OpenAI.parse_messages: pull the
+        # roles+contents out of the request body and echo the LAST
+        # user content back as the assistant reply. A real backend
+        # would tokenize + run inference + decode here.
+        msgs = Tep::Llm::OpenAI.parse_messages(req.raw_body)
+        last_user_content = ""
+        i = 0
+        while i < msgs.length
+          if msgs[i].role == "user"
+            last_user_content = msgs[i].content
+          end
+          i += 1
+        end
         c = Tep::Llm::OpenAI::Completion.new
-        c.text              = "ack"
-        c.prompt_tokens     = 4
+        c.text              = "echo: " + last_user_content
+        c.prompt_tokens     = msgs.length * 4   # synthetic
         c.completion_tokens = 1
         c
       end
@@ -331,10 +341,29 @@ class TestOpenAIServerChat < TepTest
     assert_equal "chat.completion", body["object"]
     assert_equal "chat-1",          body["model"]
     assert_equal "assistant", body["choices"][0]["message"]["role"]
-    assert_equal "ack",       body["choices"][0]["message"]["content"]
+    # parse_messages saw one user message with content "hi";
+    # the backend echoes that as the assistant reply.
+    assert_equal "echo: hi",  body["choices"][0]["message"]["content"]
     assert_equal "stop",      body["choices"][0]["finish_reason"]
+    # prompt_tokens = msgs.length * 4 = 4 (one message).
     assert_equal 4, body["usage"]["prompt_tokens"]
     assert_equal 1, body["usage"]["completion_tokens"]
     assert_equal 5, body["usage"]["total_tokens"]
+  end
+
+  def test_chat_parse_messages_multi_turn
+    # Multiple turns + interleaved roles. parse_messages should walk
+    # them in order; the backend echoes the LAST user content.
+    body_json = "{\"model\":\"chat-1\",\"messages\":[" +
+                "{\"role\":\"system\",\"content\":\"you are helpful\"}," +
+                "{\"role\":\"user\",\"content\":\"first\"}," +
+                "{\"role\":\"assistant\",\"content\":\"...\"}," +
+                "{\"role\":\"user\",\"content\":\"second\"}]}"
+    res = post("/v1/chat/completions", body_json)
+    assert_equal "200", res.code
+    body = JSON.parse(res.body)
+    assert_equal "echo: second", body["choices"][0]["message"]["content"]
+    # 4 messages -> prompt_tokens = 4 * 4 = 16.
+    assert_equal 16, body["usage"]["prompt_tokens"]
   end
 end
