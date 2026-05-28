@@ -129,18 +129,13 @@ module TepHarness
   end
 end
 
-# TODO: kill_all runs BEFORE tests in Ruby's LIFO at_exit chain
-# (require "minitest/autorun" registers the test-runner at_exit
-# FIRST; this one registers SECOND, so it fires FIRST). @running is
-# empty at this point so it's a no-op; tests then spawn apps that
-# leak as orphans to docker PID 1 when ruby exits. The parallel
-# runner masks the leak via per-file unique port ranges; serial
-# `make test` is one process so intra-process leak doesn't matter;
-# but manually chaining `ruby A.rb; ruby B.rb` with overlapping
-# default ports DOES surface the leak. Fix is to use
-# `Minitest.after_run { TepHarness.kill_all }` instead, which fires
-# AFTER tests run + @running is populated.
-at_exit { TepHarness.kill_all }
+# Tear down spawned apps AFTER Minitest finishes. A bare `at_exit`
+# would fire BEFORE the test runner (Ruby at_exit is LIFO and
+# require "minitest/autorun" registers its at_exit first), so
+# @running would be empty and apps would leak as orphans to PID 1
+# when ruby exits. Minitest.after_run fires post-suite, with the
+# @running list populated. See #117 for the original investigation.
+Minitest.after_run { TepHarness.kill_all }
 
 # Kill any zombie tep test processes leaking from previous runs.
 # Skip on hosts that don't ship `pgrep` (some slim containers don't).
