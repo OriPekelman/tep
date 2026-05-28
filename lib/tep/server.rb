@@ -42,6 +42,10 @@ module Tep
           exit(1)
         end
         worker_loop(sfd)
+        # Single-process is its own "parent" -- emit run_end here.
+        if Sock.sphttp_shutdown_requested != 0
+          Tep.on_shutdown
+        end
         return
       end
 
@@ -61,12 +65,19 @@ module Tep
         end
         i += 1
       end
-      # Parent: reap forever.
+      # Parent: reap children until none remain (wait returns -1).
+      # On SIGTERM-to-the-pgroup, children break their accept loops and
+      # exit; parent's wait_any reaps them in order. Once all workers
+      # are gone, emit the single aggregated run_end (re-reading the
+      # JSONL for cross-worker stats; see Tep::Events#run_end_aggregated).
       loop do
         gone = Sock.sphttp_wait_any
         if gone < 0
           break
         end
+      end
+      if Sock.sphttp_shutdown_requested != 0
+        Tep.on_shutdown
       end
     end
 
@@ -76,10 +87,11 @@ module Tep
         if client < 0
           # accept returns -1 with the term flag set after the first
           # SIGTERM/SIGINT (sphttp_accept retries past unrelated
-          # signals). Run shutdown hooks once, then exit so the parent
-          # reap loop can move on.
+          # signals). Break here; the parent (or this same process for
+          # workers=1) emits the aggregated run_end. Workers used to
+          # call Tep.on_shutdown here too, which emitted N run_ends
+          # in the JSONL for an N-worker deployment (#128).
           if Sock.sphttp_shutdown_requested != 0
-            Tep.on_shutdown
             break
           end
           next

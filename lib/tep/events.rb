@@ -122,9 +122,12 @@ module Tep
       0
     end
 
-    # Emit `run_end` once at shutdown. reason is "ok" (clean) or
-    # "errored" (uncaught failure) -- per toy/v1, quality verdicts on
-    # the run are downstream decisions, not encoded here.
+    # Emit `run_end` once at shutdown using LOCAL counters. reason is
+    # "completed" (clean) or "errored" (uncaught failure) -- per
+    # toy/v1, quality verdicts on the run are downstream decisions,
+    # not encoded here. Used for single-process / workers=1 deployments
+    # where the writer is the same process that handled the inferences.
+    # For workers>1, see run_end_aggregated below.
     def run_end(reason)
       if @path.length == 0
         return 0
@@ -142,6 +145,49 @@ module Tep
         "}" +
       "}"
       append_line(line)
+    end
+
+    # Cross-worker run_end: re-read the JSONL + sum inference events
+    # so the emitted stats cover every worker's contribution, then
+    # emit ONE run_end with aggregated counters. Used by Tep.on_shutdown
+    # in the prefork parent (workers>1) -- worker children stop calling
+    # run_end at all; only the parent emits, after all workers have
+    # exited. Avoids cross-worker IPC entirely.
+    def run_end_aggregated(reason)
+      if @path.length == 0
+        return 0
+      end
+      reqs = 0
+      toks = 0
+      # errors aren't yet event-encoded (record_error only bumps a
+      # local counter), so cross-worker errors aren't visible here.
+      # If a future chunk emits "error" events, sum them too. For
+      # now: 0 in aggregated mode.
+      errs = 0
+      content = File.read(@path)
+      lines = content.split("\n")
+      i = 0
+      while i < lines.length
+        line_s = lines[i]
+        if Tep.str_find(line_s, "\"kind\":\"inference\"", 0) >= 0
+          reqs += 1
+          toks += Json.get_int(line_s, "completion_tokens")
+        end
+        i += 1
+      end
+      ended = Sock.sphttp_iso8601_utc(Time.now.to_i)
+      out = "{" +
+        Json.encode_pair_str("kind", "run_end") + "," +
+        Json.encode_pair_int("t", rel_t) + "," +
+        Json.encode_pair_str("ended_at", ended) + "," +
+        Json.encode_pair_str("reason", reason) + "," +
+        "\"stats\":{" +
+          Json.encode_pair_int("requests", reqs) + "," +
+          Json.encode_pair_int("errors", errs) + "," +
+          Json.encode_pair_int("tokens_out", toks) +
+        "}" +
+      "}"
+      append_line(out)
     end
 
     # Seconds since run_start, clamped at 0 (a clock that goes

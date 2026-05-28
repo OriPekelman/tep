@@ -36,8 +36,11 @@ module TepHarness
     p
   end
 
-  # Compile `source` (Sinatra-classic by default) and return the bound port.
-  def self.spawn_app(source, mode: :sinatra)
+  # Compile `source` (Sinatra-classic by default) and return the bound
+  # port. Pass `workers: N` to launch the binary in prefork mode --
+  # used by tests that need to exercise cross-worker behaviour (e.g.
+  # the #128 parent-only run_end emission).
+  def self.spawn_app(source, mode: :sinatra, workers: 1)
     tmp  = Dir.mktmpdir("tep-test")
     src  = File.join(tmp, "app.rb")
     File.write(src, source)
@@ -54,7 +57,9 @@ module TepHarness
     end
     port = next_port
     log  = File.join(tmp, "app.log")
-    pid  = Process.spawn(bin, "-p", port.to_s, out: log, err: [:child, :out])
+    args = [bin, "-p", port.to_s]
+    args += ["-w", workers.to_s] if workers > 1
+    pid  = Process.spawn(*args, out: log, err: [:child, :out])
     wait_for_port(port, tmp: tmp, pid: pid)
     @running << { pid: pid, tmp: tmp, log: log, port: port }
     port
@@ -157,6 +162,18 @@ class TepTest < Minitest::Test
     end
   end
 
+  # Number of prefork workers to launch the test binary with.
+  # Defaults to 1 (the existing single-process shape). Tests that
+  # need to exercise multi-worker behaviour (e.g. #128 run_end
+  # aggregation across workers) call `workers 2` at class scope.
+  def self.workers(n = nil)
+    if n
+      @workers = n
+    else
+      @workers || 1
+    end
+  end
+
   @@boot_lock = Mutex.new
 
   def self.boot!
@@ -164,7 +181,7 @@ class TepTest < Minitest::Test
       return @port if @port
       src, mode = app_source
       raise "#{name}: app_source not set" unless src
-      @port = TepHarness.spawn_app(src, mode: mode)
+      @port = TepHarness.spawn_app(src, mode: mode, workers: workers)
     end
   end
 

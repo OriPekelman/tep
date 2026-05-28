@@ -292,6 +292,76 @@ class TestOpenAIServerShutdown < TepTest
   end
 end
 
+# Tep::Llm::OpenAI::Server cross-worker run_end aggregation (#128).
+# Spawns the binary in prefork mode (workers=2); fires two /v1/completions
+# requests so each worker most-likely handles one (SO_REUSEPORT
+# load-balances); SIGTERMs the parent; asserts exactly ONE run_end
+# in the JSONL with stats.requests=2 (aggregated across workers).
+#
+# The pre-#128 behaviour was N run_ends per N workers, each with that
+# worker's local stats.
+class TestOpenAIServerRunEndMultiWorker < TepTest
+  EVENTS_PATH = "/tmp/tep_test_openai_runend_multi.jsonl"
+
+  workers 2
+
+  app_source <<~RB
+    require 'sinatra'
+
+    class EchoBackend < Tep::Llm::OpenAI::Backend
+      def list_models
+        ["echo-1"]
+      end
+      def device_kind
+        "cpu"
+      end
+      def generate_from_tokens(model, token_ids, sampling)
+        c = Tep::Llm::OpenAI::Completion.new
+        c.text              = "ok"
+        c.prompt_tokens     = token_ids.length
+        c.completion_tokens = 2   # contributes 2 to aggregated tokens_out
+        c
+      end
+    end
+
+    Tep::Llm::OpenAI::Server.use(EchoBackend.new)
+    Tep::Llm::OpenAI::Server.serve!("#{EVENTS_PATH}")
+  RB
+
+  @@events_path_cleaned = false
+  def setup
+    unless @@events_path_cleaned
+      File.delete(EVENTS_PATH) if File.exist?(EVENTS_PATH)
+      @@events_path_cleaned = true
+    end
+    super
+  end
+
+  def test_parent_only_run_end_with_aggregated_stats
+    # 4 sequential requests; SO_REUSEPORT load-balances across workers.
+    # The test is shape-only on which worker handled which; we just
+    # need the AGGREGATED count to be 4 in the single run_end below.
+    4.times do |i|
+      res = post("/v1/completions",
+                 "{\"model\":\"echo-1\",\"prompt\":[#{i}],\"max_tokens\":1}")
+      assert_equal "200", res.code, "request #{i}"
+    end
+
+    TepHarness.terminate(@port)
+
+    lines = File.readlines(EVENTS_PATH).map { |l| JSON.parse(l) }
+    run_ends = lines.select { |e| e["kind"] == "run_end" }
+    assert_equal 1, run_ends.length,
+      "expected exactly one run_end across workers (was #{run_ends.length})"
+    re = run_ends[0]
+    assert_equal "completed", re["reason"]
+    # 4 requests across the workers, each with completion_tokens=2.
+    assert_equal 4, re["stats"]["requests"]
+    assert_equal 8, re["stats"]["tokens_out"]
+    assert_equal 0, re["stats"]["errors"]
+  end
+end
+
 # Tep::Llm::OpenAI::Server chat completions when a backend opts in.
 # Default backend.supports_chat? is false (TestOpenAIServer covers the
 # 501 gate); here ChatBackend overrides supports_chat? + chat_completion
