@@ -616,6 +616,30 @@ module Tep
   _tep_seed_oai_backend.generate_from_tokens("m", Tep::Json.get_int_array("{}", "prompt"), _tep_seed_oai_sampling)
   _tep_seed_oai_completions = Tep::Llm::OpenAI::CompletionsHandler.new
   _tep_seed_oai_completions.handle(_tep_seed_proxy_req, _tep_seed_proxy_res)
+  # 7.2 streaming completions: pin StreamSink + CompletionsStreamer
+  # slots + exercise the backend's generate_stream_from_tokens(sink)
+  # arity so the param type resolves. emit_token is called against a
+  # fd=-1 Stream -- the seed never runs the actual write (the streamer
+  # pump is never invoked at boot), it just gives spinel the surface.
+  _tep_seed_oai_stream = Tep::Stream.new(-1)
+  _tep_seed_oai_sink = Tep::Llm::OpenAI::StreamSink.new
+  _tep_seed_oai_sink.out   = _tep_seed_oai_stream
+  _tep_seed_oai_sink.model = "m"
+  _tep_seed_oai_sink.completion_count
+  # emit_token call site pins the `piece` parameter to String. fd=-1
+  # makes the underlying sphttp_write_chunk a harmless EBADF at boot.
+  _tep_seed_oai_sink.emit_token("seed")
+  _tep_seed_oai_backend.generate_stream_from_tokens(
+    "m", Tep::Json.get_int_array("{}", "prompt"), _tep_seed_oai_sampling, _tep_seed_oai_sink)
+  _tep_seed_oai_cstreamer = Tep::Llm::OpenAI::CompletionsStreamer.new
+  _tep_seed_oai_cstreamer.model         = "m"
+  _tep_seed_oai_cstreamer.token_ids     = Tep::Json.get_int_array("{}", "prompt")
+  _tep_seed_oai_cstreamer.sampling      = _tep_seed_oai_sampling
+  _tep_seed_oai_cstreamer.prompt_tokens = 0
+  _tep_seed_oai_cstreamer.t0            = 0
+  _tep_seed_oai_cstreamer.request_id    = ""
+  _tep_seed_oai_cstreamer.principal_id  = ""
+  _tep_seed_proxy_res.start_stream(_tep_seed_oai_cstreamer)
 
   # Tep::Shell.write seed.
   Tep::Shell.write("/dev/null", "")
