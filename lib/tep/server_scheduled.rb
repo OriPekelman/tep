@@ -12,20 +12,13 @@
 # all I/O on Tep::Scheduler.io_wait -- N workers serve M >> N
 # concurrent connections, bounded only by per-fiber memory.
 #
-# Closure-capture workaround
-# --------------------------
-# Spinel's codegen mis-lowers Fiber.new bodies that capture local
-# variables: it emits heap-cell accesses to the captured values
-# without emitting the matching heap-cell declarations. Until that
-# lands (filed as a spinel issue alongside this commit), the fiber
-# bodies here are CLOSURE-FREE -- they call top-level cmeths whose
-# state arrives through `Tep::APP.pending_*` stash slots, set by
-# the spawner right before yielding. The pause(0) yield ensures the
-# new fiber wins the next tick and reads its slot before any other
-# spawn overwrites.
-#
-# All methods are cmeths (`def self.X`) so the fiber bodies can call
-# them as plain top-level functions without instance state.
+# Fiber bodies use ordinary closure capture for sfd / client now
+# (matz/spinel#564 + #1007 both closed; the heap-cell-reset fix
+# in spinel commit 48594d6 lets multi-method capture chains lower
+# correctly). cmeths still preferred for accept_loop /
+# handle_connection so the bodies read cleanly without per-instance
+# state, but the per-connection fd flows through closure capture,
+# not the earlier `Tep::APP.pending_*` stash + pause(0) handoff.
 module Tep
   class Server
     class Scheduled
@@ -53,8 +46,6 @@ module Tep
           return 1
         end
         Sock.sphttp_set_nonblock(sfd)
-        Tep::APP.pending_listen_fd = sfd
-        Tep::APP.pending_quiet = quiet
 
         # Install SIGTERM/SIGINT handlers BEFORE fork so children
         # inherit them; accept_loop checks the term flag once per
@@ -66,7 +57,7 @@ module Tep
           while i < workers
             pid = Sock.sphttp_fork
             if pid == 0
-              Tep::Server::Scheduled.run_worker
+              Tep::Server::Scheduled.run_worker(sfd)
               Sock.sphttp_exit(0)
             end
             i += 1
@@ -84,7 +75,7 @@ module Tep
             Tep.on_shutdown
           end
         else
-          Tep::Server::Scheduled.run_worker
+          Tep::Server::Scheduled.run_worker(sfd)
           # Single-process: this IS the parent; emit run_end here.
           if Sock.sphttp_shutdown_requested != 0
             Tep.on_shutdown
@@ -99,8 +90,8 @@ module Tep
       # indefinitely -- run_until_empty bails when no fiber is ready
       # to resume THIS pass; we need to keep polling so parked
       # accept-on-sfd fibers get woken when a connection arrives.
-      def self.run_worker
-        f = Fiber.new { Tep::Server::Scheduled.accept_loop }
+      def self.run_worker(sfd)
+        f = Fiber.new { Tep::Server::Scheduled.accept_loop(sfd) }
         Tep::Scheduler.spawn_fiber(f)
         while Tep::Scheduler.alive_count > 0
           Tep::Scheduler.tick(1000)
@@ -108,11 +99,9 @@ module Tep
         0
       end
 
-      # Accept loop body. Reads sfd + quiet from APP stash (closure-
-      # less). Each accepted connection becomes its own fiber, with
-      # client fd handed off via pending_client_fd + pause(0) yield.
-      def self.accept_loop
-        sfd = Tep::APP.pending_listen_fd
+      # Accept loop. Each accepted connection becomes its own fiber
+      # that closes over the just-accepted `client` fd.
+      def self.accept_loop(sfd)
         while true
           # SIGTERM/SIGINT: sphttp's term flag is set by the signal
           # handler; check before parking on io_wait so we don't sleep
@@ -134,23 +123,9 @@ module Tep
             next
           end
           Sock.sphttp_set_nonblock(client)
-          Tep::APP.pending_client_fd = client
-          conn = Fiber.new { Tep::Server::Scheduled.handle_pending }
+          conn = Fiber.new { Tep::Server::Scheduled.handle_connection(client) }
           Tep::Scheduler.spawn_fiber(conn)
-          # Yield so the new fiber reads pending_client_fd before
-          # the next accept iteration overwrites it. The new fiber
-          # has wake_at=-1 (set by spawn_fiber); pause(0) sets ours
-          # to now -- -1 < now so the scheduler picks the new fiber.
-          Tep::Scheduler.pause(0)
         end
-      end
-
-      # Connection-fiber entry. Reads client fd from APP stash, then
-      # delegates to handle_connection (which doesn't need the
-      # closure capture since it took a regular param).
-      def self.handle_pending
-        client = Tep::APP.pending_client_fd
-        Tep::Server::Scheduled.handle_connection(client)
       end
 
       # Per-connection lifecycle.
