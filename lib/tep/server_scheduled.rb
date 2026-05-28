@@ -56,6 +56,11 @@ module Tep
         Tep::APP.pending_listen_fd = sfd
         Tep::APP.pending_quiet = quiet
 
+        # Install SIGTERM/SIGINT handlers BEFORE fork so children
+        # inherit them; accept_loop checks the term flag once per
+        # second and runs Tep.on_shutdown (run_end + future hooks).
+        Sock.sphttp_install_term_handlers
+
         if workers > 1
           i = 0
           while i < workers
@@ -99,7 +104,17 @@ module Tep
       def self.accept_loop
         sfd = Tep::APP.pending_listen_fd
         while true
-          ready = Tep::Scheduler.io_wait(sfd, Tep::Scheduler::READ, -1)
+          # SIGTERM/SIGINT: sphttp's term flag is set by the signal
+          # handler; check before parking on io_wait so we don't sleep
+          # past a shutdown request. The 1s io_wait timeout below
+          # bounds the sleep-side latency.
+          if Sock.sphttp_shutdown_requested != 0
+            Tep.on_shutdown
+            break
+          end
+          # Bounded wait so the flag check above runs once per second
+          # even when traffic is idle (was -1 = wait forever).
+          ready = Tep::Scheduler.io_wait(sfd, Tep::Scheduler::READ, 1)
           if ready == 0
             next
           end

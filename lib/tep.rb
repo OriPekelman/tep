@@ -616,6 +616,15 @@ module Tep
   _tep_seed_oai_backend.generate_from_tokens("m", Tep::Json.get_int_array("{}", "prompt"), _tep_seed_oai_sampling)
   _tep_seed_oai_completions = Tep::Llm::OpenAI::CompletionsHandler.new
   _tep_seed_oai_completions.handle(_tep_seed_proxy_req, _tep_seed_proxy_res)
+  # Chat completions skeleton (POST /v1/chat/completions). Default
+  # backend.supports_chat? is false -> ChatCompletionsHandler returns
+  # 501; the override path (supports_chat? = true, chat_completion
+  # overridden) dispatches to the backend's chat_completion. Pin
+  # Backend#chat_completion's `req` param + the ChatCompletionsHandler
+  # dispatch through APP.openai_backend.
+  _tep_seed_oai_backend.chat_completion(_tep_seed_proxy_req)
+  _tep_seed_oai_chat = Tep::Llm::OpenAI::ChatCompletionsHandler.new
+  _tep_seed_oai_chat.handle(_tep_seed_proxy_req, _tep_seed_proxy_res)
   # 7.2 streaming completions: pin StreamSink + CompletionsStreamer
   # slots + exercise the backend's generate_stream_from_tokens(sink)
   # arity so the param type resolves. emit_token is called against a
@@ -853,5 +862,17 @@ module Tep
     else
       Server.new(APP).run(port, workers, quiet)
     end
+  end
+
+  # Called by server accept loops when SIGTERM/SIGINT is observed
+  # (via sphttp's term flag). Right now this flushes the openai-server
+  # toy/v1 events stream's run_end; future shutdown hooks add their
+  # cleanups here. Cheap when nothing is configured: openai_events is
+  # seeded with an empty path, whose enabled? short-circuits.
+  def self.on_shutdown
+    if APP.openai_events.enabled?
+      APP.openai_events.run_end("ok")
+    end
+    0
   end
 end

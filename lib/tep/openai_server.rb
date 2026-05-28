@@ -65,6 +65,19 @@ module Tep
           false
         end
 
+        # Message-level (chat) generation. Mirrors generate_from_tokens
+        # but receives the raw req so the backend can parse the
+        # messages array itself + apply its own chat template. Tep
+        # doesn't pre-build a Message[] because templating + role
+        # ordering is per-model; the JSON tools live in Tep::Json. The
+        # return is reused from the token path (text becomes the
+        # assistant message's content). Base no-op; subclasses override.
+        # Only reached when supports_chat? returns true -- the handler
+        # gates with a 501 otherwise.
+        def chat_completion(req)
+          Tep::Llm::OpenAI::Completion.new
+        end
+
         # Backend's device, surfaced into the run_start event's
         # backend.kind at serve! time. Defaults to cpu.
         def device_kind
@@ -110,8 +123,9 @@ module Tep
             Tep::Json.encode_pair_str("events_jsonl", events_jsonl) +
           "}"
           events.run_start(host, backend_kind, "", "", config_json)
-          Tep.get("/v1/models",       Tep::Llm::OpenAI::ModelsHandler.new)
-          Tep.post("/v1/completions", Tep::Llm::OpenAI::CompletionsHandler.new)
+          Tep.get("/v1/models",            Tep::Llm::OpenAI::ModelsHandler.new)
+          Tep.post("/v1/completions",      Tep::Llm::OpenAI::CompletionsHandler.new)
+          Tep.post("/v1/chat/completions", Tep::Llm::OpenAI::ChatCompletionsHandler.new)
           0
         end
       end
@@ -316,6 +330,53 @@ module Tep
             "\"choices\":[{" +
               Tep::Json.encode_pair_int("index", 0) + "," +
               Tep::Json.encode_pair_str("text", comp.text) + "," +
+              Tep::Json.encode_pair_str("finish_reason", "stop") +
+            "}]," +
+            "\"usage\":{" +
+              Tep::Json.encode_pair_int("prompt_tokens", comp.prompt_tokens) + "," +
+              Tep::Json.encode_pair_int("completion_tokens", comp.completion_tokens) + "," +
+              Tep::Json.encode_pair_int("total_tokens", total) +
+            "}" +
+          "}"
+        end
+      end
+
+      # POST /v1/chat/completions -- message-level OpenAI shape. Skeleton
+      # for now: gated 501 when backend.supports_chat? is false (the
+      # default; chat templating is per-model + an ML concern tep
+      # doesn't ship). When a backend opts in (overrides supports_chat?
+      # to true + chat_completion), this dispatches to it and formats
+      # the standard chat.completion envelope around the returned
+      # Completion (the text field becomes the assistant message's
+      # content). Streaming chat lands later.
+      class ChatCompletionsHandler < Tep::Handler
+        def handle(req, res)
+          res.headers["Content-Type"] = "application/json"
+          if !Tep::APP.openai_backend.supports_chat?
+            res.set_status(501)
+            return "{" +
+              "\"error\":{" +
+                Tep::Json.encode_pair_str("message",
+                  "chat completions not supported by this backend") + "," +
+                Tep::Json.encode_pair_str("type", "not_implemented") +
+              "}" +
+            "}"
+          end
+          body  = req.raw_body
+          model = Tep::Json.get_str(body, "model")
+          comp  = Tep::APP.openai_backend.chat_completion(req)
+          total = comp.prompt_tokens + comp.completion_tokens
+          "{" +
+            Tep::Json.encode_pair_str("id", "chatcmpl-tep") + "," +
+            Tep::Json.encode_pair_str("object", "chat.completion") + "," +
+            Tep::Json.encode_pair_int("created", Time.now.to_i) + "," +
+            Tep::Json.encode_pair_str("model", model) + "," +
+            "\"choices\":[{" +
+              Tep::Json.encode_pair_int("index", 0) + "," +
+              "\"message\":{" +
+                Tep::Json.encode_pair_str("role", "assistant") + "," +
+                Tep::Json.encode_pair_str("content", comp.text) +
+              "}," +
               Tep::Json.encode_pair_str("finish_reason", "stop") +
             "}]," +
             "\"usage\":{" +

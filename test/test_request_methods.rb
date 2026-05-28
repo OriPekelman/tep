@@ -63,3 +63,40 @@ class TestRequestMethods < TepTest
     assert_match(/accept=application\/json/, res2.body)
   end
 end
+
+# `request.body.read` -- Sinatra apps commonly treat request.body as
+# IO and call .read on it; tep's req.body is already a String, so the
+# bin/tep translator rewrites `request.body.read` -> `req.body` so the
+# Sinatra-style handler compiles + serves unchanged.
+class TestRequestBodyRead < TepTest
+  app_source <<~RB
+    require 'sinatra'
+
+    post '/echo' do
+      content_type 'text/plain'
+      request.body.read
+    end
+
+    post '/echo-twice' do
+      # Hit .read twice -- a Sinatra IO would return "" on the second
+      # call (cursor at EOF); for tep's no-op .read it just returns
+      # the same String again. The expected behaviour here is "tep
+      # gives you the body each time"; apps that rely on the IO
+      # cursor semantics need to rewrite to a single .read + store.
+      content_type 'text/plain'
+      request.body.read + "|" + request.body.read
+    end
+  RB
+
+  def test_request_body_read_returns_raw_body
+    res = post("/echo", "hello world")
+    assert_equal "200", res.code
+    assert_equal "hello world", res.body
+  end
+
+  def test_request_body_read_idempotent
+    res = post("/echo-twice", "abc")
+    assert_equal "200", res.code
+    assert_equal "abc|abc", res.body
+  end
+end
