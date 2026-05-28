@@ -53,8 +53,11 @@ class TestEvents < TepTest
     lines = scenario_lines
     assert_equal 4, lines.length
     assert_equal "run_start", lines[0]["kind"]
-    assert_equal "inference", lines[1]["kind"]
-    assert_equal "inference", lines[2]["kind"]
+    # #136: inference events are kind:"eval"+name:"request".
+    assert_equal "eval",      lines[1]["kind"]
+    assert_equal "request",   lines[1]["name"]
+    assert_equal "eval",      lines[2]["kind"]
+    assert_equal "request",   lines[2]["name"]
     assert_equal "run_end",   lines[3]["kind"]
   end
 
@@ -77,15 +80,18 @@ class TestEvents < TepTest
 
   def test_inference_event_fields
     ev = scenario_lines[1]
-    assert_equal "inference", ev["kind"]
-    assert_equal "serve", ev["phase"]
-    assert_equal "smollm2-135m", ev["model"]
-    assert_equal 12, ev["prompt_tokens"]
-    assert_equal 8, ev["completion_tokens"]
-    assert_equal 87000, ev["wall_us"]
-    assert_equal "cmpl-abc", ev["extra"]["request_id"]
-    assert_equal "user:42", ev["extra"]["principal_id"]
+    # #136 spec shape: kind:"eval" + phase:"serve" + name:"request",
+    # with model + tokens + latency_us nested under extra.
+    assert_equal "eval",    ev["kind"]
+    assert_equal "serve",   ev["phase"]
+    assert_equal "request", ev["name"]
     assert_kind_of Integer, ev["t"]
+    assert_equal "smollm2-135m", ev["extra"]["model"]
+    assert_equal 12,      ev["extra"]["prompt_tokens"]
+    assert_equal 8,       ev["extra"]["completion_tokens"]
+    assert_equal 87000,   ev["extra"]["latency_us"]
+    assert_equal "cmpl-abc", ev["extra"]["request_id"]
+    assert_equal "user:42",  ev["extra"]["principal_id"]
   end
 
   def test_run_end_stats_accumulate

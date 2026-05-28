@@ -95,26 +95,46 @@ module Tep
       append_line(line)
     end
 
-    # Emit one `inference` event. Token counts + wall_us (microsecond
-    # latency) are ints the caller measured. extra_json is a caller-
-    # built JSON object ("{}" if none) carrying sampling / request_id /
-    # principal_id -- emitted verbatim, so floats (temperature) live
-    # there, formatted by the caller.
+    # Emit one inference-time telemetry event in the toy/v1 spec
+    # shape (#136): kind:"eval", phase:"serve", name:"request",
+    # with model + token counts + latency_us nested inside `extra`
+    # alongside whatever the caller passed in extra_json. The
+    # producer-facing API stays the same (callers pass
+    # prompt_tokens, completion_tokens, wall_us); we rename
+    # wall_us -> latency_us at the wire level.
+    #
+    # extra_json is a caller-built JSON object ("{}" if none)
+    # carrying sampling / request_id / principal_id. We strip its
+    # outer braces and merge with the spec's per-completion fields
+    # to produce the final extra object.
     def inference(model, prompt_tokens, completion_tokens, wall_us, extra_json)
       @req_count = @req_count + 1
       @tok_out   = @tok_out + completion_tokens
       if @path.length == 0
         return 0
       end
-      line = "{" +
-        Json.encode_pair_str("kind", "inference") + "," +
-        Json.encode_pair_str("phase", "serve") + "," +
-        Json.encode_pair_int("t", rel_t) + "," +
+      # Build the merged extra: spec fields first, then caller's
+      # fields appended (if non-empty).
+      extra = "{" +
         Json.encode_pair_str("model", model) + "," +
         Json.encode_pair_int("prompt_tokens", prompt_tokens) + "," +
         Json.encode_pair_int("completion_tokens", completion_tokens) + "," +
-        Json.encode_pair_int("wall_us", wall_us) + "," +
-        "\"extra\":" + extra_json +
+        Json.encode_pair_int("latency_us", wall_us)
+      caller_inner = ""
+      if extra_json.length > 2
+        # Strip the outer braces -- "{...}" -> "...".
+        caller_inner = extra_json[1, extra_json.length - 2]
+      end
+      if caller_inner.length > 0
+        extra = extra + "," + caller_inner
+      end
+      extra = extra + "}"
+      line = "{" +
+        Json.encode_pair_str("kind", "eval") + "," +
+        Json.encode_pair_str("phase", "serve") + "," +
+        Json.encode_pair_int("t", rel_t) + "," +
+        Json.encode_pair_str("name", "request") + "," +
+        "\"extra\":" + extra +
       "}"
       append_line(line)
     end
@@ -174,9 +194,22 @@ module Tep
       i = 0
       while i < lines.length
         line_s = lines[i]
-        if Tep.str_find(line_s, "\"kind\":\"inference\"", 0) >= 0
+        # #136: inference events are kind:"eval" + phase:"serve" +
+        # name:"request". Match the joint shape to avoid counting
+        # future non-request eval events (e.g. training-time eval).
+        if Tep.str_find(line_s, "\"kind\":\"eval\"", 0) >= 0 &&
+           Tep.str_find(line_s, "\"name\":\"request\"", 0) >= 0
           reqs += 1
-          toks += Json.get_int(line_s, "completion_tokens")
+          # completion_tokens now lives nested inside the `extra`
+          # object. Tep::Json.find_value_start walks only the
+          # top-level keys (it skips over nested objects), so we
+          # have to extract extra first, then get_int within it.
+          extra_pos = Json.find_value_start(line_s, "extra")
+          if extra_pos >= 0
+            obj_end = Json.skip_container(line_s, extra_pos)
+            extra_obj = line_s[extra_pos, obj_end - extra_pos]
+            toks += Json.get_int(extra_obj, "completion_tokens")
+          end
         end
         i += 1
       end

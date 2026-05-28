@@ -158,16 +158,18 @@ class TestOpenAIServerEvents < TepTest
     assert_equal "200", res.code
 
     lines2 = File.readlines(EVENTS_PATH).map { |l| JSON.parse(l) }
-    inferences = lines2.select { |e| e["kind"] == "inference" }
+    # #136: inference events are kind:"eval"+name:"request"; per-request
+    # fields nested under extra.
+    inferences = lines2.select { |e| e["kind"] == "eval" && e["name"] == "request" }
     assert_equal 1, inferences.length, "expected exactly one inference event"
     inf = inferences[0]
-    assert_equal "serve",  inf["phase"]
-    assert_equal "echo-1", inf["model"]
-    assert_equal 4,        inf["prompt_tokens"]
-    assert_equal 7,        inf["completion_tokens"]
-    assert_kind_of Integer, inf["wall_us"]
-    assert inf["wall_us"] >= 0
+    assert_equal "serve", inf["phase"]
     extra = inf["extra"]
+    assert_equal "echo-1", extra["model"]
+    assert_equal 4,        extra["prompt_tokens"]
+    assert_equal 7,        extra["completion_tokens"]
+    assert_kind_of Integer, extra["latency_us"]
+    assert extra["latency_us"] >= 0
     assert_equal "cmpl-tep", extra["request_id"]
     assert_match(/\Auser:/, extra["principal_id"])
   end
@@ -236,12 +238,14 @@ class TestOpenAIServerStreaming < TepTest
     # And the inference event landed in the JSONL with the right
     # completion_count (= 3, the number of emit_token calls).
     lines = File.readlines(EVENTS_PATH).map { |l| JSON.parse(l) }
-    inferences = lines.select { |e| e["kind"] == "inference" }
+    # #136 spec shape: kind:"eval"+name:"request", per-request fields
+    # nested under extra.
+    inferences = lines.select { |e| e["kind"] == "eval" && e["name"] == "request" }
     assert_equal 1, inferences.length
     inf = inferences[0]
-    assert_equal "echo-stream", inf["model"]
-    assert_equal 3,             inf["prompt_tokens"]
-    assert_equal 3,             inf["completion_tokens"]
+    assert_equal "echo-stream", inf["extra"]["model"]
+    assert_equal 3,             inf["extra"]["prompt_tokens"]
+    assert_equal 3,             inf["extra"]["completion_tokens"]
     assert_equal "cmpl-tep",    inf["extra"]["request_id"]
   end
 end
