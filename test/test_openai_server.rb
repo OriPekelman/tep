@@ -143,3 +143,76 @@ class TestOpenAIServerEvents < TepTest
     assert_match(/\Auser:/, extra["principal_id"])
   end
 end
+
+# Tep::Llm::OpenAI::Server streaming completions (chunk 7.2): with
+# "stream": true in the body, /v1/completions responds SSE-style. The
+# backend writes tokens through a Tep::Llm::OpenAI::StreamSink (no
+# block-yield -- spinel can't lower one across the backend boundary);
+# the CompletionsStreamer terminates the stream with data: [DONE] and
+# emits the toy/v1 inference event with sink.completion_count.
+class TestOpenAIServerStreaming < TepTest
+  EVENTS_PATH = "/tmp/tep_test_openai_stream_events.jsonl"
+
+  app_source <<~RB
+    require 'sinatra'
+
+    class EchoStreamBackend < Tep::Llm::OpenAI::Backend
+      def list_models
+        ["echo-stream"]
+      end
+      def device_kind
+        "cpu"
+      end
+      def generate_stream_from_tokens(model, token_ids, sampling, sink)
+        # Emit one delta per prompt token -- simplest deterministic
+        # shape the test can assert on.
+        i = 0
+        while i < token_ids.length
+          sink.emit_token("t" + token_ids[i].to_s + " ")
+          i += 1
+        end
+        0
+      end
+    end
+
+    Tep::Llm::OpenAI::Server.use(EchoStreamBackend.new)
+    Tep::Llm::OpenAI::Server.serve!("#{EVENTS_PATH}")
+  RB
+
+  @@events_path_cleaned = false
+  def setup
+    unless @@events_path_cleaned
+      File.delete(EVENTS_PATH) if File.exist?(EVENTS_PATH)
+      @@events_path_cleaned = true
+    end
+    super
+  end
+
+  def test_streaming_emits_sse_with_done_and_inference_event
+    body = "{\"model\":\"echo-stream\",\"prompt\":[7,8,9],\"max_tokens\":5,\"stream\":true}"
+    res  = post("/v1/completions", body)
+    assert_equal "200", res.code
+    assert_match(%r{text/event-stream}, res["content-type"])
+
+    # Three token deltas + [DONE] sentinel.
+    data_lines = res.body.scan(/^data: (.+)$/).flatten
+    assert_equal 4, data_lines.length, "expected 3 token frames + 1 [DONE]"
+    assert_equal "[DONE]", data_lines.last
+    frames = data_lines[0..-2].map { |l| JSON.parse(l) }
+    assert_equal ["t7 ", "t8 ", "t9 "], frames.map { |f| f["choices"][0]["text"] }
+    assert_equal [nil, nil, nil],        frames.map { |f| f["choices"][0]["finish_reason"] }
+    assert_equal ["echo-stream", "echo-stream", "echo-stream"],
+                 frames.map { |f| f["model"] }
+
+    # And the inference event landed in the JSONL with the right
+    # completion_count (= 3, the number of emit_token calls).
+    lines = File.readlines(EVENTS_PATH).map { |l| JSON.parse(l) }
+    inferences = lines.select { |e| e["kind"] == "inference" }
+    assert_equal 1, inferences.length
+    inf = inferences[0]
+    assert_equal "echo-stream", inf["model"]
+    assert_equal 3,             inf["prompt_tokens"]
+    assert_equal 3,             inf["completion_tokens"]
+    assert_equal "cmpl-tep",    inf["extra"]["request_id"]
+  end
+end

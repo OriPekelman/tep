@@ -35,15 +35,27 @@ module Tep
         end
 
         # PRIMARY shape: token-level generation (maps to
-        # /v1/completions). `token_ids` is the encoded prompt
-        # (Array[Integer]); `sampling` is a Tep::Llm::OpenAI::Sampling.
-        # Returns a Tep::Llm::OpenAI::Completion (text + usage). This
-        # 7.1b form is non-streaming -- it returns the full result;
-        # the per-token block-yield variant for SSE lands in 7.2. The
-        # base returns an empty completion so a bare backend compiles;
-        # real backends override.
+        # /v1/completions, non-streaming). `token_ids` is the encoded
+        # prompt (Array[Integer]); `sampling` is a
+        # Tep::Llm::OpenAI::Sampling. Returns a
+        # Tep::Llm::OpenAI::Completion (text + usage). The base returns
+        # an empty completion so a bare backend compiles; real backends
+        # override.
         def generate_from_tokens(model, token_ids, sampling)
           Tep::Llm::OpenAI::Completion.new
+        end
+
+        # STREAMING shape (7.2): the per-token variant for SSE
+        # /v1/completions when the request carries "stream": true.
+        # The backend writes each token to `sink` via
+        # sink.emit_token(piece); the sink (Tep::Llm::OpenAI::StreamSink)
+        # formats it as an OpenAI SSE frame and writes to the
+        # outbound chunked stream. Blocks/yields don't lower across the
+        # spinel boundary, so a typed sink replaces the block --
+        # backends never see SSE wire format or the client fd.
+        # Base no-op (subclasses override).
+        def generate_stream_from_tokens(model, token_ids, sampling, sink)
+          0
         end
 
         # Does this backend implement message-level (chat) generation?
@@ -128,6 +140,87 @@ module Tep
         end
       end
 
+      # The per-token write surface a streaming backend uses (7.2). One
+      # method: `emit_token(piece)`. The sink formats `piece` as an
+      # OpenAI text-completion SSE frame and writes one chunked frame
+      # to the outbound stream. Counts emitted tokens for the
+      # inference event's completion_tokens.
+      #
+      # Why a sink object instead of a block: spinel can't lower a
+      # block parameter across the backend call boundary; a typed
+      # object with one method does the same job through ordinary
+      # virtual dispatch.
+      class StreamSink
+        attr_accessor :out, :model, :completion_count
+
+        def initialize
+          @model            = ""
+          @completion_count = 0
+        end
+
+        # Write one SSE event carrying a single text delta. Matches
+        # OpenAI's text_completion streaming shape: one choices[].text
+        # per event, finish_reason: null until the streamer sends
+        # [DONE]. created uses Time.now.to_i (epoch seconds).
+        def emit_token(piece)
+          @completion_count = @completion_count + 1
+          frame = "{" +
+            Tep::Json.encode_pair_str("id", "cmpl-tep") + "," +
+            Tep::Json.encode_pair_str("object", "text_completion") + "," +
+            Tep::Json.encode_pair_int("created", Time.now.to_i) + "," +
+            Tep::Json.encode_pair_str("model", @model) + "," +
+            "\"choices\":[{" +
+              Tep::Json.encode_pair_int("index", 0) + "," +
+              Tep::Json.encode_pair_str("text", piece) + "," +
+              "\"finish_reason\":null" +
+            "}]" +
+          "}"
+          @out.write("data: " + frame + "\n\n")
+          0
+        end
+      end
+
+      # Runs one streaming completion. Subclass of Tep::Streamer so the
+      # server pumps `pump(out)` cooperatively; we own the SSE shape
+      # end-to-end: drive the backend through StreamSink, write the
+      # terminating data:[DONE], then emit the toy/v1 inference event.
+      class CompletionsStreamer < Tep::Streamer
+        attr_accessor :model, :token_ids, :sampling
+        attr_accessor :prompt_tokens, :t0, :request_id, :principal_id
+
+        def initialize
+          @model         = ""
+          @token_ids     = [0]
+          @token_ids.delete_at(0)
+          @sampling      = Tep::Llm::OpenAI::Sampling.new
+          @prompt_tokens = 0
+          @t0            = 0
+          @request_id    = ""
+          @principal_id  = ""
+        end
+
+        def pump(out)
+          sink = Tep::Llm::OpenAI::StreamSink.new
+          sink.out   = out
+          sink.model = @model
+          Tep::APP.openai_backend.generate_stream_from_tokens(
+            @model, @token_ids, @sampling, sink)
+          # Terminating sentinel + inference event. wall_us is
+          # second-resolution for the same reason as the non-streaming
+          # path (spinel Time.now exposes epoch-int only); LLM is
+          # seconds-scale, populated wall_us is enough signal.
+          out.write("data: [DONE]\n\n")
+          wall_us = (Time.now.to_i - @t0) * 1_000_000
+          extra = "{" +
+            Tep::Json.encode_pair_str("request_id", @request_id) + "," +
+            Tep::Json.encode_pair_str("principal_id", @principal_id) +
+          "}"
+          Tep::APP.openai_events.inference(
+            @model, @prompt_tokens, sink.completion_count, wall_us, extra)
+          0
+        end
+      end
+
       # GET /v1/models -- the standard OpenAI list envelope, built from
       # backend.list_models. Dispatches through APP.openai_backend so
       # the app's subclass override is what answers.
@@ -160,12 +253,36 @@ module Tep
       # APP.openai_backend (the app's subclass override answers).
       class CompletionsHandler < Tep::Handler
         def handle(req, res)
-          res.headers["Content-Type"] = "application/json"
           body      = req.raw_body
           model     = Tep::Json.get_str(body, "model")
           token_ids = Tep::Json.get_int_array(body, "prompt")
           sampling  = Tep::Llm::OpenAI::Sampling.new
           sampling.max_tokens = Tep::Json.get_int(body, "max_tokens")
+
+          # OpenAI signals streaming with "stream": true in the JSON
+          # body; Tep::Json has no bool getter, so we sniff the literal
+          # (same shape as examples/llm_gateway/app.rb). When set, the
+          # response is SSE: a CompletionsStreamer pumps per-token
+          # frames + the [DONE] sentinel, then emits the inference
+          # event with sink.completion_count.
+          wants_stream = Tep.str_find(body, "\"stream\":true", 0) >= 0 ||
+                         Tep.str_find(body, "\"stream\": true", 0) >= 0
+          if wants_stream
+            res.headers["Content-Type"]  = "text/event-stream"
+            res.headers["Cache-Control"] = "no-cache"
+            streamer = Tep::Llm::OpenAI::CompletionsStreamer.new
+            streamer.model         = model
+            streamer.token_ids     = token_ids
+            streamer.sampling      = sampling
+            streamer.prompt_tokens = token_ids.length
+            streamer.t0            = Time.now.to_i
+            streamer.request_id    = "cmpl-tep"
+            streamer.principal_id  = req.identity.subject
+            res.start_stream(streamer)
+            return ""
+          end
+
+          res.headers["Content-Type"] = "application/json"
 
           # Stamp t0 for the inference event's wall_us. Time.now exposes
           # only integer epoch seconds under spinel, so wall_us is at
