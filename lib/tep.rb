@@ -597,6 +597,10 @@ module Tep
   # (a global side effect); its types self-pin from its body.
   _tep_seed_oai_backend = Tep::Llm::OpenAI::Backend.new
   Tep::APP.set_openai_backend(_tep_seed_oai_backend)
+  # 7.1c openai_events slot. Re-uses _tep_seed_events (already declared
+  # above as the Tep::Events seed). Pins APP.openai_events so the route
+  # handlers' `Tep::APP.openai_events.inference(...)` dispatch resolves.
+  Tep::APP.set_openai_events(_tep_seed_events)
   Tep::Llm::OpenAI::Server.use(_tep_seed_oai_backend)
   _tep_seed_oai_backend.list_models
   _tep_seed_oai_backend.supports_chat?
