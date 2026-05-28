@@ -54,6 +54,11 @@ class TestJson < TepTest
       res.headers["Content-Type"] = "text/plain"
       Tep::Json.get_str(req.raw_body, "after")
     end
+
+    post '/parse_float' do
+      res.headers["Content-Type"] = "text/plain"
+      Tep::Json.get_float(req.raw_body, "x").to_s
+    end
   RB
 
   def test_quote_escapes
@@ -133,5 +138,31 @@ class TestJson < TepTest
     body = '{"first":"has \\"quote\\" inside","after":"target"}'
     res = post("/skip_nested", body)
     assert_equal "target", res.body.strip
+  end
+
+  def test_get_float_decimal
+    res = post("/parse_float", '{"x":3.14}')
+    assert_equal "3.14", res.body.strip
+  end
+
+  def test_get_float_negative
+    res = post("/parse_float", '{"x":-0.5}')
+    assert_equal "-0.5", res.body.strip
+  end
+
+  def test_get_float_integer_literal
+    # JSON integer 42 read as float -> 42.0
+    res = post("/parse_float", '{"x":42}')
+    assert_equal "42.0", res.body.strip
+  end
+
+  def test_get_float_exponent
+    res = post("/parse_float", '{"x":1.5e2}')
+    assert_equal "150.0", res.body.strip
+  end
+
+  def test_get_float_missing_key_returns_zero
+    res = post("/parse_float", '{"other":42}')
+    assert_equal "0.0", res.body.strip
   end
 end

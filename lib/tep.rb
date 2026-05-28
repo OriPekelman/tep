@@ -579,9 +579,17 @@ module Tep
   _tep_seed_retry_policy.base_backoff_ms     = 0
   _tep_seed_retry_policy.backoff_multiplier  = 2
   _tep_seed_retry_policy.retry_on_status     = [502, 503, 504]
+  # Float-seconds setter (#133). Pin the Float -> int(ms) lowering
+  # so the conversion call site resolves.
+  _tep_seed_retry_policy.base_backoff_secs = 0.0
+  _tep_seed_retry_policy.base_backoff_secs
   # Pin Sock.sphttp_sleep_ms's :int param so the backoff call site
   # resolves (called from Tep::Proxy#handle).
   Sock.sphttp_sleep_ms(0)
+  # Tep::Json.get_float seed (#133). Pin the (String, String) -> Float
+  # surface so callers (CompletionsHandler temperature/top_p,
+  # backends that parse their own bodies) resolve cleanly.
+  Tep::Json.get_float("{\"temperature\":0.7}", "temperature")
   _tep_seed_retry_policy.backoff_for(0)
   _tep_seed_retry_policy.retriable?(502)
   _tep_seed_proxy.retry_policy(_tep_seed_proxy_req)
@@ -636,7 +644,9 @@ module Tep
   # 7.1b /v1/completions surface.
   Tep::Json.get_int_array("{}", "prompt")
   _tep_seed_oai_sampling = Tep::Llm::OpenAI::Sampling.new
-  _tep_seed_oai_sampling.max_tokens = 0
+  _tep_seed_oai_sampling.max_tokens  = 0
+  _tep_seed_oai_sampling.temperature = 1.0
+  _tep_seed_oai_sampling.top_p       = 1.0
   _tep_seed_oai_comp = Tep::Llm::OpenAI::Completion.new
   _tep_seed_oai_backend.generate_from_tokens("m", Tep::Json.get_int_array("{}", "prompt"), _tep_seed_oai_sampling)
   _tep_seed_oai_completions = Tep::Llm::OpenAI::CompletionsHandler.new

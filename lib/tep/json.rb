@@ -204,6 +204,35 @@ module Tep
       Json.parse_int_value(s, pos)
     end
 
+    # Decode a JSON number value at `key` -> Float. Accepts both
+    # integer-literal (`42`) and float-literal (`3.14`, `-0.5`, `1e2`)
+    # JSON-number syntax; the integer form returns N.0. Missing key
+    # or malformed value returns 0.0 (consistent with the other
+    # getters' missing-key defaults).
+    #
+    # Implementation: delegates the value-span walking to skip_value
+    # (already handles all JSON-number syntax + structural-char
+    # boundaries), then String#to_f on the substring. Inlined rather
+    # than factored into a parse_float_value helper because spinel's
+    # type inference mis-widens `s` to int through the indirection
+    # ("cannot resolve call to 'length' on int" + the downstream
+    # skip_ws/skip_value pointer-vs-int conversion errors).
+    def self.get_float(s, key)
+      pos = Json.find_value_start(s, key)
+      if pos < 0
+        return 0.0
+      end
+      pos = Json.skip_ws(s, pos)
+      if pos >= s.length
+        return 0.0
+      end
+      end_pos = Json.skip_value(s, pos)
+      if end_pos <= pos
+        return 0.0
+      end
+      s[pos, end_pos - pos].to_f
+    end
+
     def self.has_key?(s, key)
       Json.find_value_start(s, key) >= 0
     end

@@ -463,6 +463,20 @@ class TestProxyRetries < TepTest
       end
     end
 
+    # Same again but uses the Float-seconds convenience setter to
+    # prove it stores the right ms (0.2 -> 200ms).
+    class FlakyBackoffSecsProxy < Tep::Proxy
+      def retry_policy(req)
+        p = Tep::Proxy::RetryPolicy.new
+        p.max_attempts      = 2
+        p.base_backoff_secs = 0.2
+        p
+      end
+      def rewrite_path(path)
+        "/upstream/flaky"
+      end
+    end
+
     get '/p/flaky/:port' do
       FlakyProxy.new("http://127.0.0.1:" + params[:port]).handle(req, res)
       res.body
@@ -480,6 +494,11 @@ class TestProxyRetries < TepTest
 
     get '/p/flaky-backoff/:port' do
       FlakyBackoffProxy.new("http://127.0.0.1:" + params[:port]).handle(req, res)
+      res.body
+    end
+
+    get '/p/flaky-backoff-secs/:port' do
+      FlakyBackoffSecsProxy.new("http://127.0.0.1:" + params[:port]).handle(req, res)
       res.body
     end
   RB
@@ -511,11 +530,8 @@ class TestProxyRetries < TepTest
 
   def test_backoff_ms_is_actually_sub_second
     # RetryPolicy uses sphttp_sleep_ms; verify a single retry with a
-    # 200ms backoff DOES sleep (call takes >= ~150ms) but isn't
-    # whole-second-resolution (i.e. nowhere near 1s for a 200ms cap).
-    # Sentinel: 200ms backoff + 1 retry => total elapsed < 1s but
-    # > 100ms. Spinel has no Float so we measure in epoch-int via
-    # the test driver's Time.now.
+    # 200ms backoff DOES sleep (call takes >= ~100ms) but isn't
+    # whole-second-resolution (nowhere near 1s for a 200ms cap).
     reset_flaky
     t0 = Time.now
     res = get("/p/flaky-backoff/#{@port}")
@@ -523,5 +539,18 @@ class TestProxyRetries < TepTest
     assert_equal "200", res.code
     assert_operator elapsed, :>, 0.1, "expected >= ~100ms (the 200ms backoff) but got #{elapsed}s"
     assert_operator elapsed, :<, 1.0, "expected sub-second (ms-grained backoff) but got #{elapsed}s"
+  end
+
+  def test_backoff_secs_float_setter_equivalent_to_ms_int
+    # Same shape as the ms test, but configured via base_backoff_secs
+    # = 0.2 (Float). Proves the Float -> int(ms) conversion stores
+    # the right value internally.
+    reset_flaky
+    t0 = Time.now
+    res = get("/p/flaky-backoff-secs/#{@port}")
+    elapsed = Time.now - t0
+    assert_equal "200", res.code
+    assert_operator elapsed, :>, 0.1
+    assert_operator elapsed, :<, 1.0
   end
 end
