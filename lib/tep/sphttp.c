@@ -572,4 +572,143 @@ const char *sphttp_arch_kind(void) {
     return sphttp_arch_buf;
 }
 
+/* ---------- HTTP/1.1 outbound connection pool (chunk 6.7) ----------
+ *
+ * Per-process pool keyed by (host, port). Each slot caches one idle
+ * keep-alive socket; checkout() removes the matching idle slot,
+ * checkin() registers an idle slot, sweep() closes slots older than
+ * an idle-timeout. Pure C state -- single-threaded server model
+ * (each prefork worker has its own copy of these statics). The Ruby
+ * wrapper (Tep::Http::Pool) provides the ergonomic API + ms-grained
+ * stats.
+ *
+ * Fixed-size array with a basic LRU-by-last-used eviction when full.
+ * 256 slots is enough for any realistic gateway shape (each slot
+ * holds one host+port+fd triple), and the hot path is O(N) over
+ * slots -- acceptable for N=256 with cache-line locality. */
+#define SPHTTP_POOL_MAX  256
+#define SPHTTP_POOL_HOST 96
+struct sphttp_pool_slot {
+    int  fd;                                 /* -1 = empty */
+    int  port;
+    long last_used_secs;                     /* epoch seconds */
+    char host[SPHTTP_POOL_HOST];
+};
+static struct sphttp_pool_slot sphttp_pool[SPHTTP_POOL_MAX];
+static int  sphttp_pool_inited = 0;
+static long sphttp_pool_checkouts = 0;
+static long sphttp_pool_checkins  = 0;
+static long sphttp_pool_hits      = 0;
+static long sphttp_pool_misses    = 0;
+
+static void sphttp_pool_init_once(void) {
+    if (sphttp_pool_inited) return;
+    int i;
+    for (i = 0; i < SPHTTP_POOL_MAX; i++) {
+        sphttp_pool[i].fd   = -1;
+        sphttp_pool[i].port = 0;
+        sphttp_pool[i].last_used_secs = 0;
+        sphttp_pool[i].host[0] = '\0';
+    }
+    sphttp_pool_inited = 1;
+}
+
+/* Try to claim an idle fd for (host, port). Returns the fd (>=0)
+ * on hit, -1 on miss. Caller owns the fd on hit -- it's removed
+ * from the pool atomically. checkouts + hits/misses are bumped for
+ * observability. */
+int sphttp_pool_checkout(const char *host, int port) {
+    sphttp_pool_init_once();
+    sphttp_pool_checkouts++;
+    int i;
+    for (i = 0; i < SPHTTP_POOL_MAX; i++) {
+        if (sphttp_pool[i].fd >= 0 &&
+            sphttp_pool[i].port == port &&
+            strncmp(sphttp_pool[i].host, host, SPHTTP_POOL_HOST) == 0) {
+            int fd = sphttp_pool[i].fd;
+            sphttp_pool[i].fd = -1;
+            sphttp_pool[i].host[0] = '\0';
+            sphttp_pool_hits++;
+            return fd;
+        }
+    }
+    sphttp_pool_misses++;
+    return -1;
+}
+
+/* Register `fd` as an idle keep-alive socket for (host, port).
+ * Returns 0 on success, -1 on failure (pool full -- in that case
+ * the caller should close the fd; we do NOT close it for them so
+ * the call stays side-effect-light). LRU-evict the oldest entry
+ * when full: sweep finds the slot with the smallest last_used,
+ * closes its fd, reuses the slot. */
+int sphttp_pool_checkin(int fd, const char *host, int port) {
+    sphttp_pool_init_once();
+    if (fd < 0) return -1;
+    int i, free_slot = -1;
+    long now = (long)time(NULL);
+    /* First pass: find an empty slot. */
+    for (i = 0; i < SPHTTP_POOL_MAX; i++) {
+        if (sphttp_pool[i].fd < 0) {
+            free_slot = i;
+            break;
+        }
+    }
+    /* Second pass: evict the LRU if no empty slot. Seed `oldest`
+     * with slot 0 + scan from i=1 to avoid needing LONG_MAX (which
+     * would pull in limits.h for a single sentinel). */
+    if (free_slot < 0) {
+        long oldest = sphttp_pool[0].last_used_secs;
+        free_slot = 0;
+        for (i = 1; i < SPHTTP_POOL_MAX; i++) {
+            if (sphttp_pool[i].last_used_secs < oldest) {
+                oldest = sphttp_pool[i].last_used_secs;
+                free_slot = i;
+            }
+        }
+        if (sphttp_pool[free_slot].fd >= 0) {
+            close(sphttp_pool[free_slot].fd);
+        }
+    }
+    if (free_slot < 0) return -1;
+    sphttp_pool[free_slot].fd   = fd;
+    sphttp_pool[free_slot].port = port;
+    sphttp_pool[free_slot].last_used_secs = now;
+    /* strncpy WITHOUT trailing NUL guarantee on overflow -- but
+     * SPHTTP_POOL_HOST is bigger than any realistic hostname; we
+     * NUL-terminate manually for safety. */
+    strncpy(sphttp_pool[free_slot].host, host, SPHTTP_POOL_HOST - 1);
+    sphttp_pool[free_slot].host[SPHTTP_POOL_HOST - 1] = '\0';
+    sphttp_pool_checkins++;
+    return 0;
+}
+
+/* Close any pooled idle fd whose last_used is older than now_secs
+ * minus idle_seconds. Returns the count of slots closed. Callers
+ * sweep periodically (e.g. the server's main loop) to bound the
+ * idle-socket count under sustained low traffic. */
+int sphttp_pool_close_idle(int idle_seconds) {
+    sphttp_pool_init_once();
+    long now = (long)time(NULL);
+    long cutoff = now - (long)idle_seconds;
+    int i, closed = 0;
+    for (i = 0; i < SPHTTP_POOL_MAX; i++) {
+        if (sphttp_pool[i].fd >= 0 &&
+            sphttp_pool[i].last_used_secs < cutoff) {
+            close(sphttp_pool[i].fd);
+            sphttp_pool[i].fd = -1;
+            sphttp_pool[i].host[0] = '\0';
+            closed++;
+        }
+    }
+    return closed;
+}
+
+/* Stats getters -- callers (Tep::Http::Pool.stats) read each one
+ * via separate FFI calls to avoid a struct-return shape over FFI. */
+int sphttp_pool_stat_checkouts(void) { return (int)sphttp_pool_checkouts; }
+int sphttp_pool_stat_checkins(void)  { return (int)sphttp_pool_checkins; }
+int sphttp_pool_stat_hits(void)      { return (int)sphttp_pool_hits; }
+int sphttp_pool_stat_misses(void)    { return (int)sphttp_pool_misses; }
+
 /* File read/write moved to spinel's built-in File.read / File.write */

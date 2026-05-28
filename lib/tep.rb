@@ -530,6 +530,13 @@ module Tep
   Tep::Http.delete("http://127.0.0.1:1/")
   Tep::Http.head("http://127.0.0.1:1/")
   Tep::Http.empty_headers
+  # Pool seed (chunk 6.7a). Pin the (str, int) -> int / (int, str, int) -> int
+  # arities so the FFI bindings resolve. Each call site exercises one
+  # primitive against the empty pool -- harmless at boot.
+  Tep::Http::Pool.claim("127.0.0.1", 1)
+  Tep::Http::Pool.release(-1, "127.0.0.1", 1)
+  Tep::Http::Pool.close_idle(30)
+  Tep::Http::Pool.stats
   _tep_seed_http = Tep::Http.new("http://127.0.0.1:1")
   _tep_seed_http.set_header("k", "v")
   _tep_seed_http.do_get("/")

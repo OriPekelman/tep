@@ -339,5 +339,61 @@ module Tep
         @body    = ""
       end
     end
+
+    # HTTP/1.1 outbound connection pool (chunk 6.7a -- design lands
+    # ahead of Tep::Http.send_req integration in 6.7b). Per-process,
+    # keyed by (host, port). Thin Ruby surface over the C primitives
+    # in sphttp.c.
+    #
+    # Method names are `claim` / `release` (NOT `checkout` / `checkin`)
+    # to avoid colliding with `PG::Pool#checkin` -- spinel unifies
+    # parameter types across same-named methods, so reusing the names
+    # widens PG::Pool's `c` (a PG::Connection) and our `fd` (an int)
+    # into a poly type and breaks the codegen.
+    #
+    # In 6.7a, this module is callable but NOT YET wired into
+    # send_req -- Tep::Http still opens a fresh socket per request +
+    # closes it. The 6.7b chunk lands the integration once the
+    # HTTP/1.1 keep-alive recv-N-bytes path is in place. Apps can
+    # already use Pool directly for their own outbound clients.
+    class Pool
+      # Try to claim an idle keep-alive fd for (host, port). Returns
+      # the fd (>=0) on hit, -1 on miss. The caller owns the fd on
+      # hit -- close it explicitly if the request fails, or
+      # `release` it for reuse.
+      def self.claim(host, port)
+        Sock.sphttp_pool_checkout(host, port)
+      end
+
+      # Register `fd` as an idle keep-alive socket for (host, port).
+      # Returns 0 on success, -1 on failure (pool full -- the LRU
+      # gets evicted internally, so failures are rare). Don't release
+      # after a 5xx that triggered retries (the half-broken socket
+      # would poison the pool) -- close directly via Sock.sphttp_close.
+      def self.release(fd, host, port)
+        Sock.sphttp_pool_checkin(fd, host, port)
+      end
+
+      # Close idle fds older than `idle_seconds`. Returns the count
+      # closed. Call periodically from the server's idle path; not
+      # called automatically yet.
+      def self.close_idle(idle_seconds)
+        Sock.sphttp_pool_close_idle(idle_seconds)
+      end
+
+      # Stats snapshot -- returns a Tep.str_hash with the four
+      # counters. checkouts/checkins are total calls; hits/misses
+      # are subsets of checkouts (hit + miss = checkouts). The
+      # C-side primitives keep the underlying counter names; this
+      # surface uses the same names for clarity.
+      def self.stats
+        h = Tep.str_hash
+        h["checkouts"] = Sock.sphttp_pool_stat_checkouts.to_s
+        h["checkins"]  = Sock.sphttp_pool_stat_checkins.to_s
+        h["hits"]      = Sock.sphttp_pool_stat_hits.to_s
+        h["misses"]    = Sock.sphttp_pool_stat_misses.to_s
+        h
+      end
+    end
   end
 end

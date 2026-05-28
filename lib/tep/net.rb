@@ -43,6 +43,19 @@ module Sock
   # Tep::Proxy's retry-backoff loop.
   ffi_func :sphttp_sleep_ms,              [:int], :int
 
+  # HTTP/1.1 outbound connection pool (chunk 6.7a). Per-process pool
+  # keyed by (host, port). checkout returns an idle fd or -1; checkin
+  # registers one; close_idle sweeps entries older than idle_seconds.
+  # Stat getters fetch one counter each (avoids a struct-return over
+  # FFI). See Tep::Http::Pool for the Ruby surface.
+  ffi_func :sphttp_pool_checkout,         [:str, :int],     :int
+  ffi_func :sphttp_pool_checkin,          [:int, :str, :int], :int
+  ffi_func :sphttp_pool_close_idle,       [:int],           :int
+  ffi_func :sphttp_pool_stat_checkouts,   [],               :int
+  ffi_func :sphttp_pool_stat_checkins,    [],               :int
+  ffi_func :sphttp_pool_stat_hits,        [],               :int
+  ffi_func :sphttp_pool_stat_misses,      [],               :int
+
   # uname-based host introspection for the toy/v1 envelope (see
   # docs/events-schema.md). sphttp_os_kind returns lowercased
   # uname.sysname ("linux" / "darwin" / ...); sphttp_arch_kind
