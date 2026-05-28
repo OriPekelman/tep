@@ -77,10 +77,27 @@ module Tep
           0
         end
 
-        # Mount the standard OpenAI routes. 7.1a: GET /v1/models.
-        # 7.1b: POST /v1/completions. Later chunks add events, the
-        # chat route (501-gated on supports_chat?), and embeddings.
-        def self.serve!
+        # Mount the standard OpenAI routes + (optionally) start the
+        # toy/v1 events stream. `events_jsonl` is a JSONL path the
+        # per-request inference event + the run_start at boot append
+        # to; an empty path (the default) disables emission with zero
+        # overhead. Backwards-compatible with the 7.1a/b no-arg form.
+        def self.serve!(events_jsonl = "")
+          events = Tep::Events.new(events_jsonl)
+          Tep::APP.set_openai_events(events)
+          host = ENV["HOSTNAME"]
+          if host.length == 0
+            host = "tep"
+          end
+          # backend.device_kind => the run_start's `backend.kind`; reads
+          # the backend via APP.openai_backend so a `use`d subclass's
+          # override answers (e.g. ToyBackend returning "cuda").
+          backend_kind = Tep::APP.openai_backend.device_kind
+          config_json = "{" +
+            Tep::Json.encode_pair_str("server", "tep-llm-openai") + "," +
+            Tep::Json.encode_pair_str("events_jsonl", events_jsonl) +
+          "}"
+          events.run_start(host, backend_kind, "", "", config_json)
           Tep.get("/v1/models",       Tep::Llm::OpenAI::ModelsHandler.new)
           Tep.post("/v1/completions", Tep::Llm::OpenAI::CompletionsHandler.new)
           0
@@ -150,8 +167,29 @@ module Tep
           sampling  = Tep::Llm::OpenAI::Sampling.new
           sampling.max_tokens = Tep::Json.get_int(body, "max_tokens")
 
+          # Stamp t0 for the inference event's wall_us. Time.now exposes
+          # only integer epoch seconds under spinel, so wall_us is at
+          # second-resolution (latency * 1_000_000) -- coarse, but LLM
+          # serving is seconds-scale, fine for the run-level analytics.
+          # A µs clock helper lands later; until then this is the right
+          # placeholder shape so consumers see populated wall_us.
+          t0 = Time.now.to_i
+
           comp = Tep::APP.openai_backend.generate_from_tokens(model, token_ids, sampling)
           total = comp.prompt_tokens + comp.completion_tokens
+
+          # Emit one inference event per request. Skipped when events
+          # are disabled via path-length short-circuit inside #inference.
+          # request_id matches the JSON response's id; principal_id is
+          # the auth-filter populated identity (anonymous if none).
+          wall_us = (Time.now.to_i - t0) * 1_000_000
+          extra = "{" +
+            Tep::Json.encode_pair_str("request_id", "cmpl-tep") + "," +
+            Tep::Json.encode_pair_str("principal_id", req.identity.subject) +
+          "}"
+          Tep::APP.openai_events.inference(
+            model, comp.prompt_tokens, comp.completion_tokens, wall_us, extra
+          )
 
           "{" +
             Tep::Json.encode_pair_str("id", "cmpl-tep") + "," +
