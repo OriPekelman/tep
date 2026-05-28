@@ -202,3 +202,63 @@ class TestProxy < TepTest
     assert_equal "502", res.code
   end
 end
+
+# Tep::Proxy 6.4: per-request upstream routing via pick_upstream(req).
+# Two faux backends (/srv-a/info, /srv-b/info) on the same server are
+# routed through a Router proxy whose pick_upstream branches by path.
+# Demonstrates the override path and that the default (returning
+# @upstream) is preserved when not overridden.
+class TestProxyMultiUpstream < TepTest
+  app_source <<~RB
+    require 'sinatra'
+
+    set :scheduler, :scheduled
+    set :workers, 1
+
+    # Two upstream "backends" on the same server, distinguished by
+    # path prefix. In a real deployment these would be separate hosts;
+    # the test framework runs one app per class so we collapse them
+    # onto distinct routes that pick_upstream + rewrite_path can
+    # treat as logically separate upstreams.
+    get '/srv-a/info' do
+      "from-a"
+    end
+    get '/srv-b/info' do
+      "from-b"
+    end
+
+    # Routes /p/route/:port/a -> srv-a's /info, /p/route/:port/b ->
+    # srv-b's /info. pick_upstream picks the BASE URL (host+port +
+    # the fixed /srv-X prefix); rewrite_path produces the suffix.
+    # Composed: pick_upstream(req) + rewrite_path(raw_path).
+    class Router < Tep::Proxy
+      def pick_upstream(req)
+        if Tep.str_find(req.path, "/a", 0) >= 0
+          @upstream + "/srv-a"
+        else
+          @upstream + "/srv-b"
+        end
+      end
+      def rewrite_path(path)
+        "/info"
+      end
+    end
+
+    get '/p/route/:port/:where' do
+      Router.new("http://127.0.0.1:" + params[:port]).handle(req, res)
+      res.body
+    end
+  RB
+
+  def test_pick_upstream_routes_to_srv_a
+    res = get("/p/route/#{@port}/a")
+    assert_equal "200", res.code
+    assert_equal "from-a", res.body
+  end
+
+  def test_pick_upstream_routes_to_srv_b
+    res = get("/p/route/#{@port}/b")
+    assert_equal "200", res.code
+    assert_equal "from-b", res.body
+  end
+end

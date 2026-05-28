@@ -1356,6 +1356,10 @@ PROXY_HOOK_IMETH = {
   "on_stream_chunk" => "on_stream_chunk",
   "on_stream_end"   => "on_stream_end",
   "stream_request?" => "stream_request?",
+  # 6.4: per-request upstream picker. `pick_upstream do |req| ... end`
+  # lowers to a subclass override; default behavior (return @upstream)
+  # is preserved when the block isn't supplied.
+  "pick_upstream"   => "pick_upstream",
 }.freeze
 
 # Route verbs a proxy var can be mounted on (`Tep.<verb> "p", api`).
