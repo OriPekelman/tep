@@ -698,6 +698,26 @@ module Tep
   _tep_seed_oai_cstreamer.principal_id  = ""
   _tep_seed_proxy_res.start_stream(_tep_seed_oai_cstreamer)
 
+  # #127 chat streaming: ChatStreamSink + ChatCompletionsStreamer.
+  # Mirror the 7.2 seed shape so spinel pins the sink's emit_*
+  # arities + the streamer's accessor slots.
+  _tep_seed_oai_chat_sink = Tep::Llm::OpenAI::ChatStreamSink.new
+  _tep_seed_oai_chat_sink.out   = _tep_seed_oai_stream
+  _tep_seed_oai_chat_sink.model = "m"
+  _tep_seed_oai_chat_sink.completion_count
+  _tep_seed_oai_chat_sink.emit_role_prelude("assistant")
+  _tep_seed_oai_chat_sink.emit_token("seed")
+  _tep_seed_oai_chat_sink.emit_finish("stop")
+  _tep_seed_oai_backend.chat_completion_stream(_tep_seed_proxy_req, _tep_seed_oai_chat_sink)
+  _tep_seed_oai_chat_streamer = Tep::Llm::OpenAI::ChatCompletionsStreamer.new
+  _tep_seed_oai_chat_streamer.req_ref       = _tep_seed_proxy_req
+  _tep_seed_oai_chat_streamer.model         = "m"
+  _tep_seed_oai_chat_streamer.prompt_tokens = 0
+  _tep_seed_oai_chat_streamer.t0            = 0
+  _tep_seed_oai_chat_streamer.request_id    = ""
+  _tep_seed_oai_chat_streamer.principal_id  = ""
+  _tep_seed_proxy_res.start_stream(_tep_seed_oai_chat_streamer)
+
   # Tep::Shell.write seed.
   Tep::Shell.write("/dev/null", "")
 
