@@ -456,3 +456,81 @@ class TestOpenAIServerChat < TepTest
     assert_equal 16, body["usage"]["prompt_tokens"]
   end
 end
+
+# Tep::Llm::OpenAI::Server streaming /v1/chat/completions (#127).
+# When "stream":true is set, the handler returns SSE: a
+# role-prelude frame ({delta:{role:"assistant"}}) + N content
+# delta frames ({delta:{content:"<piece>"}}) + a finish frame
+# ({delta:{}, finish_reason:"stop"}) + data:[DONE].
+class TestOpenAIServerChatStreaming < TepTest
+  EVENTS_PATH = "/tmp/tep_test_openai_chatstream.jsonl"
+
+  app_source <<~RB
+    require 'sinatra'
+
+    class ChatStreamBackend < Tep::Llm::OpenAI::Backend
+      def list_models
+        ["chat-stream"]
+      end
+      def supports_chat?
+        true
+      end
+      def chat_completion_stream(req, sink)
+        # Emit 3 fixed tokens. The role-prelude + finish frames are
+        # the streamer's responsibility -- backends only emit content.
+        sink.emit_token("hello ")
+        sink.emit_token("from ")
+        sink.emit_token("tep")
+        0
+      end
+    end
+
+    Tep::Llm::OpenAI::Server.use(ChatStreamBackend.new)
+    Tep::Llm::OpenAI::Server.serve!("#{EVENTS_PATH}")
+  RB
+
+  @@events_path_cleaned = false
+  def setup
+    unless @@events_path_cleaned
+      File.delete(EVENTS_PATH) if File.exist?(EVENTS_PATH)
+      @@events_path_cleaned = true
+    end
+    super
+  end
+
+  def test_streaming_emits_role_prelude_content_finish_and_done
+    body = "{\"model\":\"chat-stream\",\"messages\":[" +
+           "{\"role\":\"user\",\"content\":\"hi\"}]," +
+           "\"stream\":true}"
+    res = post("/v1/chat/completions", body)
+    assert_equal "200", res.code
+    assert_match(%r{text/event-stream}, res["content-type"])
+
+    data_lines = res.body.scan(/^data: (.+)$/).flatten
+    # Expected: 1 role prelude + 3 content frames + 1 finish + 1 [DONE].
+    assert_equal 6, data_lines.length, "expected 6 SSE frames"
+    assert_equal "[DONE]", data_lines.last
+
+    frames = data_lines[0..-2].map { |l| JSON.parse(l) }
+    assert_equal 5, frames.length
+    # Role prelude.
+    assert_equal "assistant", frames[0]["choices"][0]["delta"]["role"]
+    assert_nil frames[0]["choices"][0]["delta"]["content"]
+    assert_nil frames[0]["choices"][0]["finish_reason"]
+    # Content deltas.
+    content_pieces = frames[1..3].map { |f| f["choices"][0]["delta"]["content"] }
+    assert_equal ["hello ", "from ", "tep"], content_pieces
+    # Finish frame.
+    assert_equal({}, frames[4]["choices"][0]["delta"])
+    assert_equal "stop", frames[4]["choices"][0]["finish_reason"]
+
+    # And the inference event landed in the JSONL.
+    lines = File.readlines(EVENTS_PATH).map { |l| JSON.parse(l) }
+    inferences = lines.select { |e| e["kind"] == "eval" && e["name"] == "request" }
+    assert_equal 1, inferences.length
+    inf = inferences[0]
+    assert_equal "chat-stream", inf["extra"]["model"]
+    assert_equal 3,             inf["extra"]["completion_tokens"]
+    assert_equal "chatcmpl-tep", inf["extra"]["request_id"]
+  end
+end

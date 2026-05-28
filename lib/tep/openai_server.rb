@@ -78,6 +78,16 @@ module Tep
           Tep::Llm::OpenAI::Completion.new
         end
 
+        # Streaming chat (#127). Per-token variant for SSE
+        # /v1/chat/completions when the request carries "stream":true.
+        # Backend writes each token to `sink` via sink.emit_token(piece);
+        # the sink formats it as the OpenAI chat-streaming delta frame
+        # and writes one chunked frame. Same subclass-override-sink
+        # pattern as 7.2 (generate_stream_from_tokens). Base no-op.
+        def chat_completion_stream(req, sink)
+          0
+        end
+
         # Backend's device, surfaced into the run_start event's
         # backend.kind at serve! time. Defaults to cpu.
         def device_kind
@@ -321,6 +331,125 @@ module Tep
         end
       end
 
+      # Chat-streaming write surface (#127). Three emit_* methods
+      # cover the OpenAI chat-streaming wire shape:
+      #
+      #   1. emit_role_prelude("assistant") -> first frame carries
+      #      `delta:{role:"assistant"}` (no content).
+      #   2. emit_token(piece) -> N content frames, each
+      #      `delta:{content:<piece>}` with finish_reason:null.
+      #   3. emit_finish("stop") -> last frame carries an empty
+      #      `delta:{}` with finish_reason set; the streamer then
+      #      writes the terminating data:[DONE].
+      #
+      # Backends typically: sink.emit_role_prelude("assistant"); then
+      # call sink.emit_token(piece) per generated token. emit_finish
+      # is invoked by the streamer after the backend returns -- not
+      # the backend's responsibility.
+      class ChatStreamSink
+        attr_accessor :out, :model, :completion_count
+
+        def initialize
+          @model            = ""
+          @completion_count = 0
+        end
+
+        # First frame: role-only delta, no content. Per OpenAI's
+        # wire shape, sent once before content frames.
+        def emit_role_prelude(role)
+          frame = "{" +
+            Tep::Json.encode_pair_str("id", "chatcmpl-tep") + "," +
+            Tep::Json.encode_pair_str("object", "chat.completion.chunk") + "," +
+            Tep::Json.encode_pair_int("created", Time.now.to_i) + "," +
+            Tep::Json.encode_pair_str("model", @model) + "," +
+            "\"choices\":[{" +
+              Tep::Json.encode_pair_int("index", 0) + "," +
+              "\"delta\":{" +
+                Tep::Json.encode_pair_str("role", role) +
+              "}," +
+              "\"finish_reason\":null" +
+            "}]" +
+          "}"
+          @out.write("data: " + frame + "\n\n")
+          0
+        end
+
+        # Content delta. One per generated token.
+        def emit_token(piece)
+          @completion_count = @completion_count + 1
+          frame = "{" +
+            Tep::Json.encode_pair_str("id", "chatcmpl-tep") + "," +
+            Tep::Json.encode_pair_str("object", "chat.completion.chunk") + "," +
+            Tep::Json.encode_pair_int("created", Time.now.to_i) + "," +
+            Tep::Json.encode_pair_str("model", @model) + "," +
+            "\"choices\":[{" +
+              Tep::Json.encode_pair_int("index", 0) + "," +
+              "\"delta\":{" +
+                Tep::Json.encode_pair_str("content", piece) +
+              "}," +
+              "\"finish_reason\":null" +
+            "}]" +
+          "}"
+          @out.write("data: " + frame + "\n\n")
+          0
+        end
+
+        # Final frame: empty delta + populated finish_reason. The
+        # streamer writes data:[DONE] after this.
+        def emit_finish(reason)
+          frame = "{" +
+            Tep::Json.encode_pair_str("id", "chatcmpl-tep") + "," +
+            Tep::Json.encode_pair_str("object", "chat.completion.chunk") + "," +
+            Tep::Json.encode_pair_int("created", Time.now.to_i) + "," +
+            Tep::Json.encode_pair_str("model", @model) + "," +
+            "\"choices\":[{" +
+              Tep::Json.encode_pair_int("index", 0) + "," +
+              "\"delta\":{}," +
+              Tep::Json.encode_pair_str("finish_reason", reason) +
+            "}]" +
+          "}"
+          @out.write("data: " + frame + "\n\n")
+          0
+        end
+      end
+
+      # Runs one streaming chat completion. Subclass of Tep::Streamer.
+      # Drives backend.chat_completion_stream through ChatStreamSink,
+      # writes the terminating data:[DONE], then emits the toy/v1
+      # inference event with sink.completion_count (mirrors
+      # CompletionsStreamer's #128 shape).
+      class ChatCompletionsStreamer < Tep::Streamer
+        attr_accessor :req_ref, :model, :prompt_tokens
+        attr_accessor :t0, :request_id, :principal_id
+
+        def initialize
+          @req_ref       = Tep::Request.new
+          @model         = ""
+          @prompt_tokens = 0
+          @t0            = 0
+          @request_id    = ""
+          @principal_id  = ""
+        end
+
+        def pump(out)
+          sink = Tep::Llm::OpenAI::ChatStreamSink.new
+          sink.out   = out
+          sink.model = @model
+          sink.emit_role_prelude("assistant")
+          Tep::APP.openai_backend.chat_completion_stream(@req_ref, sink)
+          sink.emit_finish("stop")
+          out.write("data: [DONE]\n\n")
+          wall_us = (Time.now.to_i - @t0) * 1_000_000
+          extra = "{" +
+            Tep::Json.encode_pair_str("request_id", @request_id) + "," +
+            Tep::Json.encode_pair_str("principal_id", @principal_id) +
+          "}"
+          Tep::APP.openai_events.inference(
+            @model, @prompt_tokens, sink.completion_count, wall_us, extra)
+          0
+        end
+      end
+
       # GET /v1/models -- the standard OpenAI list envelope, built from
       # backend.list_models. Dispatches through APP.openai_backend so
       # the app's subclass override is what answers.
@@ -459,6 +588,31 @@ module Tep
           end
           body  = req.raw_body
           model = Tep::Json.get_str(body, "model")
+
+          # Streaming branch (#127): same "stream":true sniff as
+          # CompletionsHandler. Sends an SSE response driven by
+          # ChatCompletionsStreamer -- which calls into
+          # backend.chat_completion_stream via a ChatStreamSink.
+          wants_stream = Tep.str_find(body, "\"stream\":true", 0) >= 0 ||
+                         Tep.str_find(body, "\"stream\": true", 0) >= 0
+          if wants_stream
+            res.headers["Content-Type"]  = "text/event-stream"
+            res.headers["Cache-Control"] = "no-cache"
+            streamer = Tep::Llm::OpenAI::ChatCompletionsStreamer.new
+            streamer.req_ref       = req
+            streamer.model         = model
+            # No `prompt` token-id array on chat requests; pass 0 so
+            # the inference event has a deterministic value. A future
+            # refinement can derive prompt_tokens from the messages
+            # array's byte length / tokenizer estimate.
+            streamer.prompt_tokens = 0
+            streamer.t0            = Time.now.to_i
+            streamer.request_id    = "chatcmpl-tep"
+            streamer.principal_id  = req.identity.subject
+            res.start_stream(streamer)
+            return ""
+          end
+
           comp  = Tep::APP.openai_backend.chat_completion(req)
           total = comp.prompt_tokens + comp.completion_tokens
           "{" +
