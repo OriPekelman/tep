@@ -626,6 +626,12 @@ module Tep
   # Backend#chat_completion's `req` param + the ChatCompletionsHandler
   # dispatch through APP.openai_backend.
   _tep_seed_oai_backend.chat_completion(_tep_seed_proxy_req)
+  # parse_messages helper. Type-pin the [Tep::Llm::Message] return so
+  # backends that call `messages = Tep::Llm::OpenAI.parse_messages(...)`
+  # get a typed array.
+  Tep::Llm::OpenAI.parse_messages(
+    "{\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}")
+  Tep::Llm::OpenAI.find_obj_key_str("{}", 0, 2, "role")
   _tep_seed_oai_chat = Tep::Llm::OpenAI::ChatCompletionsHandler.new
   _tep_seed_oai_chat.handle(_tep_seed_proxy_req, _tep_seed_proxy_res)
   # 7.2 streaming completions: pin StreamSink + CompletionsStreamer
