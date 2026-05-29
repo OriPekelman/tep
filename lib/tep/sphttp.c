@@ -377,6 +377,16 @@ int sphttp_filesize(const char *path) {
     return (int)st.st_size;
 }
 
+/* mtime (Unix epoch seconds) of a regular file, or -1 if it doesn't
+ * stat / isn't a regular file. Used for send_file's Last-Modified +
+ * the size-mtime ETag (cache revalidation, #152). */
+int sphttp_file_mtime(const char *path) {
+    struct stat st;
+    if (stat(path, &st) < 0) return -1;
+    if ((st.st_mode & S_IFMT) != S_IFREG) return -1;
+    return (int)st.st_mtime;
+}
+
 int sphttp_close(int fd) {
     SSL *ssl = sphttp_ssl_for(fd);
     if (ssl) {

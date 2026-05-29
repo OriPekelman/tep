@@ -237,13 +237,26 @@ module Tep
           return 0
         end
 
-        # Conditional GET (issue #152): 304 + no body when the handler's
-        # validator (ETag / Last-Modified) satisfies the request
-        # precondition. File responses don't set validators yet (phase
-        # 2), so this only affects the inline-body path here.
+        # File validators for cache revalidation (#152): a size-mtime
+        # ETag + Last-Modified, set before headers are serialized below.
+        if res.file_path.length > 0
+          fsz = Sock.sphttp_filesize(res.file_path)
+          fmt = Sock.sphttp_file_mtime(res.file_path)
+          if fsz >= 0 && fmt >= 0
+            res.etag(fsz.to_s + "-" + fmt.to_s)
+            res.last_modified(fmt)
+          end
+        end
+
+        # Conditional GET (issue #152): 304 + no body when the request's
+        # precondition matches the response's validator (ETag /
+        # Last-Modified, whether set by the handler or for a file above).
+        # For a file we also clear file_path so the sendfile branch below
+        # is skipped and the empty 304 goes out the inline-body path.
         if Tep::Cache.not_modified?(req, res)
           res.set_status(304)
           res.set_body("")
+          res.file_path = ""
         end
 
         # Default Content-Type for inline-body responses. Matches

@@ -41,6 +41,10 @@ module Tep
       end
       res.headers["Content-Type"] = Tep::APP.asset_mimes[path]
       res.headers["Cache-Control"] = "public, max-age=3600"
+      # Content-hash ETag (#152): lets the browser revalidate with
+      # If-None-Match and get a 304 (handled by the server's
+      # Tep::Cache short-circuit) instead of re-downloading the body.
+      res.etag(Tep::APP.asset_etags[path])
       res.set_body_if_empty(Tep::APP.asset_bodies[path])
       true
     end
