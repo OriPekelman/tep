@@ -112,6 +112,13 @@ module Tep
     # need streaming, which v1 doesn't ship.
     COOP_RESPONSE_MAX = 65535
 
+    # Recv timeout (ms) on pooled keep-alive sockets. Bounds a response
+    # read so a no-Content-Length / chunked keep-alive upstream can't
+    # hang the worker waiting for an EOF that never comes (the recv
+    # returns and we bail with what we have, un-pooled). 30s matches
+    # COOP_RECV_TIMEOUT.
+    POOL_RECV_TIMEOUT_MS = 30000
+
     # The workhorse. Returns a Tep::Http::Response in all cases --
     # on connect or send failure, `.status` is 0 and `.body` is "".
     #
@@ -157,46 +164,102 @@ module Tep
         path = path + "?" + parts["query"]
       end
 
-      fd = -1
+      # HTTPS: no pooling. The fd carries an SSL* in sphttp's registry;
+      # pooling TLS sockets is out of scope for 6.7b (#126). HTTP/1.0 +
+      # Connection: close + recv-until-EOF over a fresh verified socket.
       if scheme == "https"
-        fd = Sock.sphttp_connect_tls(host, port)   # verified TLS (port 443 via Tep::Url)
-      else
-        fd = Sock.sphttp_connect(host, port)
-      end
-      if fd < 0
-        return out
-      end
-
-      # Request head inlined (not extracted to a helper): spinel's
-      # cross-method type inference picks one type per param name
-      # across the whole file, and `path`/`host` collide with
-      # int-typed uses elsewhere, breaking the build.
-      head = verb + " " + path + " HTTP/1.0\r\n" +
-             "Host: " + host + "\r\n" +
-             "Connection: close\r\n"
-      headers.each do |k, v|
-        head = head + k + ": " + v + "\r\n"
-      end
-      if body.length > 0
-        head = head + "Content-Length: " + body.length.to_s + "\r\n"
-      end
-      head = head + "\r\n"
-
-      if Sock.sphttp_write_str(fd, head) < 0
-        Sock.sphttp_close(fd)
-        return out
-      end
-      if body.length > 0
-        if Sock.sphttp_write_str(fd, body) < 0
+        fd = Sock.sphttp_connect_tls(host, port)   # port 443 via Tep::Url
+        if fd < 0
+          return out
+        end
+        # Head inlined (not a helper): spinel picks one type per param
+        # name file-wide, and path/host collide with int uses elsewhere.
+        head = verb + " " + path + " HTTP/1.0\r\n" +
+               "Host: " + host + "\r\n" +
+               "Connection: close\r\n"
+        headers.each do |k, v|
+          head = head + k + ": " + v + "\r\n"
+        end
+        if body.length > 0
+          head = head + "Content-Length: " + body.length.to_s + "\r\n"
+        end
+        head = head + "\r\n"
+        if Sock.sphttp_write_str(fd, head) < 0
           Sock.sphttp_close(fd)
           return out
         end
+        if body.length > 0
+          if Sock.sphttp_write_str(fd, body) < 0
+            Sock.sphttp_close(fd)
+            return out
+          end
+        end
+        raw = Sock.sphttp_recv_all(fd, 0)
+        Sock.sphttp_close(fd)
+        return Http.parse_response(raw)
       end
 
-      raw = Sock.sphttp_recv_all(fd, 0)  # 0 -> cap at sphttp internal max
-      Sock.sphttp_close(fd)
+      # HTTP: HTTP/1.1 keep-alive over a pooled (reused) socket (6.7b).
+      # Claim an idle fd for (host, port) or connect fresh; frame the
+      # response by Content-Length; reuse the socket (return it to the
+      # pool) only when it's cleanly framed, the peer didn't ask to
+      # close, and the status isn't a retry-worthy 5xx. A pool HIT that
+      # fails (stale socket the upstream already closed) is retried once
+      # on a fresh connection.
+      attempt = 0
+      while attempt < 2
+        from_pool = 0
+        fd = Tep::Http::Pool.claim(host, port)
+        if fd >= 0
+          from_pool = 1
+        else
+          fd = Sock.sphttp_connect(host, port)
+        end
+        if fd < 0
+          return out
+        end
+        Sock.sphttp_set_recv_timeout(fd, Http::POOL_RECV_TIMEOUT_MS)
 
-      Http.parse_response(raw)
+        head = verb + " " + path + " HTTP/1.1\r\n" +
+               "Host: " + host + "\r\n" +
+               "Connection: keep-alive\r\n"
+        headers.each do |k, v|
+          head = head + k + ": " + v + "\r\n"
+        end
+        if body.length > 0
+          head = head + "Content-Length: " + body.length.to_s + "\r\n"
+        end
+        head = head + "\r\n"
+
+        wrote = Sock.sphttp_write_str(fd, head)
+        if wrote >= 0 && body.length > 0
+          wrote = Sock.sphttp_write_str(fd, body)
+        end
+
+        if wrote < 0
+          Sock.sphttp_close(fd)
+          if from_pool == 0
+            return out
+          end
+          attempt = attempt + 1   # stale pooled socket -- retry fresh
+        else
+          fr = Http.recv_framed(fd)
+          if fr.raw.length == 0 && from_pool == 1
+            Sock.sphttp_close(fd)
+            attempt = attempt + 1   # stale pooled socket gave nothing -- retry fresh
+          else
+            resp = Http.parse_response(fr.raw)
+            reuse = fr.framed_clean && !fr.conn_close && resp.status > 0 && resp.status < 500
+            if reuse
+              Tep::Http::Pool.release(fd, host, port)
+            else
+              Sock.sphttp_close(fd)
+            end
+            return resp
+          end
+        end
+      end
+      return out
     end
 
     # Cooperative variant. Same wire shape, same parse, but:
@@ -344,12 +407,92 @@ module Tep
       out
     end
 
+    # Read a full HTTP response, framing the body by Content-Length when
+    # present so a kept-alive socket stops at the message boundary and
+    # stays reusable. Without Content-Length we read until EOF or the
+    # recv timeout (socket not reusable). Returns a FramedResp.
+    # Bounded at 4 MiB (matches sphttp's SPHTTP_RESP_MAX) so a runaway
+    # upstream can't grow buf unboundedly.
+    def self.recv_framed(fd)
+      out = Tep::Http::FramedResp.new
+      buf = ""
+      hdr_end = -1
+      clen = -1
+      conn_close = false
+      while buf.length < 4194304
+        if hdr_end < 0
+          idx = Tep.str_find(buf, "\r\n\r\n", 0)
+          if idx >= 0
+            hdr_end = idx + 4
+            # Header-block scanning is inlined (not extracted to helper
+            # methods): spinel types a param by name file-wide, so a
+            # String param that isn't forced String at the boundary
+            # defaults to mrb_int and the call mismatches. Operating on
+            # `buf` slices here keeps everything unambiguously String.
+            lowh = buf[0, hdr_end].downcase
+            # Content-Length (to_i tolerates the leading space, stops at CR).
+            ci = Tep.str_find(lowh, "content-length:", 0)
+            if ci >= 0
+              crest = lowh[ci + 15, lowh.length]
+              ceol = Tep.str_find(crest, "\r\n", 0)
+              cline = crest
+              if ceol >= 0
+                cline = crest[0, ceol]
+              end
+              clen = cline.to_i
+            end
+            # Connection: close
+            ki = Tep.str_find(lowh, "connection:", 0)
+            if ki >= 0
+              krest = lowh[ki + 11, lowh.length]
+              keol = Tep.str_find(krest, "\r\n", 0)
+              kline = krest
+              if keol >= 0
+                kline = krest[0, keol]
+              end
+              if Tep.str_find(kline, "close", 0) >= 0
+                conn_close = true
+              end
+            end
+          end
+        end
+        if hdr_end >= 0 && clen >= 0 && (buf.length - hdr_end) >= clen
+          break
+        end
+        chunk = Sock.sphttp_recv_some(fd, 65536)
+        if chunk.length == 0
+          break
+        end
+        buf = buf + chunk
+      end
+      framed = false
+      if hdr_end >= 0 && clen >= 0 && (buf.length - hdr_end) == clen
+        framed = true
+      end
+      out.raw = buf
+      out.framed_clean = framed
+      out.conn_close = conn_close
+      out
+    end
+
     class Response
       attr_accessor :status, :headers, :body
       def initialize
         @status  = 0
         @headers = Tep.str_hash
         @body    = ""
+      end
+    end
+
+    # Result of recv_framed: the raw bytes, whether the body was cleanly
+    # Content-Length-framed (so the socket sits at a clean boundary and
+    # can be pooled), and whether the peer asked to close.
+    class FramedResp
+      attr_accessor :raw, :framed_clean, :conn_close
+      def initialize
+        @raw          = ""
+        @framed_clean = false
+        @conn_close   = false
       end
     end
 
