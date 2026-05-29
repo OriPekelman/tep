@@ -1,20 +1,24 @@
-8adbd7b317d5353f41c91643fca036e8d806a29a
+96b21e64e4e11465e0c21510ee0ab08667bf94dc
 
 # Pinned matz/spinel commit tep is verified to build + test against.
 # Only the first line (the ref) is read by tools/spinel-fresh.sh; the
 # rest is documentation. Bump via PR after confirming `make test`
 # (in the dev container) is green on the newer commit.
 #
-# 8adbd7b "Add GC.stat and GC.start (GC introspection part 1)"
-#   2026-05-29. Verified: 53/54 suites green in the dev container
-#   (test_real_world excluded -- pre-existing harness teardown
-#   reap-hang, unrelated to spinel; servers idle in accept() while the
-#   test process waits on a child that is never signalled to exit).
-#   Notable in-range landings: sp_core.c / sp_types.h header slimming,
-#   string-interp mutable_str fix (#1027), GC.stat/GC.start (#1021).
+# 96b21e6 (2026-05-29). Verified: full parallel suite green in the dev
+#   container (460 runs, 0 failures, 0 errors). Bumped from 8adbd7b to
+#   pick up two fixes that directly affect tep:
+#     - 08eaa4b "Scan fiber capture structs so parked-fiber objects
+#       survive GC" -> fixes matz/spinel#1031, the suspected GC UAF
+#       under concurrent fiber-per-connection load. tep's scheduled
+#       server is exactly that shape; verified via the shipped
+#       test/i1031.rb (matches expected) + a green full suite.
+#     - a98c0df "Resolve namespaced exception classes in raise and
+#       rescue" -> fixes matz/spinel#1041 (filed by us). `rescue
+#       M::Err` now matches a raised `M::Err`. Unblocks raising
+#       PG::-namespaced errors from PG::Pool#checkout (currently still
+#       a sentinel-return workaround in pg.rb -- a follow-up can now
+#       absorb it).
 #
-# Floating on master is risky while matz/spinel#1031 (GC may free
-# objects reachable only from a suspended fiber under concurrent
-# fiber-per-connection load) is open -- tep's scheduled server is
-# exactly that shape. Pinning keeps tep on a known-good commit until
-# that lands.
+# Still open / not yet absorbable: #628 instance-method typed yields
+# (PG::Pool#with block form), #1042 GC.stat hash non-iterable.
