@@ -128,7 +128,14 @@ module Tep
     # extra poll(2) round per chunk for no benefit. Keeping the
     # blocking path keeps the cheap case cheap.
     def self.send_req(verb, url, body, headers)
-      if Tep::Scheduler.scheduled_context?
+      # TLS currently has only a blocking path (the SSL handshake runs
+      # over a blocking socket), so route https through send_req_blocking
+      # even under the scheduler. Caveat: an https call inside
+      # Tep::Server::Scheduled blocks the worker for that request;
+      # plaintext keeps the cooperative path. (Non-blocking TLS is the
+      # phase-1b follow-up on tep#148.)
+      is_https = Tep::Url.split_url(url)["scheme"] == "https"
+      if Tep::Scheduler.scheduled_context? && !is_https
         Http.send_req_coop(verb, url, body, headers)
       else
         Http.send_req_blocking(verb, url, body, headers)
@@ -138,8 +145,9 @@ module Tep
     def self.send_req_blocking(verb, url, body, headers)
       out = Tep::Http::Response.new
       parts = Tep::Url.split_url(url)
-      if parts["scheme"] != "http"
-        # HTTPS / unknown scheme -- not in v1.
+      scheme = parts["scheme"]
+      if scheme != "http" && scheme != "https"
+        # Unknown scheme.
         return out
       end
       host = parts["host"]
@@ -149,7 +157,12 @@ module Tep
         path = path + "?" + parts["query"]
       end
 
-      fd = Sock.sphttp_connect(host, port)
+      fd = -1
+      if scheme == "https"
+        fd = Sock.sphttp_connect_tls(host, port)   # verified TLS (port 443 via Tep::Url)
+      else
+        fd = Sock.sphttp_connect(host, port)
+      end
       if fd < 0
         return out
       end

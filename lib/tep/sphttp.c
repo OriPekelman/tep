@@ -28,6 +28,44 @@
 #define SPHTTP_BUFSIZE   65536
 #define SPHTTP_RESP_MAX  (4 * 1024 * 1024)
 
+/* ---------- TLS (libssl) binding -- outbound client; see tep#148 ----------
+ *
+ * The socket layer stays fd-based: sphttp_connect_tls returns a normal
+ * socket fd and registers an SSL* for it in sphttp_ssl_tab, keyed by fd.
+ * The read/write/close helpers consult the table and route through
+ * SSL_read/SSL_write/SSL_shutdown when an SSL* is present, else plain
+ * send/recv/close. So the FFI surface gains exactly one function
+ * (sphttp_connect_tls) and everything downstream is TLS-transparent.
+ * Sockets created via sphttp_connect_tls are BLOCKING, so SSL_read/
+ * SSL_write either complete or hard-error (no WANT_READ/WANT_WRITE
+ * churn). Inbound/server TLS (SSL_accept) is a later phase reusing
+ * this same table + a server-side SSL_CTX. */
+#include <openssl/ssl.h>
+#include <openssl/err.h>
+#include <openssl/x509v3.h>
+
+#define SPHTTP_FD_MAX 4096
+static SSL     *sphttp_ssl_tab[SPHTTP_FD_MAX];   /* fd -> SSL*, NULL = plaintext */
+static SSL_CTX *sphttp_ssl_ctx = NULL;
+
+static SSL *sphttp_ssl_for(int fd) {
+    if (fd < 0 || fd >= SPHTTP_FD_MAX) return NULL;
+    return sphttp_ssl_tab[fd];
+}
+
+/* Lazily build the shared client SSL_CTX: TLS 1.2+, peer verification
+ * on, system CA bundle. NULL on failure (callers fall back to -1). */
+static SSL_CTX *sphttp_ssl_ctx_get(void) {
+    if (sphttp_ssl_ctx) return sphttp_ssl_ctx;
+    SSL_CTX *ctx = SSL_CTX_new(TLS_client_method());
+    if (!ctx) return NULL;
+    SSL_CTX_set_min_proto_version(ctx, TLS1_2_VERSION);
+    SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER, NULL);
+    SSL_CTX_set_default_verify_paths(ctx);
+    sphttp_ssl_ctx = ctx;
+    return ctx;
+}
+
 static char sphttp_req_buf[SPHTTP_BUFSIZE];
 static int  sphttp_req_len = 0;
 
@@ -213,15 +251,22 @@ const char *sphttp_drain_body(int fd, int total_len) {
 }
 
 int sphttp_write_str(int fd, const char *s) {
+    SSL *ssl = sphttp_ssl_for(fd);
     size_t len = strlen(s);
     size_t off = 0;
     while (off < len) {
-        ssize_t n = send(fd, s + off, len - off, 0);
-        if (n <= 0) {
-            if (errno == EINTR) continue;
-            return -1;
+        if (ssl) {
+            int w = SSL_write(ssl, s + off, (int)(len - off));
+            if (w <= 0) return -1;
+            off += (size_t)w;
+        } else {
+            ssize_t n = send(fd, s + off, len - off, 0);
+            if (n <= 0) {
+                if (errno == EINTR) continue;
+                return -1;
+            }
+            off += (size_t)n;
         }
-        off += (size_t)n;
     }
     return 0;
 }
@@ -231,15 +276,22 @@ int sphttp_write_str(int fd, const char *s) {
  * frames, raw protocol bodies). Returns 0 on success, -1 on send
  * failure. */
 int sphttp_write_bytes(int fd, const char *data, int n) {
+    SSL *ssl = sphttp_ssl_for(fd);
     size_t total = (n < 0) ? 0 : (size_t)n;
     size_t off = 0;
     while (off < total) {
-        ssize_t w = send(fd, data + off, total - off, 0);
-        if (w <= 0) {
-            if (errno == EINTR) continue;
-            return -1;
+        if (ssl) {
+            int w = SSL_write(ssl, data + off, (int)(total - off));
+            if (w <= 0) return -1;
+            off += (size_t)w;
+        } else {
+            ssize_t w = send(fd, data + off, total - off, 0);
+            if (w <= 0) {
+                if (errno == EINTR) continue;
+                return -1;
+            }
+            off += (size_t)w;
         }
-        off += (size_t)w;
     }
     return 0;
 }
@@ -322,6 +374,12 @@ int sphttp_filesize(const char *path) {
 }
 
 int sphttp_close(int fd) {
+    SSL *ssl = sphttp_ssl_for(fd);
+    if (ssl) {
+        SSL_shutdown(ssl);
+        SSL_free(ssl);
+        sphttp_ssl_tab[fd] = NULL;   /* fd < SPHTTP_FD_MAX guaranteed by sphttp_ssl_for */
+    }
     return close(fd);
 }
 
@@ -474,6 +532,39 @@ int sphttp_connect(const char *host, int port) {
     return fd;
 }
 
+/* Outbound TLS connect: TCP connect to host:port, then a TLS 1.2+
+ * handshake with SNI + peer-cert verification + hostname check.
+ * Registers the SSL* against the returned fd so subsequent
+ * write/recv/close route through it transparently. Returns the fd on
+ * success, -1 on connect/handshake/verification failure. */
+int sphttp_connect_tls(const char *host, int port) {
+    int fd = sphttp_connect(host, port);
+    if (fd < 0) return -1;
+    if (fd >= SPHTTP_FD_MAX) { close(fd); return -1; }
+
+    SSL_CTX *ctx = sphttp_ssl_ctx_get();
+    if (!ctx) { close(fd); return -1; }
+    SSL *ssl = SSL_new(ctx);
+    if (!ssl) { close(fd); return -1; }
+
+    SSL_set_fd(ssl, fd);
+    /* SNI -- required by virtually every multi-tenant TLS endpoint. */
+    SSL_set_tlsext_host_name(ssl, host);
+    /* Verify the presented cert actually matches `host`. */
+    SSL_set_hostflags(ssl, X509_CHECK_FLAG_NO_PARTIAL_WILDCARDS);
+    if (SSL_set1_host(ssl, host) != 1) { SSL_free(ssl); close(fd); return -1; }
+
+    if (SSL_connect(ssl) != 1) {
+        /* Handshake or verification failed (incl. bad/expired cert,
+         * hostname mismatch, untrusted CA). */
+        SSL_free(ssl);
+        close(fd);
+        return -1;
+    }
+    sphttp_ssl_tab[fd] = ssl;
+    return fd;
+}
+
 /* Best-effort recv() that returns the bytes as a static buffer.
  * Pairs with sphttp_set_nonblock + sphttp_poll_run for the scheduler
  * loop. Returns "" on EAGAIN/empty so callers can branch on
@@ -482,7 +573,9 @@ int sphttp_connect(const char *host, int port) {
 static char sphttp_recv_buf[SPHTTP_BUFSIZE];
 const char *sphttp_recv_some(int fd, int maxlen) {
     if (maxlen <= 0 || maxlen >= SPHTTP_BUFSIZE) maxlen = SPHTTP_BUFSIZE - 1;
-    ssize_t n = recv(fd, sphttp_recv_buf, (size_t)maxlen, 0);
+    SSL *ssl = sphttp_ssl_for(fd);
+    ssize_t n = ssl ? (ssize_t)SSL_read(ssl, sphttp_recv_buf, maxlen)
+                    : recv(fd, sphttp_recv_buf, (size_t)maxlen, 0);
     if (n <= 0) {
         sphttp_recv_buf[0] = '\0';
         return sphttp_recv_buf;
@@ -500,9 +593,12 @@ const char *sphttp_recv_some(int fd, int maxlen) {
 static char sphttp_recv_all_buf[SPHTTP_BUFSIZE];
 const char *sphttp_recv_all(int fd, int max_bytes) {
     if (max_bytes <= 0 || max_bytes >= SPHTTP_BUFSIZE) max_bytes = SPHTTP_BUFSIZE - 1;
+    SSL *ssl = sphttp_ssl_for(fd);
     int total = 0;
     while (total < max_bytes) {
-        ssize_t n = recv(fd, sphttp_recv_all_buf + total, (size_t)(max_bytes - total), 0);
+        ssize_t n = ssl
+            ? (ssize_t)SSL_read(ssl, sphttp_recv_all_buf + total, max_bytes - total)
+            : recv(fd, sphttp_recv_all_buf + total, (size_t)(max_bytes - total), 0);
         if (n <= 0) break;
         total += (int)n;
     }
