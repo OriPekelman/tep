@@ -83,10 +83,13 @@ class TestLlmGateway < TepTest
     lines = get("/events").body.split("\n").reject(&:empty?)
     assert_equal 1, lines.length, "expected exactly one inference event"
     ev = JSON.parse(lines[0])
-    assert_equal "inference", ev["kind"]
+    # toy/v1 inference shape (migrated in #136): kind "eval", name
+    # "request", and model/token fields nested under "extra".
+    assert_equal "eval", ev["kind"]
     assert_equal "serve", ev["phase"]
-    assert_equal "demo-llm", ev["model"]
-    assert_equal 3, ev["completion_tokens"]   # 3 SSE events dispatched
+    assert_equal "request", ev["name"]
+    assert_equal "demo-llm", ev["extra"]["model"]
+    assert_equal 3, ev["extra"]["completion_tokens"]   # 3 SSE events dispatched
     assert_equal "req-1", ev["extra"]["request_id"]
   end
 end
