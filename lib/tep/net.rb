@@ -74,6 +74,10 @@ module Sock
   # Tep::Events (toy/v1 envelope) for run_start/run_end wall-clock
   # fields -- spinel's Time.now is integer-epoch only.
   ffi_func :sphttp_iso8601_utc,   [:int],           :str
+  # RFC 1123 GMT date (HTTP Date / Last-Modified / Expires) <-> epoch.
+  # parse returns -1 if the string doesn't parse.
+  ffi_func :sphttp_http_date,       [:int],         :str
+  ffi_func :sphttp_parse_http_date, [:str],         :int
 
   ffi_func :sphttp_sendfile,      [:int, :str],     :int
   ffi_func :sphttp_filesize,      [:str],           :int

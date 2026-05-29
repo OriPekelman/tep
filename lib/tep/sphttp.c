@@ -1,3 +1,7 @@
+/* _GNU_SOURCE: expose strptime(3) + timegm(3) (used by the HTTP-date
+ * helpers below). Must precede any system header include. */
+#define _GNU_SOURCE 1
+
 /* sphttp.c - POSIX HTTP plumbing for Tep, called from Spinel via FFI.
  *
  * Scope: socket server + client + poll + fork + shell/file helpers.
@@ -663,6 +667,36 @@ const char *sphttp_iso8601_utc(int epoch_secs) {
     strftime(sphttp_iso8601_buf, sizeof(sphttp_iso8601_buf),
              "%Y-%m-%dT%H:%M:%SZ", &tmv);
     return sphttp_iso8601_buf;
+}
+
+/* RFC 1123 GMT date ("Sun, 06 Nov 1994 08:49:37 GMT") for the given
+ * Unix epoch seconds -- the format HTTP Date / Last-Modified / Expires
+ * use. Static buffer; copy on the Ruby side if retained. The "C"
+ * locale day/month abbreviations are what HTTP requires (strftime here
+ * runs under the process default locale, which spinel programs don't
+ * change). */
+static char sphttp_http_date_buf[40];
+const char *sphttp_http_date(int epoch_secs) {
+    time_t t = (time_t)epoch_secs;
+    struct tm tmv;
+    gmtime_r(&t, &tmv);
+    strftime(sphttp_http_date_buf, sizeof(sphttp_http_date_buf),
+             "%a, %d %b %Y %H:%M:%S GMT", &tmv);
+    return sphttp_http_date_buf;
+}
+
+/* Parse an RFC 1123 HTTP date back to epoch seconds, or -1 if it
+ * doesn't parse. Only the modern fixed-length form is handled (what
+ * browsers send in If-Modified-Since); the legacy RFC 850 / asctime
+ * forms are intentionally not supported. timegm interprets the parsed
+ * struct tm as UTC (HTTP dates are always GMT). */
+int sphttp_parse_http_date(const char *s) {
+    struct tm tmv;
+    memset(&tmv, 0, sizeof(tmv));
+    if (strptime(s, "%a, %d %b %Y %H:%M:%S GMT", &tmv) == NULL) return -1;
+    time_t t = timegm(&tmv);
+    if (t == (time_t)-1) return -1;
+    return (int)t;
 }
 
 /* uname-based host introspection for toy/v1's host:{name,os,arch}

@@ -26,10 +26,49 @@ module Tep
       @upgrading_ws    = false
       @ws_accept_key   = ""
       @ws_driver       = Tep::WebSocket::Driver.new(0)
+      # Last-Modified validator as epoch seconds (0 = unset). The header
+      # carries the formatted date; this is kept for the conditional-GET
+      # comparison against If-Modified-Since (issue #152).
+      @lastmod_epoch   = 0
     end
 
     attr_accessor :streamer, :streaming
     attr_accessor :upgrading_ws, :ws_accept_key, :ws_driver
+    attr_reader :lastmod_epoch
+
+    # ---- HTTP caching helpers (issue #152) ----
+
+    # Set the Cache-Control header verbatim.
+    def cache_control(v)
+      @headers["Cache-Control"] = v
+      self
+    end
+
+    # Common Cache-Control shortcuts.
+    def no_store; cache_control("no-store"); end
+    def no_cache; cache_control("no-cache"); end
+
+    # Cacheable for `secs` seconds: set both Expires (absolute HTTP-date)
+    # and Cache-Control: max-age (relative).
+    def expires(secs)
+      @headers["Expires"]       = Sock.sphttp_http_date(Time.now.to_i + secs)
+      @headers["Cache-Control"] = "max-age=" + secs.to_s
+      self
+    end
+
+    # Strong ETag validator (quoted per RFC 7232).
+    def etag(value)
+      @headers["ETag"] = "\"" + value + "\""
+      self
+    end
+
+    # Last-Modified validator from Unix epoch seconds. Remembers the
+    # epoch so conditional GET can compare it to If-Modified-Since.
+    def last_modified(epoch)
+      @lastmod_epoch            = epoch
+      @headers["Last-Modified"] = Sock.sphttp_http_date(epoch)
+      self
+    end
 
     def start_stream(streamer)
       @streamer  = streamer

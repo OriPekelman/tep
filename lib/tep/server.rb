@@ -176,6 +176,15 @@ module Tep
         return
       end
 
+      # Conditional GET: if the handler set a validator (ETag /
+      # Last-Modified) that the request's precondition satisfies, drop to
+      # 304 with no body. The validator + cache headers already on res
+      # are still emitted; Content-Length becomes 0 below. (Issue #152.)
+      if Tep::Cache.not_modified?(req, res)
+        res.set_status(304)
+        res.set_body("")
+      end
+
       if res.body.length > 0 && !res.headers.key?("Content-Type")
         res.headers["Content-Type"] = "text/html; charset=utf-8"
       end

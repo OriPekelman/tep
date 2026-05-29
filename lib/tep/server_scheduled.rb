@@ -237,6 +237,15 @@ module Tep
           return 0
         end
 
+        # Conditional GET (issue #152): 304 + no body when the handler's
+        # validator (ETag / Last-Modified) satisfies the request
+        # precondition. File responses don't set validators yet (phase
+        # 2), so this only affects the inline-body path here.
+        if Tep::Cache.not_modified?(req, res)
+          res.set_status(304)
+          res.set_body("")
+        end
+
         # Default Content-Type for inline-body responses. Matches
         # Tep::Server#send; without it, the Security::Headers nosniff
         # default leaves the browser refusing to interpret an erb
