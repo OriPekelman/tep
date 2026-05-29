@@ -1,0 +1,8 @@
+/tmp/spinel_out.TqbKoL/out.c:13337:85: error: unknown type name ‘sp_Qdrant_Client’
+13337 | static inline mrb_int sp_Tep_WebSocket_Driver_set_fd(sp_Tep_WebSocket_Driver *self, sp_Qdrant_Client * lv_new_fd) {
+/tmp/spinel_out.TqbKoL/out.c:13460:55: error: unknown type name ‘sp_Qdrant_Client’
+13460 | static mrb_int sp_Tep_WebSocket_Driver_cls_send_frame(sp_Qdrant_Client * lv_fd, mrb_int lv_opcode, const char * lv_payload) {
+/tmp/spinel_out.TqbKoL/out.c:16501:5: error: unknown type name ‘sp_Qdrant_Client’
+16501 |     sp_Qdrant_Client * lv_client = NULL;
+16596 |       sp_StrStrHash_set(lv_cfg, (&("\xff" "size")[1]), 4LL);
+spinel: C compilation failed
