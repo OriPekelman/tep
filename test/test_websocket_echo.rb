@@ -35,8 +35,23 @@ class TestWebSocketEcho < Minitest::Test
   end
 
   def teardown
-    if @pid
-      Process.kill("TERM", @pid) rescue nil
+    return unless @pid
+    # Bounded reap: TERM, wait up to 5s, then SIGKILL. A bare
+    # Process.wait can hang forever if the server ignores TERM
+    # (single-process here, so the pid signal suffices -- no pgroup).
+    Process.kill("TERM", @pid) rescue nil
+    deadline = Time.now + 5
+    reaped = false
+    until Time.now > deadline
+      got = (Process.waitpid(@pid, Process::WNOHANG) rescue :gone)
+      if got
+        reaped = true
+        break
+      end
+      sleep 0.02
+    end
+    unless reaped
+      Process.kill("KILL", @pid) rescue nil
       Process.wait(@pid) rescue nil
     end
   end

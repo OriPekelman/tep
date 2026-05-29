@@ -116,6 +116,18 @@ int sphttp_accept(int sfd) {
     socklen_t clen = sizeof(caddr);
     int fd;
     for (;;) {
+        /* Check the term flag BEFORE blocking, not only on EINTR.
+         * SIGTERM/SIGINT can land while we're between accepts (e.g.
+         * just after closing a keep-alive connection, looping back
+         * here): the handler sets the flag but there's no syscall in
+         * flight to interrupt, so without this pre-check the next
+         * accept() blocks forever with the flag already set -- a racy
+         * hang that shows up as a wedged server on shutdown under
+         * load. (A residual nanosecond-wide race remains between this
+         * check and accept() entering the kernel; the bulletproof fix
+         * is signalfd/self-pipe + pselect. See sphttp_accept_nb for
+         * the scheduled-server path, which sidesteps this entirely.) */
+        if (sphttp_term_flag) return -1;
         fd = accept(sfd, (struct sockaddr *)&caddr, &clen);
         if (fd >= 0) return fd;
         if (errno == EINTR) {

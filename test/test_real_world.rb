@@ -36,14 +36,14 @@ class TestRealWorld < TepTest
     out = `#{Shellwords.escape(File.expand_path("../bin/tep", __dir__))} build #{Shellwords.escape(src)} -o #{Shellwords.escape(bin)} 2>&1`
     raise "build failed:\n#{out}" unless $?.success?
     port = TestRealWorld.next_port
-    pid = Process.spawn(bin, "-p", port.to_s, "-q", out: "/dev/null", err: "/dev/null")
+    pid = Process.spawn(bin, "-p", port.to_s, "-q",
+                        pgroup: true, out: "/dev/null", err: "/dev/null")
     wait_for_port(port)
     @port = port
     begin
       yield port
     ensure
-      Process.kill("TERM", pid) rescue nil
-      Process.wait(pid) rescue nil
+      TepHarness.reap(pid)
     end
   end
 
@@ -157,14 +157,13 @@ class TestRealWorld < TepTest
     raise "blog build failed:\n#{out}" unless $?.success?
     port = TestRealWorld.next_port
     pid = Process.spawn({"TEP_BLOG_DB" => db}, bin, "-p", port.to_s, "-q",
-                        out: "/dev/null", err: "/dev/null")
+                        pgroup: true, out: "/dev/null", err: "/dev/null")
     wait_for_port(port)
     @port = port
     begin
       yield port
     ensure
-      Process.kill("TERM", pid) rescue nil
-      Process.wait(pid) rescue nil
+      TepHarness.reap(pid)
     end
   end
 
@@ -280,11 +279,7 @@ class TestRealWorld < TepTest
     begin
       yield port
     ensure
-      begin
-        Process.kill("-TERM", pid)
-      rescue Errno::ESRCH, Errno::EPERM
-      end
-      Process.wait(pid) rescue nil
+      TepHarness.reap(pid)
     end
   end
 

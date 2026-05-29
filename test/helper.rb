@@ -59,7 +59,13 @@ module TepHarness
     log  = File.join(tmp, "app.log")
     args = [bin, "-p", port.to_s]
     args += ["-w", workers.to_s] if workers > 1
-    pid  = Process.spawn(*args, out: log, err: [:child, :out])
+    # Spawn the app as its own process-group leader (pgroup: true ->
+    # pgid == this pid). The server's shutdown contract is SIGTERM-to-
+    # the-pgroup (lib/tep/server.rb): in prefork mode the parent forks
+    # workers that block in accept(), and only a GROUP-wide signal
+    # reaches them. Teardown signals the group (see #reap); the group
+    # being distinct from the test runner's keeps that signal off us.
+    pid  = Process.spawn(*args, out: log, err: [:child, :out], pgroup: true)
     wait_for_port(port, tmp: tmp, pid: pid)
     @running << { pid: pid, tmp: tmp, log: log, port: port }
     port
@@ -77,36 +83,60 @@ module TepHarness
   def self.terminate(port, timeout: 5.0)
     s = find_by_port(port)
     return unless s
-    begin
-      Process.kill("TERM", s[:pid])
-    rescue Errno::ESRCH
-    end
-    deadline = Time.now + timeout
-    until Time.now > deadline
-      begin
-        pid, _ = Process.waitpid2(s[:pid], Process::WNOHANG)
-        break if pid
-      rescue Errno::ECHILD
-        break
-      end
-      sleep 0.05
-    end
+    reap(s[:pid], timeout: timeout)
     @running.delete(s)
   end
 
   def self.kill_all
     @running.each do |s|
-      begin
-        Process.kill("TERM", s[:pid])
-      rescue Errno::ESRCH
-      end
-      begin
-        Process.wait(s[:pid])
-      rescue Errno::ECHILD
-      end
+      reap(s[:pid])
       FileUtils.rm_rf(s[:tmp])
     end
     @running.clear
+  end
+
+  # Gracefully stop a spawned app and wait for it to exit, BOUNDED.
+  # Signals the whole process group (negative pid) so prefork workers
+  # blocked in accept() actually receive the signal -- a bare
+  # `Process.kill("TERM", pid)` hits only the parent, leaving workers
+  # wedged and the parent stuck in wait_any, which used to hang the
+  # at_exit reap forever (test process in do_wait). Escalates to
+  # SIGKILL if the graceful stop doesn't land in time, so no
+  # misbehaving server can stall the suite.
+  def self.reap(pid, timeout: 5.0)
+    signal_group(pid, "TERM")
+    return if wait_exit(pid, timeout)
+    signal_group(pid, "KILL")
+    wait_exit(pid, 2.0)
+  end
+
+  # Signal `pid`'s process group; fall back to the bare pid if the
+  # group is already gone. Swallows ESRCH (already dead).
+  def self.signal_group(pid, sig)
+    begin
+      Process.kill(sig, -pid)
+    rescue Errno::ESRCH
+      begin
+        Process.kill(sig, pid)
+      rescue Errno::ESRCH
+      end
+    end
+  end
+
+  # Poll-wait for `pid` to exit, up to `timeout` seconds. Returns true
+  # if it was reaped (or is already gone), false on timeout.
+  def self.wait_exit(pid, timeout)
+    deadline = Time.now + timeout
+    loop do
+      begin
+        got, _ = Process.waitpid2(pid, Process::WNOHANG)
+        return true if got
+      rescue Errno::ECHILD
+        return true
+      end
+      return false if Time.now > deadline
+      sleep 0.02
+    end
   end
 
   def self.wait_for_port(port, timeout: 5.0, tmp: nil, pid: nil)
