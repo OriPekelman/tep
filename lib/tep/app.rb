@@ -61,7 +61,7 @@ module Tep
     # Server.serve!(events_jsonl); empty path => zero-overhead disabled.
     # Late-seeded for the same reason as openai_backend.
     attr_accessor :openai_events
-    attr_accessor :asset_bodies, :asset_mimes
+    attr_accessor :asset_bodies, :asset_mimes, :asset_etags
     attr_accessor :sched_fibers, :sched_wake_at, :sched_current
     attr_accessor :sched_io_fd, :sched_io_mode, :sched_io_ready
     # Tep::Job background-worker idempotency flag. App-level so a
@@ -102,6 +102,7 @@ module Tep
       @asset_bodies   = Tep.str_hash # path -> bytes (filled at boot
       @asset_mimes    = Tep.str_hash # by Tep::Assets._add lines
                                      # the bin/tep translator emits)
+      @asset_etags    = Tep.str_hash # path -> content-hash ETag (#152)
       # FiberSlot array for the cooperative scheduler. Initialise
       # with a noop-bodied slot to pin the array element type, then
       # drop it. Each slot holds one Fiber + a timer entry in the
@@ -129,6 +130,13 @@ module Tep
     def add_asset(path, body, mime)
       @asset_bodies[path] = body
       @asset_mimes[path]  = mime
+      # Content-hash ETag for cache revalidation (#152). SHA-1 is used
+      # purely as a fast content fingerprint here (not a security hash --
+      # collision resistance is irrelevant for an ETag, same as git's
+      # content addressing). Computed once at boot. (Binary bodies with
+      # embedded NULs hash by their leading bytes via the FFI string
+      # boundary; still stable per content, which is all an ETag needs.)
+      @asset_etags[path] = Crypto.sp_crypto_sha1_hex(body)
     end
 
     def set_session_secret(s)

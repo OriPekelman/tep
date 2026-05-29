@@ -161,7 +161,13 @@ module Tep
           send_simple(client, 404, "file not found")
           return
         end
-        res.headers["Content-Length"] = sz.to_s
+        # Cache validators for revalidation (#152): a size-mtime ETag +
+        # Last-Modified, set before the conditional check.
+        mt = Sock.sphttp_file_mtime(res.file_path)
+        if mt >= 0
+          res.etag(sz.to_s + "-" + mt.to_s)
+          res.last_modified(mt)
+        end
         if !res.headers.key?("Content-Type")
           res.headers["Content-Type"] = "application/octet-stream"
         end
@@ -170,6 +176,15 @@ module Tep
         else
           res.headers["Connection"] = "close"
         end
+        # Conditional GET: 304 + no body (no sendfile) when the client's
+        # cached copy is still fresh.
+        if Tep::Cache.not_modified?(req, res)
+          res.set_status(304)
+          res.headers["Content-Length"] = "0"
+          Sock.sphttp_write_str(client, build_head(req, res))
+          return
+        end
+        res.headers["Content-Length"] = sz.to_s
         head = build_head(req, res)
         Sock.sphttp_write_str(client, head)
         Sock.sphttp_sendfile(client, res.file_path)

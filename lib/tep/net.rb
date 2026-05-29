@@ -81,6 +81,7 @@ module Sock
 
   ffi_func :sphttp_sendfile,      [:int, :str],     :int
   ffi_func :sphttp_filesize,      [:str],           :int
+  ffi_func :sphttp_file_mtime,    [:str],           :int
   ffi_func :sphttp_close,         [:int],           :int
   ffi_func :sphttp_fork,          [],               :int
   ffi_func :sphttp_exit,          [:int],           :int
