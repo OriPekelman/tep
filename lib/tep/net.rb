@@ -8,6 +8,12 @@
 # portable shape.
 module Sock
   ffi_cflags "@TEP_SPHTTP_O@"
+  # Outbound TLS (sphttp_connect_tls) is backed by the system
+  # libssl/libcrypto. Linked for every app (like sqlite3 elsewhere);
+  # the plaintext path never calls into it, so apps that make no HTTPS
+  # requests pay only the link cost, not runtime. See tep#148.
+  ffi_lib "ssl"
+  ffi_lib "crypto"
 
   ffi_func :sphttp_listen,        [:int, :int],     :int
   ffi_func :sphttp_accept,        [:int],           :int
@@ -89,6 +95,10 @@ module Sock
 
   # Outbound TCP for clients (Tep::Http, etc.).
   ffi_func :sphttp_connect,       [:str, :int],     :int
+  # TLS variant: TCP connect + verified TLS handshake (SNI + hostname
+  # + peer cert). Returns an fd whose write/recv/close transparently
+  # route through the SSL*. -1 on connect/handshake/verify failure.
+  ffi_func :sphttp_connect_tls,   [:str, :int],     :int
   ffi_func :sphttp_recv_some,     [:int, :int],     :str
   ffi_func :sphttp_recv_all,      [:int, :int],     :str
 
