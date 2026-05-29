@@ -20,7 +20,8 @@
 #   2. If SPINEL_PIN exists at tep root: fetches origin + checks
 #      out the pinned ref (detached HEAD).
 #   3. Otherwise: `git fetch origin master`, fast-forward if ahead.
-#   4. Rebuilds spinel_codegen if its source is newer than the binary.
+#   4. Rebuilds spinel_analyze + spinel_codegen if either source is
+#      newer than its binary (they must track the same commit).
 #
 # Skip with `TEP_SKIP_SPINEL_FRESH=1` (CI containers, frozen dev
 # loops, branch work, etc.).
@@ -87,17 +88,27 @@ else
     fi
 fi
 
-# Rebuild only if codegen source is newer than the binary, OR the
-# binary doesn't exist yet. Skip when up-to-date so this script
-# stays cheap on the fast path (`make test` after a no-op fetch).
+# Rebuild the analyze + codegen binaries if either source is newer
+# than its built artifact, OR an artifact is missing. Skip when
+# up-to-date so this script stays cheap on the fast path (`make test`
+# after a no-op fetch).
+#
+# BOTH stages must track the checked-out commit. The `spinel` wrapper
+# prefers the compiled spinel_analyze / spinel_codegen over the .rb
+# fallbacks, so refreshing only codegen silently pairs a new codegen
+# with a stale analyzer -- old type inference + new emission. That
+# mismatch produces subtly broken code (e.g. a stale analyzer that
+# predates a method's return-type support types the result as mrb_int,
+# and the new codegen then emits pointer accessors against an int
+# slot). Rebuild them together so the pair always matches.
 need_rebuild=0
-if [ ! -x "spinel_codegen" ]; then
-    need_rebuild=1
-elif [ "spinel_codegen.rb" -nt "spinel_codegen" ]; then
-    need_rebuild=1
-fi
+for stage in spinel_analyze spinel_codegen; do
+    if [ ! -x "$stage" ] || [ "$stage.rb" -nt "$stage" ]; then
+        need_rebuild=1
+    fi
+done
 
 if [ "$need_rebuild" = "1" ]; then
-    echo "tep: rebuilding spinel_codegen (this is slow -- CRuby bootstrap, ~5min)..." >&2
-    make -j8 spinel_codegen >&2
+    echo "tep: rebuilding spinel_analyze + spinel_codegen (slow -- CRuby bootstrap, ~5min)..." >&2
+    make -j8 spinel_analyze spinel_codegen >&2
 fi
