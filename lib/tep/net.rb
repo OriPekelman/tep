@@ -92,6 +92,10 @@ module Sock
   ffi_func :sphttp_poll_run,      [:int],           :int
   ffi_func :sphttp_poll_ready,    [:int],           :int
   ffi_func :sphttp_set_nonblock,  [:int],           :int
+  # Bound a blocking recv (SO_RCVTIMEO, ms). Used by the pooled
+  # outbound client so a no-Content-Length keep-alive response can't
+  # hang the worker. 0 clears the timeout.
+  ffi_func :sphttp_set_recv_timeout, [:int, :int],  :int
 
   # Outbound TCP for clients (Tep::Http, etc.).
   ffi_func :sphttp_connect,       [:str, :int],     :int

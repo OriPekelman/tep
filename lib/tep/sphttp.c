@@ -500,6 +500,26 @@ int sphttp_set_nonblock(int fd) {
     return fcntl(fd, F_SETFL, flags | O_NONBLOCK);
 }
 
+/* Bound a blocking recv with SO_RCVTIMEO (milliseconds; <=0 clears the
+ * timeout). Used by the pooled outbound client (6.7b): a keep-alive
+ * response with no Content-Length and no Connection: close (e.g. a
+ * chunked upstream) would otherwise read-until-an-EOF-that-never-comes
+ * and hang the worker. With a timeout the recv returns -1/EAGAIN and
+ * the caller bails with what it has. Returns 0 on success, -1 on
+ * setsockopt failure. */
+int sphttp_set_recv_timeout(int fd, int ms) {
+    struct timeval tv;
+    if (ms <= 0) {
+        tv.tv_sec = 0;
+        tv.tv_usec = 0;
+    } else {
+        tv.tv_sec  = ms / 1000;
+        tv.tv_usec = (long)(ms % 1000) * 1000L;
+    }
+    if (setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) < 0) return -1;
+    return 0;
+}
+
 /* Outbound TCP connect. Resolves `host` via getaddrinfo (so both
  * IP literals and DNS names work). Returns the connected fd or -1.
  * Blocking connect for now -- a future variant can do non-blocking
