@@ -1,9 +1,26 @@
-96b21e64e4e11465e0c21510ee0ab08667bf94dc
+8d88ebe31cda334f800fd2580847f699dff60d58
 
 # Pinned matz/spinel commit tep is verified to build + test against.
 # Only the first line (the ref) is read by tools/spinel-fresh.sh; the
 # rest is documentation. Bump via PR after confirming `make test`
 # (in the dev container) is green on the newer commit.
+#
+# 8d88ebe (2026-05-29). Bumped from 96b21e6 to pick up the poly-local
+#   GC-rooting fix:
+#     - 9d5bfc8 "Root poly (sp_RbVal) locals so they survive GC" ->
+#       fixes matz/spinel#1052. A param-derived String local passed to an
+#       FFI function (e.g. Tep::SQLite#bind_str) could be GC-collected
+#       before the call, nondeterministically binding NULL or segfaulting.
+#       Surfaced serving spinelgems.org's catalog: a handler that
+#       conditionally built a SQL filter and bound String locals 502'd
+#       (worker SIGSEGV) on the no-filter request path under 96b21e6;
+#       byte-identical code returns correctly on 8d88ebe. This is exactly
+#       tep's shape (FFI string args from request params), so it's worth
+#       being on the fixed compiler.
+#     - also includes 8ec9a3b / e47419b (module/class constant reflection:
+#       Module#is_a?(Module), .class on a constant, respond_to? for
+#       `def self.m` and `class << self; attr_accessor`) and 9402a7e
+#       (walk the full ancestor chain in generated GC scan functions).
 #
 # 96b21e6 (2026-05-29). Verified: full parallel suite green in the dev
 #   container (460 runs, 0 failures, 0 errors). Bumped from 8adbd7b to
