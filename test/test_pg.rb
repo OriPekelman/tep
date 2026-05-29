@@ -436,6 +436,39 @@ class TestPg < TepTest
       POOL.checkin(c2)
       "first=" + v1 + " second=" + v2
     end
+
+    # GET /pool_exhaust -- drain every connection, then a further
+    # checkout past the (lowered) timeout raises PG::PoolExhausted.
+    # Verifies the raise is rescuable both as the exact class and via
+    # the PG::Error parent. Restores the pool + timeout before
+    # returning so the route is idempotent across test runs.
+    get '/pool_exhaust' do
+      POOL.set_checkout_timeout_ms(1)
+      held = []
+      n = POOL.size
+      i = 0
+      while i < n
+        held.push(POOL.checkout)
+        i += 1
+      end
+      exact = "no"
+      parent = "no"
+      begin
+        POOL.checkout
+      rescue PG::PoolExhausted => e
+        exact = "yes"
+      end
+      begin
+        POOL.checkout
+      rescue PG::Error => e
+        parent = "yes"
+      end
+      while held.length > 0
+        POOL.checkin(held.delete_at(0))
+      end
+      POOL.set_checkout_timeout_ms(5000)
+      "exact=" + exact + " parent=" + parent
+    end
   RB
 
   def test_connect_succeeds
@@ -596,6 +629,14 @@ class TestPg < TepTest
   def test_pool_returned_connection_is_reusable
     res = get("/pool_reusable")
     assert_equal "first=1 second=2", res.body
+  end
+
+  def test_pool_exhaustion_raises_pool_exhausted
+    res = get("/pool_exhaust")
+    assert_equal "200", res.code
+    # checkout past the timeout raises PG::PoolExhausted, caught both
+    # as the exact class and via the PG::Error parent (matz/spinel#1041).
+    assert_equal "exact=yes parent=yes", res.body
   end
 
   # --- async exec ---

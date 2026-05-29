@@ -828,6 +828,14 @@ module PG
   class ConnectionException    < ServerError; end                  # 08000
   class ConnectionDoesNotExist < ServerError; end                  # 08003
 
+  # Pool-side error (no SQLSTATE): raised by PG::Pool#checkout when
+  # the pool stays empty past the checkout timeout. Subclasses Error
+  # so callers can `rescue PG::PoolExhausted` or the broader
+  # `rescue PG::Error`. (Raising namespaced errors from instance
+  # methods became viable with matz/spinel#1041; before that, checkout
+  # surfaced exhaustion as a sentinel nil-equivalent Connection.)
+  class PoolExhausted          < Error; end
+
   # -------- Connection pool --------
   #
   # PG::Pool -- a fixed-size connection pool for PG::Connection
@@ -868,10 +876,13 @@ module PG
   #     Other fibers run in the meantime; eventually a checkin
   #     refills the free list and the parked fiber retries.
   #
-  # No raise from checkout -- spinel's rescue dispatch for
-  # module-namespaced classes still lags (matz/spinel#627 follow-on).
-  # Pool exhaustion timeouts surface as a sentinel "" / nil-equivalent
-  # Connection that the caller treats as failure (see `checkout_timeout`).
+  # On exhaustion (non-scheduled callers only), checkout raises
+  # PG::PoolExhausted once it has waited past @checkout_timeout_ms.
+  # This used to be a sentinel nil-equivalent return because spinel
+  # couldn't rescue module-namespaced exception classes; matz/spinel#1041
+  # fixed that, so `rescue PG::PoolExhausted` / `rescue PG::Error` now
+  # work. The scheduled path parks indefinitely (waking on checkin) and
+  # so has no exhaustion timeout -- only the spin fallback does.
   class Pool
     attr_accessor :url, :size, :free, :waiter_idxs, :checkout_timeout_ms
 
@@ -991,7 +1002,10 @@ module PG
         Tep::Scheduler.pause(1)   # full-second pause; non-scheduled fallback
         waited_ms += 1000
         if waited_ms >= @checkout_timeout_ms
-          return @free[0]
+          raise PG::PoolExhausted,
+                "PG::Pool#checkout timed out after " +
+                @checkout_timeout_ms.to_s + "ms; all " +
+                @size.to_s + " connections in use"
         end
       end
       @free.delete_at(0)
