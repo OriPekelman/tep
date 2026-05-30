@@ -44,9 +44,15 @@ matches CRuby byte-for-byte.
 integer bit-ops and Float comparisons, all of which spinel supports.
 
 `GeoHash.neighbors` and `GeoHash.decode` are deliberately **not** exposed:
-they rely on `Array#flatten` / `Array#transpose`, which spinel doesn't
-compile yet (the build fails with `undefined method 'flatten'`). That's
-the honest shape of gem reuse under tep today: the hot path of a
-well-behaved pure-Ruby gem drops straight in, while methods that reach for
-unsupported stdlib corners don't. Pick the entry points that stay inside
-the supported surface.
+they rely on `Array#flatten` (on a string-element array) / `Array#transpose`,
+which spinel doesn't compile yet — tracked upstream as
+[matz/spinel#1078](https://github.com/matz/spinel/issues/1078) (flatten is
+specialized for int-element arrays only) and
+[matz/spinel#1079](https://github.com/matz/spinel/issues/1079) (transpose
+missing). That's the honest shape of gem reuse under tep today: the hot
+path of a well-behaved pure-Ruby gem drops straight in, while methods that
+reach for unsupported stdlib corners don't. Pick the entry points that stay
+inside the supported surface.
+
+For an example where the gem's **entire** API compiles — no caveats — see
+[`examples/maidenhead`](../maidenhead/README.md).
