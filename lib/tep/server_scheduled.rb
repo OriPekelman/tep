@@ -52,6 +52,17 @@ module Tep
         # second and runs Tep.on_shutdown (run_end + future hooks).
         Sock.sphttp_install_term_handlers
 
+        # Inbound TLS (tep#148 phase 2, scheduled variant): load the
+        # server cert/key once before forking so every worker inherits
+        # the SSL_CTX. A bad cert/key is fatal -- never silently serve
+        # plaintext on a port the operator believes is TLS. The handshake
+        # itself runs non-blocking per-connection (handle_connection).
+        if Tep::APP.tls_cert.length > 0 && Tep::APP.tls_key.length > 0
+          if Sock.sphttp_tls_server_init(Tep::APP.tls_cert, Tep::APP.tls_key) < 0
+            return 1
+          end
+        end
+
         if workers > 1
           i = 0
           while i < workers
@@ -128,8 +139,53 @@ module Tep
         end
       end
 
+      # Non-blocking server-side TLS handshake on an accepted fd.
+      # Returns 1 on success (SSL* registered -- reads/writes are now
+      # transparent), 0 on failure. Drives SSL_do_handshake, parking on
+      # io_wait for the direction OpenSSL asks for, bounded by
+      # HEADER_READ_TIMEOUT so a connection that opens but never
+      # completes the handshake (port probe, slowloris, plain-HTTP
+      # client) can't pin the fiber.
+      def self.tls_handshake(client)
+        if Sock.sphttp_tls_accept_start(client) < 0
+          return 0
+        end
+        deadline = Time.now.to_i + HEADER_READ_TIMEOUT
+        hs = Sock.sphttp_tls_handshake_step(client)
+        while hs == 1 || hs == 2
+          remaining = deadline - Time.now.to_i
+          if remaining <= 0
+            return 0
+          end
+          mode = Tep::Scheduler::READ
+          if hs == 2
+            mode = Tep::Scheduler::WRITE
+          end
+          ready = Tep::Scheduler.io_wait(client, mode, remaining)
+          if ready == 0
+            return 0
+          end
+          hs = Sock.sphttp_tls_handshake_step(client)
+        end
+        if hs < 0
+          return 0
+        end
+        1
+      end
+
       # Per-connection lifecycle.
       def self.handle_connection(client)
+        # Inbound TLS: complete a non-blocking server handshake before
+        # reading anything. Runs inside this per-connection fiber so a
+        # slow handshake parks cooperatively instead of blocking the
+        # accept loop. On failure (incl. a plaintext client hitting the
+        # TLS port) drop the connection.
+        if Tep::APP.tls_cert.length > 0
+          if Tep::Server::Scheduled.tls_handshake(client) == 0
+            Sock.sphttp_close(client)
+            return 0
+          end
+        end
         keep_going = true
         while keep_going
           blob = Tep::Server::Scheduled.read_request_blob(client, KEEPALIVE_TIMEOUT)
@@ -175,6 +231,18 @@ module Tep
           end
           chunk = Sock.sphttp_recv_some(fd, 4096)
           if chunk.length == 0
+            # Over TLS an empty read can be a partial record (SSL_read
+            # WANT_READ/WANT_WRITE), not EOF -- re-park on the indicated
+            # direction and retry rather than dropping the request. The
+            # loop top re-applies the deadline on the want-read path.
+            st = Sock.sphttp_io_status
+            if st == 1
+              next
+            end
+            if st == 2
+              Tep::Scheduler.io_wait(fd, Tep::Scheduler::WRITE, remaining)
+              next
+            end
             return ""
           end
           buf = buf + chunk

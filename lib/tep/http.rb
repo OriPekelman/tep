@@ -135,14 +135,14 @@ module Tep
     # extra poll(2) round per chunk for no benefit. Keeping the
     # blocking path keeps the cheap case cheap.
     def self.send_req(verb, url, body, headers)
-      # TLS currently has only a blocking path (the SSL handshake runs
-      # over a blocking socket), so route https through send_req_blocking
-      # even under the scheduler. Caveat: an https call inside
-      # Tep::Server::Scheduled blocks the worker for that request;
-      # plaintext keeps the cooperative path. (Non-blocking TLS is the
-      # phase-1b follow-up on tep#148.)
-      is_https = Tep::Url.split_url(url)["scheme"] == "https"
-      if Tep::Scheduler.scheduled_context? && !is_https
+      # Under Tep::Server::Scheduled, route BOTH http and https through
+      # the cooperative path. Plaintext parks on io_wait between recvs;
+      # https (tep#150) additionally drives a non-blocking TLS handshake
+      # (sphttp_tls_connect_start + handshake_step) and a want-aware
+      # SSL_read loop, so an outbound HTTPS call no longer blocks the
+      # whole worker. Outside a scheduled context the blocking path stays
+      # cheap (no extra poll(2) per chunk).
+      if Tep::Scheduler.scheduled_context?
         Http.send_req_coop(verb, url, body, headers)
       else
         Http.send_req_blocking(verb, url, body, headers)
@@ -276,7 +276,8 @@ module Tep
     def self.send_req_coop(verb, url, body, headers)
       out = Tep::Http::Response.new
       parts = Tep::Url.split_url(url)
-      if parts["scheme"] != "http"
+      scheme = parts["scheme"]
+      if scheme != "http" && scheme != "https"
         return out
       end
       host = parts["host"]
@@ -286,11 +287,42 @@ module Tep
         path = path + "?" + parts["query"]
       end
 
-      fd = Sock.sphttp_connect(host, port)
-      if fd < 0
-        return out
+      # Connect. https (tep#150): non-blocking TLS -- set up the SSL then
+      # drive SSL_do_handshake, parking on io_wait for the direction
+      # OpenSSL asks for until the handshake completes. http: a plain
+      # non-blocking connect. Either way `fd` ends up non-blocking with
+      # write/recv routed appropriately (SSL_* for https via the registry).
+      if scheme == "https"
+        fd = Sock.sphttp_tls_connect_start(host, port)
+        if fd < 0
+          return out
+        end
+        hs = Sock.sphttp_tls_handshake_step(fd)
+        while hs == 1 || hs == 2
+          mode = Tep::Scheduler::READ
+          if hs == 2
+            mode = Tep::Scheduler::WRITE
+          end
+          ready = Tep::Scheduler.io_wait(fd, mode, COOP_RECV_TIMEOUT)
+          if ready == 0
+            Sock.sphttp_close(fd)
+            return out
+          end
+          hs = Sock.sphttp_tls_handshake_step(fd)
+        end
+        if hs < 0
+          # Handshake/verify failure -- handshake_step already freed the
+          # SSL*; close the fd. (cert/hostname mismatch lands here.)
+          Sock.sphttp_close(fd)
+          return out
+        end
+      else
+        fd = Sock.sphttp_connect(host, port)
+        if fd < 0
+          return out
+        end
+        Sock.sphttp_set_nonblock(fd)
       end
-      Sock.sphttp_set_nonblock(fd)
 
       # Same head shape as send_req_blocking; inlined for the same
       # spinel-type-inference reason (see that path's comment).
@@ -332,9 +364,21 @@ module Tep
         end
         chunk = Sock.sphttp_recv_some(fd, 4096)
         if chunk.length == 0
-          # EOF (or transient EAGAIN that recv_some swallows). For
-          # HTTP/1.0 + Connection: close that's the end-of-response
-          # signal.
+          # An empty read is ambiguous: for TLS it may mean "no full
+          # record decoded yet" (SSL_read WANT_READ/WANT_WRITE), not EOF.
+          # Consult the want-status: 1 = want-read (re-park on READ at the
+          # loop top), 2 = want-write (TLS renegotiation -- park on WRITE
+          # then retry), anything else (3 EOF / -1 error, or a plaintext
+          # peer close) is the end of the HTTP/1.0 + Connection: close
+          # response.
+          st = Sock.sphttp_io_status
+          if st == 1
+            next
+          end
+          if st == 2
+            Tep::Scheduler.io_wait(fd, Tep::Scheduler::WRITE, COOP_RECV_TIMEOUT)
+            next
+          end
           break
         end
         raw = raw + chunk
