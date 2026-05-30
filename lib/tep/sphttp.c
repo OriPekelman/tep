@@ -73,30 +73,33 @@ static SSL_CTX *sphttp_ssl_ctx_get(void) {
 static char sphttp_req_buf[SPHTTP_BUFSIZE];
 static int  sphttp_req_len = 0;
 
-/* Shutdown-on-signal plumbing. SIGTERM/SIGINT set the flag; the
- * server's accept loop checks it after accept() returns from EINTR
- * and breaks out cleanly so Ruby-level run_end hooks can fire before
- * the process exits. SA_RESETHAND restores the default handler after
- * the first delivery so a second signal kills the process immediately
- * if shutdown stalls (a non-cooperative second Ctrl-C). */
-static volatile sig_atomic_t sphttp_term_flag = 0;
-static void sphttp_term_signal(int sig) {
-    (void)sig;
-    sphttp_term_flag = 1;
-}
-int sphttp_install_term_handlers(void) {
-    struct sigaction sa;
-    memset(&sa, 0, sizeof(sa));
-    sa.sa_handler = sphttp_term_signal;
-    sigemptyset(&sa.sa_mask);
-    sa.sa_flags = SA_RESETHAND;       /* second signal -> default action */
-    sigaction(SIGTERM, &sa, NULL);
-    sigaction(SIGINT,  &sa, NULL);
-    return 0;
-}
-int sphttp_shutdown_requested(void) {
-    return (int)sphttp_term_flag;
-}
+/* The POSIX TCP / poll / prefork / shell / signal primitives below now
+ * live in spinel's sp_net (libspinel_rt.a, matz/spinel#1055). tep keeps
+ * the sphttp_* names as thin delegating wrappers so lib/tep/net.rb and
+ * every Sock.sphttp_* call site stay unchanged (tep#12). sp_net symbols
+ * are auto-linked from libspinel_rt.a; we declare the surface we use
+ * here rather than coupling to a shared header (same spirit as
+ * sp_crypto, declared via ffi_func). HTTP framing, WebSocket accessors,
+ * TLS, and the SSL-aware I/O all stay tep-side below. */
+extern int sp_net_install_term_handlers(void);
+extern int sp_net_shutdown_requested(void);
+extern int sp_net_listen(int port, int reuseport);
+extern int sp_net_accept(int sfd);
+extern int sp_net_accept_nb(int sfd);
+extern int sp_net_connect(const char *host, int port);
+extern int sp_net_set_nonblock(int fd);
+extern int sp_net_poll_reset(void);
+extern int sp_net_poll_add(int fd, int mode_bits);
+extern int sp_net_poll_run(int timeout_ms);
+extern int sp_net_poll_ready(int slot);
+extern int sp_net_fork(void);
+extern int sp_net_exit(int status);
+extern int sp_net_getpid(void);
+extern int sp_net_wait_any(void);
+extern const char *sp_net_shell_capture(const char *cmd, int max_bytes);
+
+int sphttp_install_term_handlers(void) { return sp_net_install_term_handlers(); }
+int sphttp_shutdown_requested(void)    { return sp_net_shutdown_requested(); }
 
 /* Sub-second sleep, granular to a millisecond. spinel's Time / sleep
  * surface deals in integer epoch-seconds only; this helper exposes
@@ -119,85 +122,13 @@ int sphttp_sleep_ms(int ms) {
 /* Bind & listen on 0.0.0.0:port. If `reuseport` != 0 we set
  * SO_REUSEPORT so multiple worker processes can listen on the same
  * port and the kernel will load-balance accept() across them. */
-int sphttp_listen(int port, int reuseport) {
-    int fd = socket(AF_INET, SOCK_STREAM, 0);
-    if (fd < 0) return -1;
-
-    int one = 1;
-    setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
-#ifdef SO_REUSEPORT
-    if (reuseport) {
-        setsockopt(fd, SOL_SOCKET, SO_REUSEPORT, &one, sizeof(one));
-    }
-#endif
-    /* Disable Nagle for small response latency. */
-    setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));
-
-    /* Don't die on broken-pipe sends. */
-    signal(SIGPIPE, SIG_IGN);
-
-    struct sockaddr_in addr;
-    memset(&addr, 0, sizeof(addr));
-    addr.sin_family = AF_INET;
-    addr.sin_port = htons((unsigned short)port);
-    addr.sin_addr.s_addr = htonl(INADDR_ANY);
-
-    if (bind(fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
-        close(fd);
-        return -1;
-    }
-    if (listen(fd, 1024) < 0) {
-        close(fd);
-        return -1;
-    }
-    return fd;
-}
-
-int sphttp_accept(int sfd) {
-    struct sockaddr_in caddr;
-    socklen_t clen = sizeof(caddr);
-    int fd;
-    for (;;) {
-        /* Check the term flag BEFORE blocking, not only on EINTR.
-         * SIGTERM/SIGINT can land while we're between accepts (e.g.
-         * just after closing a keep-alive connection, looping back
-         * here): the handler sets the flag but there's no syscall in
-         * flight to interrupt, so without this pre-check the next
-         * accept() blocks forever with the flag already set -- a racy
-         * hang that shows up as a wedged server on shutdown under
-         * load. (A residual nanosecond-wide race remains between this
-         * check and accept() entering the kernel; the bulletproof fix
-         * is signalfd/self-pipe + pselect. See sphttp_accept_nb for
-         * the scheduled-server path, which sidesteps this entirely.) */
-        if (sphttp_term_flag) return -1;
-        fd = accept(sfd, (struct sockaddr *)&caddr, &clen);
-        if (fd >= 0) return fd;
-        if (errno == EINTR) {
-            /* SIGTERM/SIGINT raises sphttp_term_flag; surface as a -1
-             * return so the Ruby accept loop can run shutdown hooks
-             * and exit. Unrelated signals (SIGCHLD, ...) just retry. */
-            if (sphttp_term_flag) return -1;
-            continue;
-        }
-        return -1;
-    }
-}
-
-/* Non-blocking accept. Returns the new fd on success, -1 with errno
- * EAGAIN/EWOULDBLOCK if no pending connection, -1 with other errno
- * on real error. Caller (Tep::Server::Scheduled) parks the accept
- * fiber on Tep::Scheduler.io_wait(sfd, READ) before retrying.
- * Requires the listen fd to already be in non-blocking mode -- call
- * sphttp_set_nonblock(sfd) once after sphttp_listen. */
-int sphttp_accept_nb(int sfd) {
-    struct sockaddr_in caddr;
-    socklen_t clen = sizeof(caddr);
-    int fd;
-    do {
-        fd = accept(sfd, (struct sockaddr *)&caddr, &clen);
-    } while (fd < 0 && errno == EINTR);
-    return fd;
-}
+/* All three delegate to sp_net (#12). sp_net_accept carries the same
+ * term-flag-aware pre-check + EINTR handling as the old body; the
+ * shutdown flag is now sp_net's (set via sp_net_install_term_handlers,
+ * which sphttp_install_term_handlers delegates to). */
+int sphttp_listen(int port, int reuseport) { return sp_net_listen(port, reuseport); }
+int sphttp_accept(int sfd)                 { return sp_net_accept(sfd); }
+int sphttp_accept_nb(int sfd)              { return sp_net_accept_nb(sfd); }
 
 /* Read until end-of-headers ("\r\n\r\n") or the buffer fills. Subsequent
  * recv()s for the body are the caller's job (we expose a length helper).
@@ -433,31 +364,11 @@ int sphttp_write_chunk_end(int fd) {
 /* SHA-256 / HMAC / PBKDF2 / Base64URL / CSPRNG live in tep_crypto.c */
 
 /* Pre-fork support. Returns child pid in parent, 0 in child, -1 on fail. */
-int sphttp_fork(void) {
-    return (int)fork();
-}
-
-/* Hard exit -- bypasses spinel's Ruby-level `exit(0)` (which was
- * observed to not actually terminate child processes in some
- * codegen shapes). Used by Tep::Parallel children after they've
- * written their result file. Returns int for FFI symmetry; the
- * function actually never returns. */
-int sphttp_exit(int status) {
-    _exit(status);
-    return 0;
-}
-
-int sphttp_getpid(void) {
-    return (int)getpid();
-}
-
-/* Block until any child exits; reap it. Returns the pid that exited
- * or -1 if there are no children. */
-int sphttp_wait_any(void) {
-    int status = 0;
-    pid_t p = wait(&status);
-    return (int)p;
-}
+/* Prefork primitives -- delegate to sp_net (#12). */
+int sphttp_fork(void)       { return sp_net_fork(); }
+int sphttp_exit(int status) { return sp_net_exit(status); }   /* never returns */
+int sphttp_getpid(void)     { return sp_net_getpid(); }
+int sphttp_wait_any(void)   { return sp_net_wait_any(); }
 
 /* ---------- Non-blocking I/O + poll(2) plumbing ----------
  *
@@ -469,57 +380,14 @@ int sphttp_wait_any(void) {
  * tick rounds" discipline -- safe because the scheduler is single-
  * threaded inside one worker. */
 
-#define SPHTTP_POLL_MAX 256
-static struct pollfd sphttp_poll_set[SPHTTP_POLL_MAX];
-static int           sphttp_poll_n = 0;
-
-int sphttp_poll_reset(void) {
-    sphttp_poll_n = 0;
-    return 0;
-}
-
-/* Add (fd, mode_bits) to the poll set. Returns the slot index for
- * later sphttp_poll_ready(slot), or -1 if the set is full. */
-int sphttp_poll_add(int fd, int mode_bits) {
-    if (sphttp_poll_n >= SPHTTP_POLL_MAX) return -1;
-    short ev = 0;
-    if (mode_bits & 1) ev |= POLLIN;
-    if (mode_bits & 2) ev |= POLLOUT;
-    sphttp_poll_set[sphttp_poll_n].fd      = fd;
-    sphttp_poll_set[sphttp_poll_n].events  = ev;
-    sphttp_poll_set[sphttp_poll_n].revents = 0;
-    return sphttp_poll_n++;
-}
-
-/* Run poll() with a millisecond timeout. -1 blocks forever, 0 is a
- * non-blocking peek. Returns the count of ready slots (>=0) or -1. */
-int sphttp_poll_run(int timeout_ms) {
-    int r;
-    do {
-        r = poll(sphttp_poll_set, sphttp_poll_n, timeout_ms);
-    } while (r < 0 && errno == EINTR);
-    return r;
-}
-
-/* Read the ready-mode bits for a slot. POLLHUP/POLLERR fold into the
- * READ bit so a fiber waiting on read sees the hangup and can call
- * recv() to get the 0-byte EOF / errno. */
-int sphttp_poll_ready(int slot) {
-    if (slot < 0 || slot >= sphttp_poll_n) return 0;
-    short rev = sphttp_poll_set[slot].revents;
-    int out = 0;
-    if (rev & (POLLIN | POLLHUP | POLLERR)) out |= 1;
-    if (rev & POLLOUT)                       out |= 2;
-    return out;
-}
-
-/* Flip O_NONBLOCK on. Used by the scheduler to make handler-owned
- * sockets play nicely with poll-based parking. */
-int sphttp_set_nonblock(int fd) {
-    int flags = fcntl(fd, F_GETFL, 0);
-    if (flags < 0) return -1;
-    return fcntl(fd, F_SETFL, flags | O_NONBLOCK);
-}
+/* poll(2) + set_nonblock delegate to sp_net (#12). The poll set is
+ * now sp_net's process-static storage; all four functions route to it,
+ * so the "reset between tick rounds" discipline still holds. */
+int sphttp_poll_reset(void)                { return sp_net_poll_reset(); }
+int sphttp_poll_add(int fd, int mode_bits) { return sp_net_poll_add(fd, mode_bits); }
+int sphttp_poll_run(int timeout_ms)        { return sp_net_poll_run(timeout_ms); }
+int sphttp_poll_ready(int slot)            { return sp_net_poll_ready(slot); }
+int sphttp_set_nonblock(int fd)            { return sp_net_set_nonblock(fd); }
 
 /* Bound a blocking recv with SO_RCVTIMEO (milliseconds; <=0 clears the
  * timeout). Used by the pooled outbound client (6.7b): a keep-alive
@@ -545,33 +413,9 @@ int sphttp_set_recv_timeout(int fd, int ms) {
  * IP literals and DNS names work). Returns the connected fd or -1.
  * Blocking connect for now -- a future variant can do non-blocking
  * connect + poll(POLLOUT) for fully-async outbound. */
-int sphttp_connect(const char *host, int port) {
-    struct addrinfo hints, *res = NULL;
-    memset(&hints, 0, sizeof(hints));
-    hints.ai_family   = AF_UNSPEC;
-    hints.ai_socktype = SOCK_STREAM;
-
-    char portbuf[16];
-    snprintf(portbuf, sizeof(portbuf), "%d", port);
-
-    if (getaddrinfo(host, portbuf, &hints, &res) != 0) return -1;
-
-    int fd = -1;
-    struct addrinfo *ai;
-    for (ai = res; ai != NULL; ai = ai->ai_next) {
-        fd = socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);
-        if (fd < 0) continue;
-        if (connect(fd, ai->ai_addr, ai->ai_addrlen) == 0) break;
-        close(fd);
-        fd = -1;
-    }
-    freeaddrinfo(res);
-    if (fd < 0) return -1;
-
-    int one = 1;
-    setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));
-    return fd;
-}
+/* Plaintext outbound connect -- delegate to sp_net (#12). sphttp_connect_tls
+ * builds on this for the TLS path. */
+int sphttp_connect(const char *host, int port) { return sp_net_connect(host, port); }
 
 /* Outbound TLS connect: TCP connect to host:port, then a TLS 1.2+
  * handshake with SNI + peer-cert verification + hostname check.
@@ -691,21 +535,9 @@ const char *sphttp_recv_all(int fd, int max_bytes) {
  * inherited fd. WARNING: cmd is passed verbatim to /bin/sh -c, so
  * NEVER interpolate untrusted input.  The Ruby side (Tep::Shell)
  * enforces this discipline at the API level. */
-static char sphttp_shell_buf[SPHTTP_BUFSIZE];
+/* Shell capture -- delegate to sp_net (#12). */
 const char *sphttp_shell_capture(const char *cmd, int max_bytes) {
-    if (max_bytes <= 0 || max_bytes >= SPHTTP_BUFSIZE) max_bytes = SPHTTP_BUFSIZE - 1;
-    sphttp_shell_buf[0] = '\0';
-    FILE *fp = popen(cmd, "r");
-    if (!fp) return sphttp_shell_buf;
-    size_t total = 0;
-    while (total < (size_t)max_bytes) {
-        size_t n = fread(sphttp_shell_buf + total, 1, (size_t)max_bytes - total, fp);
-        if (n == 0) break;
-        total += n;
-    }
-    sphttp_shell_buf[total] = '\0';
-    pclose(fp);
-    return sphttp_shell_buf;
+    return sp_net_shell_capture(cmd, max_bytes);
 }
 
 /* ISO-8601 UTC timestamp ("2026-05-27T13:40:01Z") for the given
