@@ -1,41 +1,14 @@
-8d88ebe31cda334f800fd2580847f699dff60d58
+23ba632de61d513644036ddc456b9cd7ba1b2430
 
 # Pinned matz/spinel commit tep is verified to build + test against.
-# Only the first line (the ref) is read by tools/spinel-fresh.sh; the
-# rest is documentation. Bump via PR after confirming `make test`
-# (in the dev container) is green on the newer commit.
+# Only the first line (the ref) is read by tools/spinel-fresh.sh.
 #
-# 8d88ebe (2026-05-29). Bumped from 96b21e6 to pick up the poly-local
-#   GC-rooting fix:
-#     - 9d5bfc8 "Root poly (sp_RbVal) locals so they survive GC" ->
-#       fixes matz/spinel#1052. A param-derived String local passed to an
-#       FFI function (e.g. Tep::SQLite#bind_str) could be GC-collected
-#       before the call, nondeterministically binding NULL or segfaulting.
-#       Surfaced serving spinelgems.org's catalog: a handler that
-#       conditionally built a SQL filter and bound String locals 502'd
-#       (worker SIGSEGV) on the no-filter request path under 96b21e6;
-#       byte-identical code returns correctly on 8d88ebe. This is exactly
-#       tep's shape (FFI string args from request params), so it's worth
-#       being on the fixed compiler.
-#     - also includes 8ec9a3b / e47419b (module/class constant reflection:
-#       Module#is_a?(Module), .class on a constant, respond_to? for
-#       `def self.m` and `class << self; attr_accessor`) and 9402a7e
-#       (walk the full ancestor chain in generated GC scan functions).
-#
-# 96b21e6 (2026-05-29). Verified: full parallel suite green in the dev
-#   container (460 runs, 0 failures, 0 errors). Bumped from 8adbd7b to
-#   pick up two fixes that directly affect tep:
-#     - 08eaa4b "Scan fiber capture structs so parked-fiber objects
-#       survive GC" -> fixes matz/spinel#1031, the suspected GC UAF
-#       under concurrent fiber-per-connection load. tep's scheduled
-#       server is exactly that shape; verified via the shipped
-#       test/i1031.rb (matches expected) + a green full suite.
-#     - a98c0df "Resolve namespaced exception classes in raise and
-#       rescue" -> fixes matz/spinel#1041 (filed by us). `rescue
-#       M::Err` now matches a raised `M::Err`. Unblocks raising
-#       PG::-namespaced errors from PG::Pool#checkout (currently still
-#       a sentinel-return workaround in pg.rb -- a follow-up can now
-#       absorb it).
-#
-# Still open / not yet absorbable: #628 instance-method typed yields
-# (PG::Pool#with block form), #1042 GC.stat hash non-iterable.
+# 23ba632 (2026-05-30). Bumped from 8d88ebe to move onto current master,
+# which now carries:
+#   - sp_net.{c,h} in libspinel_rt.a (PR #1055 merged) -> unblocks tep#12
+#     (consume sp_net + slim sphttp.c).
+#   - JSON.generate working on heterogeneous/nested hashes (#1053) ->
+#     unblocks the qdrant gem write-path ("wall #2").
+#   - the GC fixes already absorbed earlier (#1031 fiber-capture, #1052
+#     poly-local), plus Struct-member type-merge isolation (23ba632).
+# Verified: full parallel suite green in the dev container.
