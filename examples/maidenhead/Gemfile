@@ -1,0 +1,7 @@
+source "https://rubygems.org"
+ruby "3.3.0", engine: "spinel", engine_version: "0.0.0"
+
+# A real published gem, declared the normal way. bundler-spinel
+# (spinel-compat vendor) resolves it from the lockfile and places its
+# source under vendor/spinel/ where tep's build will follow it.
+gem "maidenhead", "1.0.1"

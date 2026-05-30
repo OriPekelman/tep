@@ -1,0 +1,17 @@
+GEM
+  remote: https://rubygems.org/
+  specs:
+    maidenhead (1.0.1)
+
+PLATFORMS
+  aarch64-linux
+  ruby
+
+DEPENDENCIES
+  maidenhead (= 1.0.1)
+
+RUBY VERSION
+   ruby 3.4.9p82
+
+BUNDLED WITH
+   2.6.9

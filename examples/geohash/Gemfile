@@ -1,0 +1,11 @@
+source "https://rubygems.org"
+ruby "3.3.0", engine: "spinel", engine_version: "0.0.0"
+
+# A real published gem, declared the normal way. spinel-compat vendor
+# (bundler-spinel, ../spinelgems) resolves it from Gemfile.lock into
+# vendor/spinel/. NOTE: pr_geohash's GeoHash.encode compiles under
+# spinel; its neighbors/decode use Array#flatten / #transpose, which
+# spinel doesn't support yet (matz/spinel#1078 / #1079) -- so this app
+# only exposes encode. Gem reuse is per-method; the Gemfile + the
+# spinelgems verdict are exactly how you find that out.
+gem "pr_geohash", "1.0.0"

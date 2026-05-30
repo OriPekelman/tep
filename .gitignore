@@ -36,11 +36,22 @@ examples/gx10_dashboard/gx10dash
 *.tep
 .*.tep
 
+# tep scratch + built binaries under any example subdir (gem examples
+# build `<dir>/.app.tep.rb` next to app.rb).
+examples/*/.*.tep.rb
+
 # tep's own gem artefacts.
 *.gem
 pkg/
 .bundle/
 Gemfile.lock
+
+# Gem examples (examples/<x>/Gemfile): the Gemfile + Gemfile.lock are the
+# source of truth and ARE committed (override the global Gemfile.lock
+# ignore above). The gem source under vendor/spinel is GENERATED from the
+# lock by `spinel-compat vendor` (make vendor-examples) -- not committed.
+!examples/*/Gemfile.lock
+examples/*/vendor/
 
 # Editor / OS noise.
 .DS_Store

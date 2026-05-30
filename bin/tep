@@ -94,6 +94,9 @@ def translate(input_path)
   # `class App < Sinatra::Base` are not supported in v0.1.
   unwrapped_apps = []
   passthrough    = []
+  # Dedupe set for recursive require_relative inlining (deps.rb chains;
+  # shared deps must inline once). Keyed by absolute path; build-wide.
+  inlined_seen   = {}
   # Scan ALL `erb :name` and `mustache :name` references up front;
   # every referenced view gets compiled and emitted at the top of
   # the synthesized output. ERB views compile to `tep_view_<name>`,
@@ -176,7 +179,7 @@ def translate(input_path)
     # `something.frob`) is just user code: pass it through verbatim
     # so spinel sees it at program load.
     if call?(node) && node.receiver.nil?
-      result = handle_top_call(node, routes, websockets, mcp_tools, mcp_resources, filters, not_founds, config, warnings, passthrough, input_path)
+      result = handle_top_call(node, routes, websockets, mcp_tools, mcp_resources, filters, not_founds, config, warnings, passthrough, input_path, inlined_seen)
       startup_block = result if result.is_a?(Hash) && result[:kind] == :startup
       return
     end
@@ -1097,7 +1100,44 @@ def handle_tep_live(node, live_views, warnings)
   }
 end
 
-def handle_top_call(node, routes, websockets, mcp_tools, mcp_resources, filters, not_founds, config, warnings, passthrough, input_path = nil)
+# Recursively inline an app-local `require_relative` target. Reads the
+# file; for each `require_relative` IT contains, resolves the path
+# relative to THAT file's own directory and inlines it too. This is what
+# lets `require_relative "vendor/spinel/deps"` work: bundler-spinel's
+# generated deps.rb is itself a list of `require_relative`s (one per
+# vendored gem, in lock order), so a single app-level require pulls in
+# the whole dependency set. `seen` (keyed by absolute path) dedupes
+# shared deps and breaks cycles. Returns the spliced source; a missing
+# target becomes a dropped-marker comment + a warning. Plain `require`
+# lines are left verbatim -- spinel drops them (no load path), which is
+# correct for a self-contained gem; a gem that needs an unvendored
+# require won't link, same as today.
+def inline_require_relative_tree(abs_path, seen, warnings)
+  return "" if seen[abs_path]
+  seen[abs_path] = true
+  dir = File.dirname(abs_path)
+  out = []
+  File.read(abs_path).each_line do |line|
+    m = line.match(/\A\s*require_relative\s+["']([^"']+)["']\s*\z/)
+    if m
+      target = m[1]
+      cand = File.expand_path(target.end_with?(".rb") ? target : target + ".rb", dir)
+      if File.file?(cand)
+        out << "# --- inlined require_relative #{target.inspect} (#{File.basename(cand)}) ---"
+        out << inline_require_relative_tree(cand, seen, warnings)
+      else
+        out << "# (require_relative #{target.inspect} -- not found at #{cand}, dropped)"
+        warnings << "require_relative #{target.inspect} (from #{File.basename(abs_path)}) not found at #{cand}; dropped"
+      end
+    else
+      out << line.rstrip
+    end
+  end
+  out.join("\n")
+end
+
+def handle_top_call(node, routes, websockets, mcp_tools, mcp_resources, filters, not_founds, config, warnings, passthrough, input_path = nil, inlined_seen = nil)
+  inlined_seen ||= {}
   name = node.name.to_s
 
   if name == "mcp_tool"
@@ -1322,18 +1362,13 @@ def handle_top_call(node, routes, websockets, mcp_tools, mcp_resources, filters,
           base = input_path ? File.dirname(input_path) : Dir.pwd
           cand = File.expand_path(path.end_with?(".rb") ? path : path + ".rb", base)
           if File.file?(cand)
-            src = File.read(cand)
-            if src =~ /^\s*require_relative\b/
-              warnings << "inlined `require_relative #{path.inspect}`, but the " \
-                          "target has its own require_relative (NOT recursively " \
-                          "inlined) -- flatten the dependency if the build fails."
-            end
             passthrough << "# --- inlined require_relative #{path.inspect} (#{File.basename(cand)}) ---"
-            passthrough << src
+            passthrough << inline_require_relative_tree(cand, inlined_seen, warnings)
           else
             warnings << "external `require_relative #{path.inspect}` ignored " \
-                        "(no file at #{cand}). Vendor the file next to the app " \
-                        "or pre-inline it into the app source."
+                        "(no file at #{cand}). For a published gem, declare it in " \
+                        "a Gemfile and run `spinel-compat vendor` (bundler-spinel), " \
+                        "then require_relative \"vendor/spinel/deps\"."
           end
         end
       end

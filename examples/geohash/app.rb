@@ -1,10 +1,11 @@
 require 'sinatra'
 
-# Use a REAL, unmodified published Ruby gem -- pr_geohash 1.0.0 (MIT) --
-# from inside a tep app. spinel inlines `require_relative`, so the gem's
-# source is compiled straight into the AOT binary; no runtime gem loader
-# is involved. See examples/geohash/README.md for the why/how.
-require_relative 'vendor/pr_geohash'
+# Use a REAL published Ruby gem -- pr_geohash 1.0.0 (MIT) -- from a tep
+# app, declared in a Gemfile and resolved by `spinel-compat vendor`
+# (bundler-spinel, ../spinelgems) into vendor/spinel/. The one require
+# below pulls in the generated deps.rb chain; bin/tep inlines it into the
+# AOT binary. Run `make vendor` (or see README.md) before building.
+require_relative 'vendor/spinel/deps'
 
 # GET /geohash?lat=..&lon=..&precision=..
 # Encodes a latitude/longitude into a geohash using GeoHash.encode from

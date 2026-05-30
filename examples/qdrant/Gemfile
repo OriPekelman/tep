@@ -1,0 +1,11 @@
+source "https://rubygems.org"
+ruby "3.3.0", engine: "spinel", engine_version: "0.0.0"
+
+# The rejected end of the spectrum. qdrant-ruby is a real, useful gem --
+# but its transport is Faraday and its request bodies are built as
+# incrementally-mutated heterogeneous hashes, neither of which compiles
+# under spinel today. We declare it the same way as the working examples
+# precisely so the spinelgems GATE (`spinel-compat check`) can tell us so,
+# with reasons -- that is the whole point of running gems through
+# spinelgems. See README.md.
+gem "qdrant-ruby", "0.9.10"

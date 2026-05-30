@@ -1,13 +1,16 @@
 require 'sinatra'
 
-# A tep app built entirely on a REAL, unmodified published Ruby gem --
-# maidenhead 1.0.1 (MIT), the ham-radio Maidenhead grid-locator <-> lat/lon
-# converter. Vendored verbatim at vendor/maidenhead.rb (license at
-# vendor/LICENSE.txt) and pulled in with require_relative, which bin/tep
-# inlines into the AOT binary. Unlike the geohash example, EVERY route
-# here exercises the gem and the whole public API compiles -- there is no
-# unsupported-method caveat. See README.md.
-require_relative 'vendor/maidenhead'
+# A tep app built entirely on a REAL published Ruby gem -- maidenhead
+# 1.0.1 (MIT), the ham-radio grid-locator <-> lat/lon converter --
+# declared in a Gemfile and resolved the proper way: `spinel-compat
+# vendor` (bundler-spinel, from ../spinelgems) reads Gemfile.lock and
+# places the gem under vendor/spinel/ with a generated deps.rb. We pull
+# it in with the ONE require below; bin/tep inlines the require_relative
+# chain into the AOT binary. Nothing here is hand-vendored. Run
+# `make vendor` (or see README.md) before building. Unlike the geohash
+# example, EVERY route exercises the gem and the whole public API
+# compiles -- no unsupported-method caveat.
+require_relative 'vendor/spinel/deps'
 
 # GET /valid?loc=FN31pr  -> "true" / "false"
 get '/valid' do
