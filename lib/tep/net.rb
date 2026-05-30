@@ -114,6 +114,16 @@ module Sock
   # route through the SSL* via the same fd registry.
   ffi_func :sphttp_tls_server_init, [:str, :str],   :int
   ffi_func :sphttp_accept_tls,      [:int],         :int
+  # Non-blocking TLS (tep#150 outbound coop + scheduled inbound). *_start
+  # sets up the SSL but does NOT run the handshake; handshake_step drives
+  # one SSL_do_handshake (0=done / 1=want-read / 2=want-write / -1=fail)
+  # so a fiber parks on io_wait between steps. io_status reports the last
+  # recv/handshake want-state (0 ok / 1 read / 2 write / 3 eof / -1 err)
+  # so the coop recv loops tell a TLS partial record from a real EOF.
+  ffi_func :sphttp_tls_connect_start,  [:str, :int], :int
+  ffi_func :sphttp_tls_accept_start,   [:int],       :int
+  ffi_func :sphttp_tls_handshake_step, [:int],       :int
+  ffi_func :sphttp_io_status,          [],           :int
   ffi_func :sphttp_recv_some,     [:int, :int],     :str
   ffi_func :sphttp_recv_all,      [:int, :int],     :str
 

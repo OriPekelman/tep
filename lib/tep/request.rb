@@ -155,6 +155,18 @@ module Tep
         end
         chunk = Sock.sphttp_recv_some(client_fd, cl - @raw_body.length)
         if chunk.length == 0
+          # Over TLS an empty read can be a partial record (SSL_read
+          # WANT_READ/WANT_WRITE) rather than a peer close -- re-park on
+          # the indicated direction and retry instead of truncating the
+          # body. Plaintext EOF/error (status 3/-1) still breaks.
+          st = Sock.sphttp_io_status
+          if st == 1
+            next
+          end
+          if st == 2
+            Tep::Scheduler.io_wait(client_fd, Tep::Scheduler::WRITE, 5)
+            next
+          end
           break   # peer closed mid-body
         end
         @raw_body = @raw_body + chunk

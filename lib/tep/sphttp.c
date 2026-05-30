@@ -489,6 +489,88 @@ int sphttp_accept_tls(int fd) {
     return 0;
 }
 
+/* ---- non-blocking TLS -- tep#150 (outbound coop) + scheduled inbound ----
+ *
+ * The blocking connect_tls / accept_tls above run the handshake inline,
+ * which is correct for the prefork-blocking server but would wedge a
+ * fiber under Tep::Server::Scheduled (the fd is non-blocking there, so
+ * the handshake -- and later SSL_read -- can return WANT_READ/WANT_WRITE
+ * instead of completing). These helpers split SSL setup from stepping so
+ * the Ruby fiber can park on Tep::Scheduler.io_wait for the indicated
+ * direction and retry. sphttp_io_status() exposes the last want-state so
+ * the cooperative recv loops can tell "no full TLS record yet" from a
+ * real EOF (both surface as an empty sphttp_recv_some result). */
+
+/* Last I/O want-state, set by sphttp_recv_some and the handshake
+ * stepper: 0 = ok (data / handshake done), 1 = want-read, 2 = want-write,
+ * 3 = clean EOF (peer close / TLS close_notify), -1 = hard error. */
+static int sphttp_io_last = 0;
+int sphttp_io_status(void) { return sphttp_io_last; }
+
+/* Map SSL_get_error for a <=0 SSL_read/SSL_do_handshake return to our
+ * want-state vocabulary. */
+static int sphttp_ssl_want(SSL *ssl, int ret) {
+    int e = SSL_get_error(ssl, ret);
+    if (e == SSL_ERROR_WANT_READ)   return 1;
+    if (e == SSL_ERROR_WANT_WRITE)  return 2;
+    if (e == SSL_ERROR_ZERO_RETURN) return 3;   /* clean close_notify */
+    return -1;
+}
+
+/* Begin an outbound TLS connection on a NON-BLOCKING socket: TCP
+ * connect, set non-blocking, build the client SSL (SNI + peer-cert +
+ * hostname verification), register it -- but DO NOT run the handshake.
+ * The caller drives it via sphttp_tls_handshake_step. Returns the fd, or
+ * -1 on any setup failure (fd closed). */
+int sphttp_tls_connect_start(const char *host, int port) {
+    int fd = sphttp_connect(host, port);
+    if (fd < 0) return -1;
+    if (fd >= SPHTTP_FD_MAX) { close(fd); return -1; }
+    if (sp_net_set_nonblock(fd) < 0) { close(fd); return -1; }
+    SSL_CTX *ctx = sphttp_ssl_ctx_get();
+    if (!ctx) { close(fd); return -1; }
+    SSL *ssl = SSL_new(ctx);
+    if (!ssl) { close(fd); return -1; }
+    SSL_set_fd(ssl, fd);
+    SSL_set_tlsext_host_name(ssl, host);
+    SSL_set_hostflags(ssl, X509_CHECK_FLAG_NO_PARTIAL_WILDCARDS);
+    if (SSL_set1_host(ssl, host) != 1) { SSL_free(ssl); close(fd); return -1; }
+    SSL_set_connect_state(ssl);
+    sphttp_ssl_tab[fd] = ssl;
+    return fd;
+}
+
+/* Begin an inbound TLS handshake on an already-accepted, NON-BLOCKING
+ * fd. Registers the server SSL* but does not run the handshake. Returns
+ * 0 on success, -1 on setup failure (caller closes the fd). */
+int sphttp_tls_accept_start(int fd) {
+    if (!sphttp_ssl_server_ctx) return -1;
+    if (fd < 0 || fd >= SPHTTP_FD_MAX) return -1;
+    SSL *ssl = SSL_new(sphttp_ssl_server_ctx);
+    if (!ssl) return -1;
+    SSL_set_fd(ssl, fd);
+    SSL_set_accept_state(ssl);
+    sphttp_ssl_tab[fd] = ssl;
+    return 0;
+}
+
+/* Drive one step of a non-blocking handshake (client or server -- the
+ * SSL's connect/accept state set above picks the direction). Returns
+ * 0 = complete, 1 = want-read, 2 = want-write, -1 = hard failure. On
+ * hard failure the SSL* is freed + unregistered (caller closes fd). */
+int sphttp_tls_handshake_step(int fd) {
+    SSL *ssl = sphttp_ssl_for(fd);
+    if (!ssl) return -1;
+    int r = SSL_do_handshake(ssl);
+    if (r == 1) { sphttp_io_last = 0; return 0; }
+    int w = sphttp_ssl_want(ssl, r);
+    if (w == 1 || w == 2) { sphttp_io_last = w; return w; }
+    sphttp_ssl_tab[fd] = NULL;          /* incl. cert/hostname verify fail */
+    SSL_free(ssl);
+    sphttp_io_last = -1;
+    return -1;
+}
+
 /* Best-effort recv() that returns the bytes as a static buffer.
  * Pairs with sphttp_set_nonblock + sphttp_poll_run for the scheduler
  * loop. Returns "" on EAGAIN/empty so callers can branch on
@@ -501,9 +583,21 @@ const char *sphttp_recv_some(int fd, int maxlen) {
     ssize_t n = ssl ? (ssize_t)SSL_read(ssl, sphttp_recv_buf, maxlen)
                     : recv(fd, sphttp_recv_buf, (size_t)maxlen, 0);
     if (n <= 0) {
+        /* Record WHY we got nothing so the cooperative recv loops
+         * (send_req_coop / read_request_blob) can park-and-retry on a
+         * TLS partial record or a non-blocking EAGAIN instead of
+         * mistaking either for EOF. The blocking callers ignore it. */
+        if (ssl) {
+            sphttp_io_last = sphttp_ssl_want(ssl, (int)n);
+        } else if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+            sphttp_io_last = 1;                    /* would block -> read */
+        } else {
+            sphttp_io_last = (n == 0) ? 3 : -1;    /* EOF vs error */
+        }
         sphttp_recv_buf[0] = '\0';
         return sphttp_recv_buf;
     }
+    sphttp_io_last = 0;
     sphttp_recv_buf[n] = '\0';
     return sphttp_recv_buf;
 }
