@@ -1,14 +1,23 @@
-23ba632de61d513644036ddc456b9cd7ba1b2430
+f7602f4e1e00e99c7c48adf34d8cdc28e1fa1f7b
 
 # Pinned matz/spinel commit tep is verified to build + test against.
 # Only the first line (the ref) is read by tools/spinel-fresh.sh.
 #
-# 23ba632 (2026-05-30). Bumped from 8d88ebe to move onto current master,
-# which now carries:
-#   - sp_net.{c,h} in libspinel_rt.a (PR #1055 merged) -> unblocks tep#12
-#     (consume sp_net + slim sphttp.c).
-#   - JSON.generate working on heterogeneous/nested hashes (#1053) ->
-#     unblocks the qdrant gem write-path ("wall #2").
-#   - the GC fixes already absorbed earlier (#1031 fiber-capture, #1052
-#     poly-local), plus Struct-member type-merge isolation (23ba632).
+# f7602f4 (2026-05-30). Bumped from 23ba632 (+31 commits) onto current
+# master, which now additionally carries:
+#   - "Root heap-typed method parameters across internal GC" (#1068) ->
+#     another GC-rooting fix in the #1052 family (heap-typed params no
+#     longer collected across an internal GC).
+#   - Pointer-width mrb_int + width-correct integer-overflow fallback +
+#     raise-on-narrowing for 32-bit targets (no-op on aarch64/64-bit,
+#     but verified green here).
+#   - String fixes: split(sep) trailing-empty drop (CRuby parity),
+#     chomp/squeeze/count/delete lone-caret literal, mutable->immutable
+#     buffer copy. Range#size on exclusive ranges. Float
+#     round/floor/ceil presence-based return types.
+#   - cold integer-math + String#oct moved into libspinel_rt.a.
+#
+# Prior (23ba632): sp_net in libspinel_rt.a (#1055 -> tep#12 done),
+# JSON.generate on heterogeneous literals (#1053), poly-local GC (#1052),
+# Struct-member type-merge isolation.
 # Verified: full parallel suite green in the dev container.
