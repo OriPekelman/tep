@@ -203,17 +203,20 @@ int sphttp_accept_nb(int sfd) {
  * recv()s for the body are the caller's job (we expose a length helper).
  * Returns the parsed length (>0), 0 on clean EOF, -1 on error. */
 int sphttp_read_request(int fd) {
+    SSL *ssl = sphttp_ssl_for(fd);   /* inbound TLS: decrypt via SSL_read */
     sphttp_req_len = 0;
     sphttp_req_buf[0] = '\0';
     while (sphttp_req_len < SPHTTP_BUFSIZE - 1) {
-        ssize_t n = recv(fd, sphttp_req_buf + sphttp_req_len,
-                         SPHTTP_BUFSIZE - 1 - sphttp_req_len, 0);
+        int want = SPHTTP_BUFSIZE - 1 - sphttp_req_len;
+        ssize_t n = ssl
+            ? (ssize_t)SSL_read(ssl, sphttp_req_buf + sphttp_req_len, want)
+            : recv(fd, sphttp_req_buf + sphttp_req_len, (size_t)want, 0);
         if (n == 0) {
             if (sphttp_req_len == 0) return 0;
             break;
         }
         if (n < 0) {
-            if (errno == EINTR) continue;
+            if (!ssl && errno == EINTR) continue;
             return -1;
         }
         sphttp_req_len += (int)n;
@@ -238,14 +241,16 @@ int sphttp_request_len(void) {
 static char sphttp_body_buf[SPHTTP_BUFSIZE];
 
 const char *sphttp_drain_body(int fd, int total_len) {
+    SSL *ssl = sphttp_ssl_for(fd);
     int n = total_len;
     if (n < 0) n = 0;
     if (n >= SPHTTP_BUFSIZE) n = SPHTTP_BUFSIZE - 1;
     int got = 0;
     while (got < n) {
-        ssize_t r = recv(fd, sphttp_body_buf + got, n - got, 0);
+        ssize_t r = ssl ? (ssize_t)SSL_read(ssl, sphttp_body_buf + got, n - got)
+                        : recv(fd, sphttp_body_buf + got, n - got, 0);
         if (r <= 0) {
-            if (errno == EINTR) continue;
+            if (!ssl && errno == EINTR) continue;
             break;
         }
         got += (int)r;
@@ -319,10 +324,12 @@ static int  sphttp_frame_len = 0;
  * to have parked on a poll/io_wait beforehand -- this fn does NOT
  * retry. */
 int sphttp_recv_into_frame(int fd) {
+    SSL *ssl = sphttp_ssl_for(fd);
     sphttp_frame_len = 0;
-    ssize_t n = recv(fd, sphttp_frame_buf, SPHTTP_BUFSIZE, 0);
+    ssize_t n = ssl ? (ssize_t)SSL_read(ssl, sphttp_frame_buf, SPHTTP_BUFSIZE)
+                    : recv(fd, sphttp_frame_buf, SPHTTP_BUFSIZE, 0);
     if (n < 0) {
-        if (errno == EINTR) {
+        if (!ssl && errno == EINTR) {
             /* one retry on EINTR for ergonomics; further EINTRs surface */
             n = recv(fd, sphttp_frame_buf, SPHTTP_BUFSIZE, 0);
             if (n < 0) return -1;
@@ -597,6 +604,45 @@ int sphttp_connect_tls(const char *host, int port) {
     }
     sphttp_ssl_tab[fd] = ssl;
     return fd;
+}
+
+/* ---- inbound (server) TLS -- tep#148 phase 2 ----
+ *
+ * A separate server-side SSL_CTX (cert + key). sphttp_tls_server_init
+ * loads them once (before the prefork, so workers inherit the CTX);
+ * sphttp_accept_tls wraps an already-accepted plain-TCP fd in a TLS
+ * handshake and registers the SSL* so read/write/close are transparent
+ * (same fd->SSL* table as the client path). Blocking fd, so SSL_accept
+ * completes or hard-errors. */
+static SSL_CTX *sphttp_ssl_server_ctx = NULL;
+
+/* Load cert chain + private key into the server CTX. Returns 0 on
+ * success, -1 on any failure (missing/unreadable files, key mismatch). */
+int sphttp_tls_server_init(const char *cert_path, const char *key_path) {
+    SSL_CTX *ctx = SSL_CTX_new(TLS_server_method());
+    if (!ctx) return -1;
+    SSL_CTX_set_min_proto_version(ctx, TLS1_2_VERSION);
+    if (SSL_CTX_use_certificate_chain_file(ctx, cert_path) != 1) { SSL_CTX_free(ctx); return -1; }
+    if (SSL_CTX_use_PrivateKey_file(ctx, key_path, SSL_FILETYPE_PEM) != 1) { SSL_CTX_free(ctx); return -1; }
+    if (SSL_CTX_check_private_key(ctx) != 1) { SSL_CTX_free(ctx); return -1; }
+    sphttp_ssl_server_ctx = ctx;
+    return 0;
+}
+
+/* Server-side TLS handshake over an accepted fd. Returns 0 on success
+ * (SSL* registered for fd), -1 on failure -- the caller closes the fd. */
+int sphttp_accept_tls(int fd) {
+    if (!sphttp_ssl_server_ctx) return -1;
+    if (fd < 0 || fd >= SPHTTP_FD_MAX) return -1;
+    SSL *ssl = SSL_new(sphttp_ssl_server_ctx);
+    if (!ssl) return -1;
+    SSL_set_fd(ssl, fd);
+    if (SSL_accept(ssl) != 1) {
+        SSL_free(ssl);
+        return -1;
+    }
+    sphttp_ssl_tab[fd] = ssl;
+    return 0;
 }
 
 /* Best-effort recv() that returns the bytes as a static buffer.

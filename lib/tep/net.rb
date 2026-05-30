@@ -108,6 +108,12 @@ module Sock
   # + peer cert). Returns an fd whose write/recv/close transparently
   # route through the SSL*. -1 on connect/handshake/verify failure.
   ffi_func :sphttp_connect_tls,   [:str, :int],     :int
+  # Inbound (server) TLS (tep#148 phase 2). server_init loads cert+key
+  # once (before prefork); accept_tls wraps an accepted fd in a TLS
+  # handshake (0 ok / -1 fail, caller closes). read/write/close then
+  # route through the SSL* via the same fd registry.
+  ffi_func :sphttp_tls_server_init, [:str, :str],   :int
+  ffi_func :sphttp_accept_tls,      [:int],         :int
   ffi_func :sphttp_recv_some,     [:int, :int],     :str
   ffi_func :sphttp_recv_all,      [:int, :int],     :str
 

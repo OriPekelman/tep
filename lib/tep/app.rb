@@ -10,6 +10,7 @@
 module Tep
   class App
     attr_accessor :router, :static_root, :session_secret
+    attr_accessor :tls_cert, :tls_key
     attr_accessor :before_filter, :after_filter, :nf_handler
     # The auth-filter runs BEFORE before_filter so handler bodies and
     # user filters always see a populated req.identity. Separate slot
@@ -74,6 +75,8 @@ module Tep
       @router         = Router.new
       @static_root    = ""
       @session_secret = ""
+      @tls_cert       = ""   # inbound TLS cert path (tep#148 ph2; "" = plain HTTP)
+      @tls_key        = ""   # inbound TLS key path
       @before_filter  = Filter.new   # no-op default
       @after_filter   = Filter.new
       @auth_filter    = Filter.new   # no-op until Tep::Auth.install!
@@ -141,6 +144,16 @@ module Tep
 
     def set_session_secret(s)
       @session_secret = s
+    end
+
+    # Inbound TLS cert/key paths (tep#148 phase 2). Set via
+    # Tep.tls_cert= / Tep.tls_key=; read by Tep::Server.run at boot.
+    def set_tls_cert(s)
+      @tls_cert = s
+    end
+
+    def set_tls_key(s)
+      @tls_key = s
     end
 
     def add_route(verb, pattern, handler)

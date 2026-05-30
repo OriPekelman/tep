@@ -25,8 +25,12 @@ module Tep
     end
 
     def run(port, workers, quiet)
+      scheme = "http"
+      if Tep::APP.tls_cert.length > 0
+        scheme = "https"
+      end
       if !quiet
-        puts "[tep " + VERSION + "] listening on http://0.0.0.0:" + port.to_s +
+        puts "[tep " + VERSION + "] listening on " + scheme + "://0.0.0.0:" + port.to_s +
              " (workers=" + workers.to_s + ")"
       end
 
@@ -34,6 +38,17 @@ module Tep
       # them; on signal, sphttp_accept returns -1 and the worker loop
       # runs Tep.on_shutdown (flushes events.run_end + future hooks).
       Sock.sphttp_install_term_handlers
+
+      # Inbound TLS (tep#148 phase 2): load the server cert/key once
+      # before forking so every worker inherits the SSL_CTX. A bad
+      # cert/key is fatal -- fail loud rather than serve plaintext on a
+      # port the operator believes is TLS.
+      if Tep::APP.tls_cert.length > 0 && Tep::APP.tls_key.length > 0
+        if Sock.sphttp_tls_server_init(Tep::APP.tls_cert, Tep::APP.tls_key) < 0
+          puts "tep: TLS init failed (cert=" + Tep::APP.tls_cert + ", key=" + Tep::APP.tls_key + ")"
+          exit(1)
+        end
+      end
 
       if workers <= 1
         sfd = Sock.sphttp_listen(port, 0)
@@ -95,6 +110,22 @@ module Tep
             break
           end
           next
+        end
+        # Inbound TLS: complete the server-side handshake on the freshly
+        # accepted fd before reading the request. Bound the handshake
+        # with a recv timeout first -- otherwise a connection that opens
+        # but never sends a ClientHello (a port probe, a slowloris, a
+        # plain-HTTP client) blocks SSL_accept and wedges this worker.
+        # Clear the timeout after a successful handshake so normal
+        # (incl. keep-alive) request reads aren't bounded. On failure
+        # drop the connection.
+        if Tep::APP.tls_cert.length > 0
+          Sock.sphttp_set_recv_timeout(client, 5000)
+          if Sock.sphttp_accept_tls(client) < 0
+            Sock.sphttp_close(client)
+            next
+          end
+          Sock.sphttp_set_recv_timeout(client, 0)
         end
         handle_connection(client)
       end
