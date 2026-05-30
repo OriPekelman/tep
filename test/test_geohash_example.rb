@@ -18,8 +18,23 @@ require "fileutils"
 class TestGeohashExample < Minitest::Test
   TEP_BIN = File.expand_path("../bin/tep", __dir__)
   APP     = File.expand_path("../examples/geohash/app.rb", __dir__)
+  EX_DIR  = File.dirname(APP)
+
+  # vendor/spinel is generated from Gemfile.lock by bundler-spinel
+  # (`spinel-compat vendor`), not committed. Regenerate before building;
+  # skip if spinelgems isn't reachable (suite run outside the dev
+  # container, which mounts /spinelgems).
+  def ensure_vendored
+    deps = File.join(EX_DIR, "vendor", "spinel", "deps.rb")
+    return if File.exist?(deps)
+    sg = ENV["SPINELGEMS"] || "/spinelgems"
+    skip "spinelgems not at #{sg}; run `make vendor-examples`" unless File.directory?(File.join(sg, "exe"))
+    out = `cd #{EX_DIR} && ruby -I #{sg}/lib #{sg}/exe/spinel-compat vendor 2>&1`
+    skip "spinel-compat vendor failed (offline?):\n#{out}" unless $?.success? && File.exist?(deps)
+  end
 
   def setup
+    ensure_vendored
     @tmp  = Dir.mktmpdir("tep-geohash")
     @bin  = File.join(@tmp, "geohash")
     out   = `#{TEP_BIN} build #{APP} -o #{@bin} 2>&1`

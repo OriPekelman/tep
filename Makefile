@@ -34,7 +34,23 @@ TEP_PG_LIBS   ?= $(shell \
     (pg_config --libdir 2>/dev/null | sed -e 's|^|-L|' ; echo "-lpq") | tr '\n' ' ')
 export TEP_PG_CFLAGS TEP_PG_LIBS
 
-.PHONY: all clean helper hello sinatra_style bench bench-tep bench-sinatra demo test test-parallel spinel-fresh test-pg
+.PHONY: all clean helper hello sinatra_style bench bench-tep bench-sinatra demo test test-parallel spinel-fresh test-pg vendor-examples
+
+# Vendor each gem example's Gemfile-declared dependencies via
+# bundler-spinel (spinel-compat vendor, from $(SPINELGEMS)) into
+# examples/<x>/vendor/spinel -- where bin/tep follows the generated
+# deps.rb. This is how a tep app uses a real published gem: declare it in
+# a Gemfile, let spinelgems resolve + place it, require_relative the
+# deps. Run inside the dev container (mounts /spinelgems, sets SPINELGEMS)
+# or point SPINELGEMS at a spinelgems checkout. Regenerated from the
+# committed Gemfile.lock; the output is gitignored.
+SPINELGEMS ?= ../spinelgems
+vendor-examples:
+	@for d in examples/*/; do \
+	  [ -f "$$d/Gemfile.lock" ] || continue; \
+	  echo "vendor: $$d"; \
+	  ( cd "$$d" && ruby -I "$(SPINELGEMS)/lib" "$(SPINELGEMS)/exe/spinel-compat" vendor ) || exit 1; \
+	done
 
 # Always check that the local spinel checkout is on tip-of-master
 # before we build / test against it -- spinel moves quickly and a

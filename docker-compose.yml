@@ -18,8 +18,16 @@ services:
     volumes:
       - .:/workspace
       - ../spinel:/spinel
+      # spinelgems (bundler-spinel) provides `spinel-compat`, which
+      # vendors Gemfile-declared gems into vendor/spinel/ so a tep app
+      # can use a real published gem. Mounted like ../spinel; absent on
+      # a checkout without the sibling, which only affects the gem
+      # examples (see examples/maidenhead).
+      - ../spinelgems:/spinelgems
     environment:
       SPINEL: /spinel/spinel
+      # Lets the gem examples find spinel-compat without a PATH dance.
+      SPINELGEMS: /spinelgems
       # Spinel itself is owned by the host -- the container reads the
       # binary through the bind mount but does not pull / rebuild
       # spinel master. Skip the auto-fresh step so `make test`
