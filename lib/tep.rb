@@ -174,6 +174,14 @@ module Tep
   def self.session_secret;     APP.session_secret;        end
   def self.session_secret=(v); APP.set_session_secret(v); end
 
+  # Inbound TLS (tep#148 phase 2). Point these at a PEM cert + key and
+  # Tep::Server terminates HTTPS itself; unset (default) = plain HTTP.
+  #   Tep.tls_cert = "cert.pem"; Tep.tls_key = "key.pem"
+  def self.tls_cert;     APP.tls_cert;        end
+  def self.tls_cert=(v); APP.set_tls_cert(v); end
+  def self.tls_key;      APP.tls_key;         end
+  def self.tls_key=(v);  APP.set_tls_key(v);  end
+
   # Spinel infers method parameter types from concrete call sites.
   # If a user app never calls Tep.before / Tep.not_found / etc.,
   # spinel falls back to int and the underlying set_* assignment
@@ -199,6 +207,8 @@ module Tep
   _tep_seed_res = Response.new
   _tep_seed_res.set_cookie("", "", str_hash)
   APP.set_session_secret("")
+  APP.set_tls_cert("")
+  APP.set_tls_key("")
   _tep_seed_sess = Session.new
   _tep_seed_sess.load_from("", "")
   _tep_seed_sess.to_cookie_value("")
