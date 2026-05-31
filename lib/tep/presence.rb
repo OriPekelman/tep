@@ -288,32 +288,28 @@ module Tep
       if conn.pgh < 0
         return -1
       end
-      r = conn.exec(Tep::Presence.schema_sql)
-      if !r.ok?
+      # exec raises PG::Error on failure now; degrade gracefully
+      # (close + return -1) rather than letting it escape the worker.
+      begin
+        r = conn.exec(Tep::Presence.schema_sql)
         r.clear
+        # Heartbeat table for the prune-stale-workers path (#47).
+        r = conn.exec(Tep::Presence.worker_schema_sql)
+        r.clear
+      rescue PG::Error
         conn.finish
         return -1
       end
-      r.clear
-      # Heartbeat table for the prune-stale-workers path (#47).
-      r = conn.exec(Tep::Presence.worker_schema_sql)
-      if !r.ok?
-        r.clear
-        conn.finish
-        return -1
-      end
-      r.clear
       Tep::APP.set_presence_pg_conn(conn)
       worker_id = Sock.sphttp_getpid.to_s + "-" + Time.now.to_i.to_s
       Tep::APP.set_presence_pg_worker_id(worker_id)
       Tep::APP.set_presence_pg_enabled(1)
       # Drop any rows from a prior worker that managed to leave
       # stale entries with this same worker_id (unlikely thanks
-      # to the boot-epoch suffix, but defensive).
-      r = conn.exec_params(
+      # to the boot-epoch suffix, but defensive). Best-effort.
+      Tep::Presence.mirror_exec(
         "DELETE FROM tep_presence WHERE worker_id = $1",
         [worker_id])
-      r.clear
       # Register this worker's heartbeat row immediately. Apps
       # refresh it periodically via Tep::Presence.heartbeat;
       # prune_stale_workers deletes rows whose heartbeat is stale.
@@ -325,16 +321,22 @@ module Tep
       if Tep::APP.presence_pg_enabled == 0
         return 0
       end
-      r = Tep::APP.presence_pg_conn.exec_params(
-        "DELETE FROM tep_presence WHERE worker_id = $1",
-        [Tep::APP.presence_pg_worker_id])
-      r.clear
-      # Remove the heartbeat row so prune_stale_workers doesn't
-      # see this worker as live after we're gone.
-      r = Tep::APP.presence_pg_conn.exec_params(
-        "DELETE FROM tep_presence_worker WHERE worker_id = $1",
-        [Tep::APP.presence_pg_worker_id])
-      r.clear
+      # Best-effort cleanup -- swallow PG errors (we're tearing the
+      # mirror down regardless) and still finish + disable below.
+      begin
+        r = Tep::APP.presence_pg_conn.exec_params(
+          "DELETE FROM tep_presence WHERE worker_id = $1",
+          [Tep::APP.presence_pg_worker_id])
+        r.clear
+        # Remove the heartbeat row so prune_stale_workers doesn't
+        # see this worker as live after we're gone.
+        r = Tep::APP.presence_pg_conn.exec_params(
+          "DELETE FROM tep_presence_worker WHERE worker_id = $1",
+          [Tep::APP.presence_pg_worker_id])
+        r.clear
+      rescue PG::Error
+        # swallow -- shutting the mirror down anyway
+      end
       Tep::APP.presence_pg_conn.finish
       Tep::APP.set_presence_pg_enabled(0)
       0
@@ -389,13 +391,17 @@ module Tep
       if wid.length == 0
         return 0
       end
-      r = Tep::APP.presence_pg_conn.exec_params(
-        "INSERT INTO tep_presence_worker (worker_id, last_seen_ts) " +
-        "VALUES ($1, $2) " +
-        "ON CONFLICT (worker_id) DO UPDATE SET " +
-        "  last_seen_ts = EXCLUDED.last_seen_ts",
-        [wid, Time.now.to_i.to_s])
-      r.clear
+      begin
+        r = Tep::APP.presence_pg_conn.exec_params(
+          "INSERT INTO tep_presence_worker (worker_id, last_seen_ts) " +
+          "VALUES ($1, $2) " +
+          "ON CONFLICT (worker_id) DO UPDATE SET " +
+          "  last_seen_ts = EXCLUDED.last_seen_ts",
+          [wid, Time.now.to_i.to_s])
+        r.clear
+      rescue PG::Error
+        return 0
+      end
       1
     end
 
@@ -420,22 +426,41 @@ module Tep
       end
       cutoff = Time.now.to_i - ttl_seconds
       conn = Tep::APP.presence_pg_conn
-      # Drop dead heartbeats first; the second DELETE then walks
-      # the worker_id space that's still alive.
-      r1 = conn.exec_params(
-        "DELETE FROM tep_presence_worker WHERE last_seen_ts < $1",
-        [cutoff.to_s])
-      r1.clear
-      # Now drop presence rows whose worker_id isn't in the live
-      # heartbeat table. NOT IN handles both crashed-and-pruned
-      # workers and workers that never registered (legacy rows
-      # from before this prune feature shipped).
-      r2 = conn.exec(
-        "DELETE FROM tep_presence " +
-        "WHERE worker_id NOT IN (SELECT worker_id FROM tep_presence_worker)")
-      n = r2.cmd_tuples
-      r2.clear
+      begin
+        # Drop dead heartbeats first; the second DELETE then walks
+        # the worker_id space that's still alive.
+        r1 = conn.exec_params(
+          "DELETE FROM tep_presence_worker WHERE last_seen_ts < $1",
+          [cutoff.to_s])
+        r1.clear
+        # Now drop presence rows whose worker_id isn't in the live
+        # heartbeat table. NOT IN handles both crashed-and-pruned
+        # workers and workers that never registered (legacy rows
+        # from before this prune feature shipped).
+        r2 = conn.exec(
+          "DELETE FROM tep_presence " +
+          "WHERE worker_id NOT IN (SELECT worker_id FROM tep_presence_worker)")
+        n = r2.cmd_tuples
+        r2.clear
+      rescue PG::Error
+        return 0
+      end
       n
+    end
+
+    # Best-effort mirror write: run an exec_params on the mirror conn
+    # and swallow any PG::Error. The PG mirror is advisory -- local
+    # presence is authoritative -- so a transient mirror failure must
+    # never propagate into the caller's request now that exec raises
+    # (matz/spinel#627 + #1041). Always returns 0.
+    def self.mirror_exec(sql, params)
+      begin
+        r = Tep::APP.presence_pg_conn.exec_params(sql, params)
+        r.clear
+      rescue PG::Error
+        # swallow -- advisory mirror, local presence is authoritative
+      end
+      0
     end
 
     # Mirror a track to PG. Called from track() when the PG
@@ -444,7 +469,7 @@ module Tep
       if Tep::APP.presence_pg_enabled == 0
         return 0
       end
-      r = Tep::APP.presence_pg_conn.exec_params(
+      Tep::Presence.mirror_exec(
         "INSERT INTO tep_presence " +
         "(worker_id, topic, fd, principal_id, kind, agent_id, " +
         " since_ts, status_state, status_note, status_until) " +
@@ -469,8 +494,6 @@ module Tep
           entry.status_note,
           entry.status_until.to_s
         ])
-      r.clear
-      0
     end
 
     # Mirror an untrack to PG.
@@ -478,12 +501,10 @@ module Tep
       if Tep::APP.presence_pg_enabled == 0
         return 0
       end
-      r = Tep::APP.presence_pg_conn.exec_params(
+      Tep::Presence.mirror_exec(
         "DELETE FROM tep_presence " +
         "WHERE worker_id = $1 AND topic = $2 AND fd = $3",
         [Tep::APP.presence_pg_worker_id, topic, fd.to_s])
-      r.clear
-      0
     end
 
     # Mirror a status update.
@@ -491,14 +512,12 @@ module Tep
       if Tep::APP.presence_pg_enabled == 0
         return 0
       end
-      r = Tep::APP.presence_pg_conn.exec_params(
+      Tep::Presence.mirror_exec(
         "UPDATE tep_presence " +
         "SET status_state = $4, status_note = $5, status_until = $6 " +
         "WHERE worker_id = $1 AND topic = $2 AND fd = $3",
         [Tep::APP.presence_pg_worker_id, topic, fd.to_s,
          state.to_s, note, until_ts.to_s])
-      r.clear
-      0
     end
 
     # Cross-worker list: SELECT all entries on `topic` regardless
@@ -511,13 +530,13 @@ module Tep
       if Tep::APP.presence_pg_enabled == 0
         return result
       end
-      r = Tep::APP.presence_pg_conn.exec_params(
-        "SELECT principal_id, kind, agent_id, fd, since_ts, " +
-        "       status_state, status_note, status_until " +
-        "FROM tep_presence WHERE topic = $1 ORDER BY since_ts",
-        [topic])
-      if !r.ok?
-        r.clear
+      begin
+        r = Tep::APP.presence_pg_conn.exec_params(
+          "SELECT principal_id, kind, agent_id, fd, since_ts, " +
+          "       status_state, status_note, status_until " +
+          "FROM tep_presence WHERE topic = $1 ORDER BY since_ts",
+          [topic])
+      rescue PG::Error
         return result
       end
       i = 0
@@ -555,11 +574,11 @@ module Tep
       if Tep::APP.presence_pg_enabled == 0
         return 0
       end
-      r = Tep::APP.presence_pg_conn.exec_params(
-        "SELECT count(*) FROM tep_presence WHERE topic = $1",
-        [topic])
-      if !r.ok?
-        r.clear
+      begin
+        r = Tep::APP.presence_pg_conn.exec_params(
+          "SELECT count(*) FROM tep_presence WHERE topic = $1",
+          [topic])
+      rescue PG::Error
         return 0
       end
       n = r.getvalue(0, 0).to_i

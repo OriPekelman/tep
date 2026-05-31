@@ -55,10 +55,16 @@ class TestPresencePg < TepTest
 
     get '/reset_pg_table' do
       # Wipe the whole tep_presence table; reused between tests.
+      # Tolerate a not-yet-created table (exec raises now) -> "0".
       c = Tep::APP.presence_pg_conn
-      r = c.exec("DELETE FROM tep_presence")
-      n = r.cmd_tuples
-      r.clear
+      n = 0
+      begin
+        r = c.exec("DELETE FROM tep_presence")
+        n = r.cmd_tuples
+        r.clear
+      rescue PG::Error
+        n = 0
+      end
       n.to_s
     end
 
@@ -160,10 +166,16 @@ class TestPresencePg < TepTest
     end
 
     get '/reset_worker_table' do
+      # Tolerate a not-yet-created table (exec raises now) -> "0".
       c = Tep::APP.presence_pg_conn
-      r = c.exec("DELETE FROM tep_presence_worker")
-      n = r.cmd_tuples
-      r.clear
+      n = 0
+      begin
+        r = c.exec("DELETE FROM tep_presence_worker")
+        n = r.cmd_tuples
+        r.clear
+      rescue PG::Error
+        n = 0
+      end
       n.to_s
     end
 
@@ -250,6 +262,14 @@ class TestPresencePg < TepTest
   def test_heartbeat_is_idempotent
     # Calling heartbeat multiple times shouldn't multiply rows;
     # the upsert keeps it at one per worker_id.
+    #
+    # Establish this worker's heartbeat row FIRST, then measure: setup
+    # resets tep_presence but not tep_presence_worker, so a prior
+    # test's reset_worker_table can leave our row absent. Without this
+    # priming, n_before is taken before our row exists and the first
+    # heartbeat below re-creates it -- a spurious +1 (a pre-existing
+    # isolation gap, not a heartbeat bug).
+    get("/heartbeat")
     n_before = get("/worker_count").body.to_i
     3.times { get("/heartbeat") }
     n_after = get("/worker_count").body.to_i

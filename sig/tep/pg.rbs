@@ -33,10 +33,19 @@ module PG
 
   # Convenience constructor matching ruby-pg's PG.connect. `opts` is a
   # libpq conninfo String ("postgresql://...") or a String=>String Hash.
+  # Unlike ruby-pg, connect does NOT raise on failure -- it returns a
+  # connection-failed Connection (check #connected?) so PG::Pool can
+  # type-seed before a server is reachable. Query methods DO raise.
   def self.connect: (String | Hash[String, String] opts) -> PG::Connection
 
   # libpq version string ("16.2.0" ...). Diagnostic / banner use.
   def self.libpq_version: () -> String
+
+  # Raise the PG::Error subclass mapped from a 5-char SQLSTATE
+  # (unmapped -> PG::ServerError). Called by exec/exec_params via the
+  # error path; exposed for callers that hold a SQLSTATE and want the
+  # same mapping. Always raises (never returns).
+  def self.raise_for_sqlstate: (String state, String msg) -> bot
 
   class Connection
     # `:pgh` rather than `:handle` to avoid the poly-dispatch collision
@@ -72,13 +81,18 @@ module PG
     def last_notify_channel: () -> String
     def last_notify_payload: () -> String
 
-    # Returns a Result. On error the Result's #ok? is false and SQLSTATE
-    # / message mirror to #last_sqlstate / #last_error_message. Routes
-    # through the libpq async surface under Tep::Server::Scheduled.
+    # Returns a Result on success; RAISES the SQLSTATE-mapped PG::Error
+    # subclass on error (ruby-pg / AR shape -- rescue the leaf e.g.
+    # PG::UniqueViolation, or PG::Error for any server error). SQLSTATE
+    # / message stay on #last_sqlstate / #last_error_message for
+    # post-rescue inspection. Routes through the libpq async surface
+    # under Tep::Server::Scheduled (raises identically).
     def exec: (String sql) -> Result
     # `params` is an Array of String / Integer / nil (positional $1..$N).
+    # Same raise-on-error contract as #exec.
     def exec_params: (String sql, Array[String | Integer | nil] params) -> Result
     # Explicit async variants -- always use the libpq non-blocking path.
+    # Same raise-on-error contract.
     def async_exec: (String sql) -> Result
     def async_exec_params: (String sql, Array[String | Integer | nil] params) -> Result
 

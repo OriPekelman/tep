@@ -258,31 +258,46 @@ class TestPg < TepTest
       "ident=" + out
     end
 
-    # GET /missing_table -- error path; check Result#ok? + sqlstate.
+    # GET /missing_table -- error path; exec raises PG::UndefinedTable.
     get '/missing_table' do
       c = PG.connect(PG_URL)
-      r = c.exec("SELECT * FROM tep_no_such_table_anywhere")
-      out = "ok?=" + (r.ok? ? "yes" : "no") +
-            " sqlstate=" + c.last_sqlstate +
-            " match42P01=" + (c.last_sqlstate == "42P01" ? "yes" : "no")
-      r.clear
+      out = ""
+      begin
+        r = c.exec("SELECT * FROM tep_no_such_table_anywhere")
+        r.clear
+        out = "raised=no"
+      rescue PG::UndefinedTable => e
+        out = "raised=UndefinedTable" +
+              " sqlstate=" + c.last_sqlstate +
+              " match42P01=" + (c.last_sqlstate == "42P01" ? "yes" : "no") +
+              " is_pg_error=" + (e.is_a?(PG::Error) ? "yes" : "no")
+      end
       c.close
       out
     end
 
-    # GET /unique_violation -- INSERT duplicate primary key.
+    # GET /unique_violation -- duplicate PK INSERT raises
+    # PG::UniqueViolation (SQLSTATE 23505).
     get '/unique_violation' do
       c = PG.connect(PG_URL)
+      # Clear any leftover row from a prior crashed run so the first
+      # INSERT below reliably succeeds.
+      rd = c.exec_params("DELETE FROM " + TBL + " WHERE id = $1", ["99001"])
+      rd.clear
       r1 = c.exec_params("INSERT INTO " + TBL + " (id, body) VALUES ($1, $2)",
                          ["99001", "duplicate"])
-      ok1 = r1.ok?
       r1.clear
-      r2 = c.exec_params("INSERT INTO " + TBL + " (id, body) VALUES ($1, $2)",
-                        ["99001", "duplicate"])
-      out = "first_ok=" + (ok1 ? "yes" : "no") +
-            " second_ok=" + (r2.ok? ? "yes" : "no") +
-            " sqlstate=" + c.last_sqlstate
-      r2.clear
+      out = ""
+      begin
+        r2 = c.exec_params("INSERT INTO " + TBL + " (id, body) VALUES ($1, $2)",
+                          ["99001", "duplicate"])
+        r2.clear
+        out = "first_ok=yes second_raised=no"
+      rescue PG::UniqueViolation => e
+        out = "first_ok=yes second_raised=UniqueViolation" +
+              " sqlstate=" + c.last_sqlstate +
+              " is_pg_error=" + (e.is_a?(PG::Error) ? "yes" : "no")
+      end
       r3 = c.exec_params("DELETE FROM " + TBL + " WHERE id = $1", ["99001"])
       r3.clear
       c.close
@@ -562,16 +577,21 @@ class TestPg < TepTest
 
   def test_missing_table_error_path
     res = get("/missing_table")
-    assert_match(/ok\?=no/, res.body)
+    # exec now RAISES PG::UndefinedTable (rescued in the route).
+    assert_match(/raised=UndefinedTable/, res.body)
     assert_match(/sqlstate=42P01/, res.body)
     assert_match(/match42P01=yes/, res.body)
+    # the leaf is a PG::Error (base rescue + is_a? walk the hierarchy).
+    assert_match(/is_pg_error=yes/, res.body)
   end
 
   def test_unique_violation_reports_23505
     res = get("/unique_violation")
+    # the duplicate INSERT raises PG::UniqueViolation; first succeeds.
     assert_match(/first_ok=yes/, res.body)
-    assert_match(/second_ok=no/, res.body)
+    assert_match(/second_raised=UniqueViolation/, res.body)
     assert_match(/sqlstate=23505/, res.body)
+    assert_match(/is_pg_error=yes/, res.body)
   end
 
   def test_escape_literal_quotes_apostrophe

@@ -53,19 +53,23 @@ get '/tables' do
   out
 end
 
+# exec raises the SQLSTATE-mapped PG::Error subclass on failure (the
+# ruby-pg / AR shape). Rescue the leaf (PG::UndefinedTable) or the base
+# (PG::Error); the SQLSTATE / message stay on the connection's last_*.
 get '/error' do
   c = PG.connect(PG_URL)
-  r = c.exec("SELECT * FROM tep_no_such_table")
   out = ""
-  if r.ok?
+  begin
+    r = c.exec("SELECT * FROM tep_no_such_table")
+    r.clear
     out = "unexpected: query succeeded"
-  else
-    out = "result not ok\n" +
+  rescue PG::UndefinedTable => e
+    out = "rescued PG::UndefinedTable\n" +
           "sqlstate: " + c.last_sqlstate + "\n" +
           "is undefined-table? " + (c.last_sqlstate == "42P01" ? "yes" : "no") + "\n" +
-          "message: " + r.error_message
+          "is PG::Error? " + (e.is_a?(PG::Error) ? "yes" : "no") + "\n" +
+          "message: " + e.message
   end
-  r.clear
   c.close
   res.headers["Content-Type"] = "text/plain"
   out

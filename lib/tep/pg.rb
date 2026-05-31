@@ -148,7 +148,15 @@ module PG
   # Convenience constructor matching ruby-pg's PG.connect entry.
   # opts is either a libpq conninfo String ("postgresql://...") or
   # a String=>String Hash of libpq keys (host, port, dbname, user,
-  # password, sslmode, ...). Raises PG::ConnectionBad on failure.
+  # password, sslmode, ...).
+  #
+  # Unlike ruby-pg (which raises PG::ConnectionBad), connect does NOT
+  # raise on failure: it returns a connection-failed Connection
+  # (`connected?` false, `last_error_message` set). This is deliberate
+  # -- PG::Pool type-seeds its free list with `PG::Connection.new("")`
+  # at module load, before any server is reachable, so the constructor
+  # has to be non-raising. Check `conn.connected?` before use. (Query
+  # methods #exec / #exec_params DO raise; see Connection#exec.)
   def self.connect(opts)
     Connection.new(opts)
   end
@@ -212,11 +220,14 @@ module PG
         @last_error_message = Pg.tep_pg_error_message(0)
         @last_sqlstate = ""
         # Connection-failure surfaces via `c.last_error_message` +
-        # `c.connected?` after the constructor returns. Spinel can't
-        # rescue module-namespaced exception classes today
-        # (matz/spinel#627) -- raising would skip user-side rescue
-        # and crash the worker. Document the contract: callers must
-        # check `c.connected?` before exec.
+        # `c.connected?` after the constructor returns -- the
+        # constructor stays non-raising on purpose (PG::Pool seeds its
+        # free list with `PG::Connection.new("")` before a server is
+        # reachable; a raising constructor would blow up at module
+        # load). Callers must check `c.connected?` before exec. NB:
+        # this is the lone non-raising path -- query methods raise
+        # PG::Error subclasses now that spinel supports namespaced
+        # raise + rescue (matz/spinel#627 + #1041).
       end
       @pgh = h
     end
@@ -298,25 +309,35 @@ module PG
       Pg.tep_pg_notify_payload
     end
 
-    # Run a no-params query. Returns a PG::Result. On error the
-    # result's `ok?` is false and `error_message` / `sql_state`
-    # describe the failure; SQLSTATE + message are also mirrored
-    # to `conn.last_sqlstate` / `#last_error_message`.
+    # Run a no-params query. Returns a PG::Result on success.
+    #
+    # ON ERROR IT RAISES the SQLSTATE-mapped PG::Error subclass
+    # (PG::UniqueViolation, PG::UndefinedTable, ... -> PG::ServerError
+    # for unmapped states) -- the ruby-pg / AR shape. The failed
+    # PGresult is freed before the raise; the SQLSTATE / message stay
+    # readable on `conn.last_sqlstate` / `#last_error_message` for
+    # post-rescue inspection:
+    #
+    #     begin
+    #       c.exec(sql)
+    #     rescue PG::UniqueViolation => e
+    #       ...                     # e.message + c.last_sqlstate
+    #     rescue PG::Error => e     # base catches any server error
+    #       ...
+    #     end
+    #
+    # Raising (instead of the old Result-on-error sentinel) became
+    # viable once spinel learned namespaced raise + hierarchy-walking
+    # rescue (matz/spinel#627 + #1041). NB: PG.connect is the one path
+    # that still does NOT raise -- it returns a connection-failed
+    # instance so PG::Pool can type-seed without a live server (check
+    # `conn.connected?`).
     #
     # Under `Tep::Server::Scheduled` this routes through the libpq
     # async surface (PQsendQuery + PQflush + PQconsumeInput parked
     # on Tep::Scheduler.io_wait), so other fibers in the same
     # worker can run while the query is in flight. Under prefork
-    # it routes through the blocking PQexec. Both produce
-    # identical Result shapes.
-    #
-    # v1 returns Result-on-error instead of raising because
-    # spinel's `rescue Module::Klass` doesn't resolve the
-    # constant path (top-level-class rescue is fixed but the
-    # module-namespaced case lags; tracking comment on
-    # matz/spinel#627). The PG::Error subclass tree is defined
-    # below so future code that wants to introspect / subclass
-    # has it; raising flips on once the namespace fix lands.
+    # it routes through the blocking PQexec. Both raise identically.
     def exec(sql)
       if Tep::Scheduler.scheduled_context?
         return async_exec(sql)
@@ -329,7 +350,7 @@ module PG
 
     # Parameterised query with positional binds ($1, $2, ...).
     # `params` is an Array of String / Integer / nil. Same
-    # Result-on-error model + auto-routing as `exec`.
+    # raise-on-error contract + auto-routing as `exec`.
     def exec_params(sql, params)
       Pg.tep_pg_param_clear
       i = 0
@@ -362,7 +383,7 @@ module PG
       Pg.tep_pg_set_nonblocking(@pgh, 1)
       ok = Pg.tep_pg_send_query(@pgh, sql)
       if ok != 1
-        return Connection.make_send_failure_result(self)
+        Connection.raise_send_failure(self)
       end
       Connection.drain_send(@pgh)
       Connection.wait_for_result_ready(@pgh)
@@ -401,7 +422,7 @@ module PG
       Pg.tep_pg_set_nonblocking(@pgh, 1)
       ok = Pg.tep_pg_send_query_params(@pgh, sql)
       if ok != 1
-        return Connection.make_send_failure_result(self)
+        Connection.raise_send_failure(self)
       end
       Connection.drain_send(@pgh)
       Connection.wait_for_result_ready(@pgh)
@@ -453,15 +474,17 @@ module PG
 
     # --- Internal helpers for the async loop ---
 
-    # PQsendQuery returned 0 (immediate failure -- bad SQL syntax
-    # at the libpq level, conn already closed, etc.). Mirror the
-    # error onto the conn's last_* and return a "synthetic"
-    # Result-with-rh=-1 so the same Result-shape contract holds.
-    def self.make_send_failure_result(conn)
+    # PQsendQuery returned 0 (immediate failure -- conn already
+    # closed, send buffer error, etc.). Mirror the error onto the
+    # conn's last_* and raise, matching the exec error path (ruby-pg
+    # surfaces a send failure as PG::UnableToSend < PG::Error). No
+    # SQLSTATE is available pre-result, so this maps to the transport
+    # leaf rather than going through raise_for_sqlstate.
+    def self.raise_send_failure(conn)
       conn.last_sqlstate = ""
       conn.last_error_message = conn.error_message
       conn.last_result_rh = -1
-      PG::Result.new(-1)
+      raise PG::UnableToSend, conn.error_message
     end
 
     # Drain libpq's send buffer. PQflush returns 0 when done; 1
@@ -569,7 +592,18 @@ module PG
       end
       conn.last_sqlstate = sqlstate
       conn.last_error_message = msg
-      conn.last_result_rh = r.rh
+      # Free the failed PGresult NOW: once we raise out of
+      # exec/exec_params the caller's `r.clear` never runs, so this is
+      # the only chance to release it. The SQLSTATE / message are
+      # already copied onto conn.last_* (Strings) for post-rescue
+      # inspection, so dropping the handle loses nothing callers need.
+      conn.last_result_rh = -1
+      r.clear
+      # ruby-pg / AR parity: raise the SQLSTATE-mapped PG::Error
+      # subclass (live since matz/spinel#627 + #1041 -- namespaced
+      # raise + hierarchy-walking rescue). Callers `rescue
+      # PG::UniqueViolation` (leaf) or `rescue PG::Error` (base).
+      PG.raise_for_sqlstate(sqlstate, msg)
       0
     end
   end
@@ -835,6 +869,71 @@ module PG
   # methods became viable with matz/spinel#1041; before that, checkout
   # surfaced exhaustion as a sentinel nil-equivalent Connection.)
   class PoolExhausted          < Error; end
+
+  # Raise the PG::Error subclass mapped from a 5-char SQLSTATE.
+  # Connection#exec / #exec_params call this (via record_error_if_any)
+  # so a failed query surfaces as a typed exception -- the ruby-pg / AR
+  # shape, where the adapter does `rescue PG::UniqueViolation` /
+  # `e.is_a?(PG::UndefinedTable)`. An unmapped SQLSTATE falls through to
+  # PG::ServerError, so `rescue PG::Error` still catches every server
+  # error. The mapping is the SQLSTATE-keyed subset the leaf classes
+  # cover (AR-coverage); add a leaf + an arm here together.
+  #
+  # Literal-class dispatch (one `raise PG::Klass` per arm) rather than
+  # `raise klass_var` -- raising a Class held in a local doesn't lower
+  # under spinel; the constant-path raise is what matz/spinel#1041 made
+  # work.
+  def self.raise_for_sqlstate(state, msg)
+    # 23 -- integrity constraint violation
+    if state == "23502"
+      raise PG::NotNullViolation, msg
+    elsif state == "23503"
+      raise PG::ForeignKeyViolation, msg
+    elsif state == "23505"
+      raise PG::UniqueViolation, msg
+    elsif state == "23514"
+      raise PG::CheckViolation, msg
+    elsif state == "23P01"
+      raise PG::ExclusionViolation, msg
+    # 25 -- invalid transaction state
+    elsif state == "25P02"
+      raise PG::InFailedSqlTransaction, msg
+    elsif state == "25006"
+      raise PG::ReadOnlySqlTransaction, msg
+    # 40 -- transaction rollback
+    elsif state == "40001"
+      raise PG::SerializationFailure, msg
+    elsif state == "40P01"
+      raise PG::DeadlockDetected, msg
+    # 42 -- syntax / access rule violation
+    elsif state == "42601"
+      raise PG::SyntaxError, msg
+    elsif state == "42703"
+      raise PG::UndefinedColumn, msg
+    elsif state == "42883"
+      raise PG::UndefinedFunction, msg
+    elsif state == "42P01"
+      raise PG::UndefinedTable, msg
+    elsif state == "42701"
+      raise PG::DuplicateColumn, msg
+    elsif state == "42P07"
+      raise PG::DuplicateTable, msg
+    elsif state == "42501"
+      raise PG::InsufficientPrivilege, msg
+    # 57 -- operator intervention
+    elsif state == "57014"
+      raise PG::QueryCanceled, msg
+    elsif state == "57P01"
+      raise PG::AdminShutdown, msg
+    # 08 -- connection exception
+    elsif state == "08000"
+      raise PG::ConnectionException, msg
+    elsif state == "08003"
+      raise PG::ConnectionDoesNotExist, msg
+    else
+      raise PG::ServerError, msg
+    end
+  end
 
   # -------- Connection pool --------
   #
