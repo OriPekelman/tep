@@ -42,7 +42,7 @@ module Tep
            c == "_" || c == "~"
           out = out + c
         else
-          b = c.bytes[0]
+          b = c.getbyte(0)
           hi = b / 16
           lo = b % 16
           out = out + "%" + Url.hex_char(hi) + Url.hex_char(lo)
@@ -54,20 +54,20 @@ module Tep
 
     def self.hex_char(n)
       if n < 10
-        return ("0".bytes[0] + n).chr
+        return ("0".getbyte(0) + n).chr
       end
-      ("A".bytes[0] + n - 10).chr
+      ("A".getbyte(0) + n - 10).chr
     end
 
     def self.hex_nibble(c)
       if c >= "0" && c <= "9"
-        return c.bytes[0] - "0".bytes[0]
+        return c.getbyte(0) - "0".getbyte(0)
       end
       if c >= "a" && c <= "f"
-        return c.bytes[0] - "a".bytes[0] + 10
+        return c.getbyte(0) - "a".getbyte(0) + 10
       end
       if c >= "A" && c <= "F"
-        return c.bytes[0] - "A".bytes[0] + 10
+        return c.getbyte(0) - "A".getbyte(0) + 10
       end
       -1
     end

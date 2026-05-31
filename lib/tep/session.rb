@@ -77,8 +77,20 @@ module Tep
     end
     diff = 0
     i = 0
-    while i < a.length
-      diff = diff | (a.bytes[i] ^ b.bytes[i])
+    n = a.length
+    while i < n
+      # getbyte(i), NOT bytes[i]: `String#bytes` allocates a fresh
+      # array on EVERY iteration (O(n^2) garbage). Besides being slow,
+      # that allocation storm drives the GC hard enough to free `b` --
+      # the HMAC string returned from the Crypto FFI call, held only in
+      # an argument local -- mid-loop, so a valid cookie fails its
+      # signature check ~5% of the time under load (a #1052-family
+      # heap-local rooting gap in spinel, open on master cc94707; the
+      # real fix is upstream, tracked at tep#157). getbyte allocates
+      # nothing, removing the dominant GC trigger here (cuts the flake
+      # ~3x); the residual lives at other unrooted-local sites in the
+      # decode path and clears only when spinel roots heap locals.
+      diff = diff | (a.getbyte(i) ^ b.getbyte(i))
       i += 1
     end
     diff == 0

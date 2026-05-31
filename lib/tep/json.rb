@@ -73,9 +73,9 @@ module Tep
         elsif c == "\f"
           out = out + "\\f"
         elsif c < " "
-          # Other control byte -- emit \u00XX. c.bytes[0] is the
+          # Other control byte -- emit \u00XX. c.getbyte(0) is the
           # raw byte value, mapped to two hex digits.
-          b = c.bytes[0]
+          b = c.getbyte(0)
           out = out + "\\u00" + Json.hex2(b)
         else
           out = out + c
@@ -454,13 +454,13 @@ module Tep
 
     def self.hex_nibble(c)
       if c >= "0" && c <= "9"
-        return c.bytes[0] - "0".bytes[0]
+        return c.getbyte(0) - "0".getbyte(0)
       end
       if c >= "a" && c <= "f"
-        return c.bytes[0] - "a".bytes[0] + 10
+        return c.getbyte(0) - "a".getbyte(0) + 10
       end
       if c >= "A" && c <= "F"
-        return c.bytes[0] - "A".bytes[0] + 10
+        return c.getbyte(0) - "A".getbyte(0) + 10
       end
       -1
     end
@@ -506,7 +506,7 @@ module Tep
       while pos < s.length
         c = s[pos]
         if c >= "0" && c <= "9"
-          n = n * 10 + (c.bytes[0] - "0".bytes[0])
+          n = n * 10 + (c.getbyte(0) - "0".getbyte(0))
           saw_digit = true
           pos += 1
         else

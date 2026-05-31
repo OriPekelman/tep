@@ -113,7 +113,11 @@ module Tep
       i = 0
       n = a.length
       while i < n
-        diff = diff | (a.bytes[i] ^ b.bytes[i])
+        # getbyte(i), NOT bytes[i] -- the same O(n^2)-allocation +
+        # GC-pressure hazard fixed in Tep::Session.timing_safe_eq
+        # (allocation storm can free the FFI-returned signature local
+        # mid-compare; #1052-family spinel rooting gap, see tep#157).
+        diff = diff | (a.getbyte(i) ^ b.getbyte(i))
         i += 1
       end
       diff == 0
