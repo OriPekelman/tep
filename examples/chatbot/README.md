@@ -32,7 +32,7 @@ Three backends interchangeable via env var:
 # Ollama (default)
 CHAT_BACKEND=http://localhost:11434 CHAT_MODEL=llama3 /tmp/chatbot
 
-# toy/tep_demo/openai_api (sibling project's GPT-2 / DistilGPT2 server)
+# toy serve (sibling project's OpenAI-compatible server)
 CHAT_BACKEND=http://localhost:8080 CHAT_MODEL=gpt-2 /tmp/chatbot
 
 # OpenAI proper

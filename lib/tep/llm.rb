@@ -7,7 +7,7 @@
 # {model, messages:[{role,content}...]} -- whether the backend is
 # Ollama, OpenAI proper, vLLM, Anthropic-via-litellm, or tep's
 # sibling project [toy](https://github.com/OriPekelman/toy)'s
-# tep_demo/openai_api.rb. Hand-rolling that JSON + the parse for
+# `toy serve` (lib/toy/serve/openai/). Hand-rolling that JSON + the parse for
 # every app is twenty lines of awkward escape-handling each time.
 # `Tep::Llm` is the Faraday-shape one-call client; backends are
 # config, not code.
@@ -39,7 +39,7 @@
 #
 # Three backends interchangeable via base_url:
 #   "http://localhost:11434" -- Ollama (default)
-#   "http://localhost:8080"  -- toy/tep_demo/openai_api
+#   "http://localhost:8080"  -- toy serve (toy's OpenAI server)
 #   "https://api.openai.com" -- OpenAI proper (needs api_key)
 module Tep
   class Llm

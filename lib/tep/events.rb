@@ -2,10 +2,11 @@
 #
 # Appends newline-delimited JSON (JSONL) in the toy/v1 envelope
 # (`docs/events-schema.md` in the toy project): one `run_start` at
-# boot, one `inference` per served request, one `run_end` at
-# shutdown. The serving stream is structurally indistinguishable
-# from a training stream, so a single downstream ingest (the
-# research-lab orchestrator) consumes both.
+# boot, one serving event (`kind:"eval"`, `phase:"serve"`,
+# `name:"request"`) per served request, one `run_end` at shutdown.
+# The serving stream is structurally indistinguishable from a
+# training stream, so a single downstream ingest (the research-lab
+# orchestrator) consumes both.
 #
 # Standalone on purpose: any tep handler can emit (the chatbot's
 # existing OpenAI-compat endpoint, a future Tep::Llm::OpenAI::Server,
@@ -23,12 +24,15 @@
 #   # ... at shutdown:
 #   EVENTS.run_end("ok")
 #
-# Schema choice (was #79): per-request telemetry is `kind:"inference",
-# phase:"serve"` -- a distinct kind, NOT an overload of toy/v1's
-# `eval` (reserved for held-out training evaluation: loss/ppl/
-# samples). tao's recommendation; a served completion shares none of
-# eval's defining fields, and overloading `eval` would break tao's
-# ingest (which keys the "final eval" on `kind` alone).
+# Schema (supersedes #79): per-request serving telemetry is
+# `kind:"eval", phase:"serve", name:"request"`. The original #79
+# decision used a distinct `kind:"inference"` to avoid overloading
+# toy/v1's `eval` (held-out training evaluation: loss/ppl/samples);
+# that disambiguator moved onto `phase`/`name` instead -- a served
+# completion is `eval`+`phase:"serve"`+`name:"request"`, training eval
+# is `eval`+`phase:"eval"`, so tao keys on the (kind, phase, name)
+# triple rather than `kind` alone. `inference` is retired. See
+# `#inference` below for the emitted shape.
 #
 # Integer-only number fields by design (a tep choice, NOT a spinel
 # constraint -- spinel supports Float fully; this module deliberately

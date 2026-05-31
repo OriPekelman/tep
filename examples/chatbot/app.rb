@@ -2,8 +2,9 @@
 # OpenAI-compatible chat backend.
 #
 # Talks to Ollama / OpenAI / [toy](https://github.com/OriPekelman/toy)'s
-# tep_demo/openai_api.rb via a uniform wire protocol. Single-user,
-# first-boot password setup, conversation persistence in SQLite.
+# `toy serve` (its OpenAI-compatible server, lib/toy/serve/openai/) via
+# a uniform wire protocol. Single-user, first-boot password setup,
+# conversation persistence in SQLite.
 #
 # Distinct from examples/chat/ -- that one is a multi-user SSE chat
 # (people talking to people). This one is a user-to-LLM chatbot.
@@ -21,7 +22,7 @@
 # -----------------
 # `CHAT_BACKEND` env var sets the LLM base_url. Defaults to Ollama
 # on localhost:11434. Other values:
-#   - http://localhost:8080  (toy/tep_demo/openai_api)
+#   - http://localhost:8080  (toy serve -- toy's OpenAI server)
 #   - https://api.openai.com (real OpenAI; needs CHAT_API_KEY)
 #
 # `CHAT_MODEL` picks the model. Default is "llama3" for Ollama.
