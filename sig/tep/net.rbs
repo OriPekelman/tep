@@ -1,0 +1,97 @@
+# Low-level FFI binding modules over sphttp.c (Sock) and the crypto
+# shim (Crypto). Unlike the Pg / Sqlite batteries these have no Ruby
+# wrapper class -- callers (tep's server, websocket, auth, jwt,
+# password, events) use the module methods directly, so the FFI
+# surface IS the public surface. Each method is a thin 1:1 over the C
+# signature; `:int` -> Integer, `:str` -> String. Buffer-returning
+# reads pair a `*_buf` (String) accessor with a `*_len` (Integer).
+module Sock
+  # Listen / accept (blocking + non-blocking).
+  def self.sphttp_listen: (Integer port, Integer backlog) -> Integer
+  def self.sphttp_accept: (Integer sfd) -> Integer
+  def self.sphttp_accept_nb: (Integer sfd) -> Integer
+  def self.sphttp_read_request: (Integer fd) -> Integer
+  def self.sphttp_request_buf: () -> String
+  def self.sphttp_request_len: () -> Integer
+  def self.sphttp_drain_body: (Integer fd, Integer remaining) -> String
+  def self.sphttp_write_str: (Integer fd, String s) -> Integer
+  def self.sphttp_write_bytes: (Integer fd, String s, Integer n) -> Integer
+
+  # WebSocket frame recv (buffer + length accessor pair).
+  def self.sphttp_recv_into_frame: (Integer fd) -> Integer
+  def self.sphttp_recv_frame_buf: () -> String
+  def self.sphttp_recv_frame_len: () -> Integer
+
+  # Process lifecycle / signals.
+  def self.sphttp_install_term_handlers: () -> Integer
+  def self.sphttp_shutdown_requested: () -> Integer
+  def self.sphttp_sleep_ms: (Integer ms) -> Integer
+
+  # Upstream connection pool (proxy keep-alive).
+  def self.sphttp_pool_checkout: (String key, Integer port) -> Integer
+  def self.sphttp_pool_checkin: (Integer fd, String key, Integer port) -> Integer
+  def self.sphttp_pool_close_idle: (Integer max_age_ms) -> Integer
+  def self.sphttp_pool_stat_checkouts: () -> Integer
+  def self.sphttp_pool_stat_checkins: () -> Integer
+  def self.sphttp_pool_stat_hits: () -> Integer
+  def self.sphttp_pool_stat_misses: () -> Integer
+
+  # Host / arch identity.
+  def self.sphttp_os_kind: () -> String
+  def self.sphttp_arch_kind: () -> String
+
+  # Time formatting / parsing (epoch-second basis).
+  def self.sphttp_iso8601_utc: (Integer epoch) -> String
+  def self.sphttp_http_date: (Integer epoch) -> String
+  def self.sphttp_parse_http_date: (String s) -> Integer
+
+  # Files / fork / chunked writes.
+  def self.sphttp_sendfile: (Integer fd, String path) -> Integer
+  def self.sphttp_filesize: (String path) -> Integer
+  def self.sphttp_file_mtime: (String path) -> Integer
+  def self.sphttp_close: (Integer fd) -> Integer
+  def self.sphttp_fork: () -> Integer
+  def self.sphttp_exit: (Integer code) -> Integer
+  def self.sphttp_getpid: () -> Integer
+  def self.sphttp_wait_any: () -> Integer
+  def self.sphttp_write_chunk: (Integer fd, String s) -> Integer
+  def self.sphttp_write_chunk_end: (Integer fd) -> Integer
+
+  # Poll / non-block helpers (the cooperative scheduler's io_wait).
+  def self.sphttp_poll_reset: () -> Integer
+  def self.sphttp_poll_add: (Integer fd, Integer events) -> Integer
+  def self.sphttp_poll_run: (Integer timeout_ms) -> Integer
+  def self.sphttp_poll_ready: (Integer idx) -> Integer
+  def self.sphttp_set_nonblock: (Integer fd) -> Integer
+  def self.sphttp_set_recv_timeout: (Integer fd, Integer ms) -> Integer
+
+  # Outbound connect (plain + TLS) and reads.
+  def self.sphttp_connect: (String host, Integer port) -> Integer
+  def self.sphttp_connect_tls: (String host, Integer port) -> Integer
+  def self.sphttp_tls_server_init: (String cert_path, String key_path) -> Integer
+  def self.sphttp_accept_tls: (Integer sfd) -> Integer
+
+  # Non-blocking TLS handshake stepping (scheduled server).
+  def self.sphttp_tls_connect_start: (String host, Integer port) -> Integer
+  def self.sphttp_tls_accept_start: (Integer fd) -> Integer
+  def self.sphttp_tls_handshake_step: (Integer fd) -> Integer
+  def self.sphttp_io_status: () -> Integer
+  def self.sphttp_recv_some: (Integer fd, Integer max) -> String
+  def self.sphttp_recv_all: (Integer fd, Integer max) -> String
+
+  # Subprocess capture (Tep::Shell).
+  def self.sphttp_shell_capture: (String cmd, Integer max_bytes) -> String
+end
+
+# HMAC / base64url / PBKDF2 / SHA helpers backing auth, jwt, password,
+# and the websocket handshake.
+module Crypto
+  def self.sp_crypto_hmac_sha256_hex: (String key, String msg) -> String
+  def self.sp_crypto_hmac_sha256_b64url: (String key, String msg) -> String
+  def self.sp_crypto_b64url_encode: (String s) -> String
+  def self.sp_crypto_b64url_decode: (String s) -> String
+  def self.sp_crypto_pbkdf2_sha256_b64url: (String password, String salt, Integer iterations) -> String
+  def self.sp_crypto_random_b64url: (Integer nbytes) -> String
+  def self.sp_crypto_sha1_hex: (String s) -> String
+  def self.sp_crypto_websocket_accept: (String key) -> String
+end

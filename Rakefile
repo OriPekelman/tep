@@ -24,7 +24,20 @@ namespace :rbs do
     # (parser, generics arity, reference resolution within the loaded
     # set). It does NOT cross-check .rb against .rbs -- that's Steep's
     # job, deferred until the surface stabilises.
-    sh "rbs --repo sig -I sig validate"
+    #
+    # Resolve the rbs CLI from the gem itself rather than assuming it's
+    # on PATH. Under `bundle exec` (CI) the bundled rbs is on PATH; on a
+    # bare host (e.g. a distro ruby on gx10 where the gem's bin dir
+    # isn't exported) it is NOT, and a plain `sh "rbs ..."` fails with
+    # 127. Gem.bin_path locates the executable in both setups, and we
+    # run it through the current ruby so the shebang/PATH don't matter.
+    args = ["--repo", "sig", "-I", "sig", "validate"]
+    begin
+      sh RbConfig.ruby, Gem.bin_path("rbs", "rbs"), *args
+    rescue Gem::Exception
+      # rbs not installed as a gem; last resort is a bare PATH lookup.
+      sh "rbs", *args
+    end
   end
 end
 

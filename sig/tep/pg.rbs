@@ -1,0 +1,236 @@
+# PG battery -- a libpq wrapper that mirrors the ruby-pg gem's public
+# surface (PG::Connection / PG::Result / PG::Error + SQLSTATE-keyed
+# subclasses) so an eventual ActiveRecord-on-spinel port reuses the
+# existing AR pg adapter with minimal divergence. The raw FFI binding
+# layer (`module Pg`) is internal and intentionally undocumented here;
+# callers use the `PG` surface below.
+module PG
+  # Connection status (libpq's ConnStatusType, collapsed).
+  CONNECTION_OK: Integer
+  CONNECTION_BAD: Integer
+
+  # Transaction status (libpq's PGTransactionStatusType).
+  PQTRANS_IDLE: Integer
+  PQTRANS_ACTIVE: Integer
+  PQTRANS_INTRANS: Integer
+  PQTRANS_INERROR: Integer
+  PQTRANS_UNKNOWN: Integer
+
+  # Diagnostic field codes for Result#error_field (libpq single-char
+  # codes exposed as integers).
+  DIAG_SEVERITY: Integer
+  DIAG_SQLSTATE: Integer
+  DIAG_MESSAGE_PRIMARY: Integer
+  DIAG_MESSAGE_DETAIL: Integer
+  DIAG_MESSAGE_HINT: Integer
+  DIAG_STATEMENT_POSITION: Integer
+  DIAG_CONTEXT: Integer
+  DIAG_SCHEMA_NAME: Integer
+  DIAG_TABLE_NAME: Integer
+  DIAG_COLUMN_NAME: Integer
+  DIAG_DATATYPE_NAME: Integer
+  DIAG_CONSTRAINT_NAME: Integer
+
+  # Convenience constructor matching ruby-pg's PG.connect. `opts` is a
+  # libpq conninfo String ("postgresql://...") or a String=>String Hash.
+  def self.connect: (String | Hash[String, String] opts) -> PG::Connection
+
+  # libpq version string ("16.2.0" ...). Diagnostic / banner use.
+  def self.libpq_version: () -> String
+
+  class Connection
+    # `:pgh` rather than `:handle` to avoid the poly-dispatch collision
+    # with Tep::Handler#handle (same-named-imeth unifier).
+    attr_accessor pgh: Integer
+    # Error context for the most recent exception raised by this
+    # connection -- spinel's `raise X.new(msg, ...)` lowering doesn't
+    # carry custom initializers (#622), so SQLSTATE / message / result
+    # handle live here. Read after `rescue PG::Error => e`.
+    attr_accessor last_sqlstate: String
+    attr_accessor last_error_message: String
+    attr_accessor last_result_rh: Integer
+
+    def initialize: (String | Hash[String, String] opts) -> void
+
+    def connected?: () -> bool
+    def close: () -> Integer
+    def finish: () -> Integer
+    def reset: () -> Connection
+    def status: () -> Integer
+    def transaction_status: () -> Integer
+    def server_version: () -> Integer
+    def error_message: () -> String
+
+    # LISTEN / NOTIFY (Battery 2 cross-worker pub/sub). Channel names
+    # must be safe SQL identifiers. Each returns -1 on a dead connection.
+    def listen: (String channel) -> Integer
+    def unlisten: (String channel) -> Integer
+    def notify: (String channel, String payload) -> Integer
+    # 1 = notification received (then read #last_notify_*), 0 = timeout,
+    # -1 = connection error.
+    def poll_notification: (Integer timeout_ms) -> Integer
+    def last_notify_channel: () -> String
+    def last_notify_payload: () -> String
+
+    # Returns a Result. On error the Result's #ok? is false and SQLSTATE
+    # / message mirror to #last_sqlstate / #last_error_message. Routes
+    # through the libpq async surface under Tep::Server::Scheduled.
+    def exec: (String sql) -> Result
+    # `params` is an Array of String / Integer / nil (positional $1..$N).
+    def exec_params: (String sql, Array[String | Integer | nil] params) -> Result
+    # Explicit async variants -- always use the libpq non-blocking path.
+    def async_exec: (String sql) -> Result
+    def async_exec_params: (String sql, Array[String | Integer | nil] params) -> Result
+
+    def escape_string: (String s) -> String
+    def escape_identifier: (String s) -> String
+    def escape_literal: (String s) -> String
+    def self.escape_string: (String s) -> String
+    def self.quote_ident: (String s) -> String
+  end
+
+  class Result
+    attr_accessor rh: Integer
+    def initialize: (Integer rh) -> void
+
+    def status: () -> Integer
+    # True when the query produced a non-error result (rows, command
+    # success, or empty query).
+    def ok?: () -> bool
+    def error_message: () -> String
+    def error_field: (Integer code) -> String
+    def cmd_status: () -> String
+    # 5-char SQLSTATE string; "" when the result isn't an error.
+    def sql_state: () -> String
+    def cmd_tuples: () -> Integer
+
+    def ntuples: () -> Integer
+    def nfields: () -> Integer
+    # ruby-pg aliases for ntuples / nfields.
+    def num_tuples: () -> Integer
+    def num_fields: () -> Integer
+
+    def fname: (Integer col) -> String
+    def fnumber: (String name) -> Integer
+    def ftype: (Integer col) -> Integer
+    def fformat: (Integer col) -> Integer
+    def fmod: (Integer col) -> Integer
+
+    def getvalue: (Integer row, Integer col) -> String
+    def getisnull: (Integer row, Integer col) -> bool
+    def getlength: (Integer row, Integer col) -> Integer
+    # ruby-pg alias for getvalue.
+    def value: (Integer row, Integer col) -> String
+
+    def fields: () -> Array[String]
+    def values: () -> Array[Array[String]]
+    def column_values: (Integer col) -> Array[String]
+
+    # Array-yielding iteration (no per-row Hash allocation).
+    def each_row: () { (Array[String]) -> void } -> Result
+    # Hash-yielding iteration -- matches ruby-pg's #each.
+    def each: () { (Hash[String, String]) -> void } -> Result
+    def clear: () -> Integer
+  end
+
+  # Exception hierarchy -- ruby-pg-shape, SQLSTATE-keyed. AR's pg
+  # adapter does `e.is_a?(PG::UniqueViolation)` to translate libpq
+  # errors; the class identity has to match. Raised via the two-arg
+  # `raise PG::Klass, msg` form; per-exception SQLSTATE / message
+  # context lives on the owning Connection (see Connection#last_*).
+  class Error < StandardError
+  end
+
+  class ConnectionBad < Error
+  end
+  class UnableToSend < Error
+  end
+  class ServerError < Error
+  end
+
+  # SQLSTATE class 23 -- integrity constraint violation
+  class IntegrityConstraintViolation < ServerError
+  end
+  class NotNullViolation < IntegrityConstraintViolation
+  end
+  class ForeignKeyViolation < IntegrityConstraintViolation
+  end
+  class UniqueViolation < IntegrityConstraintViolation
+  end
+  class CheckViolation < IntegrityConstraintViolation
+  end
+  class ExclusionViolation < IntegrityConstraintViolation
+  end
+
+  # SQLSTATE class 25 -- invalid transaction state
+  class InFailedSqlTransaction < ServerError
+  end
+  class ReadOnlySqlTransaction < ServerError
+  end
+
+  # SQLSTATE class 40 -- transaction rollback
+  class SerializationFailure < ServerError
+  end
+  class DeadlockDetected < ServerError
+  end
+
+  # SQLSTATE class 42 -- syntax / access rule violation
+  class SyntaxError < ServerError
+  end
+  class UndefinedColumn < ServerError
+  end
+  class UndefinedFunction < ServerError
+  end
+  class UndefinedTable < ServerError
+  end
+  class DuplicateColumn < ServerError
+  end
+  class DuplicateTable < ServerError
+  end
+  class InsufficientPrivilege < ServerError
+  end
+
+  # SQLSTATE class 57 -- operator intervention
+  class QueryCanceled < ServerError
+  end
+  class AdminShutdown < ServerError
+  end
+
+  # SQLSTATE class 08 -- connection exception
+  class ConnectionException < ServerError
+  end
+  class ConnectionDoesNotExist < ServerError
+  end
+
+  # Pool-side error (no SQLSTATE): raised by PG::Pool#checkout on
+  # checkout-timeout. `rescue PG::PoolExhausted` or the broader
+  # `rescue PG::Error` both catch it.
+  class PoolExhausted < Error
+  end
+
+  # Fixed-size connection pool. Holds N pre-opened connections, hands
+  # them out via #checkout / takes them back via #checkin, parks
+  # cooperatively under Tep::Server::Scheduled when the free list is
+  # empty. The block-form `with { |c| ... }` is deferred until spinel
+  # lights up instance-method typed yields (matz/spinel#628).
+  class Pool
+    attr_accessor url: String
+    attr_accessor size: Integer
+    attr_accessor free: Array[PG::Connection]
+    attr_accessor waiter_idxs: Array[Integer]
+    attr_accessor checkout_timeout_ms: Integer
+
+    def initialize: (String url, Integer size) -> void
+
+    # True iff every pooled connection opened successfully.
+    def healthy?: () -> bool
+    def set_checkout_timeout_ms: (Integer ms) -> Integer
+    # Acquire a connection. Raises PG::PoolExhausted past the timeout
+    # (non-scheduled callers); the scheduled path parks until a checkin.
+    def checkout: () -> PG::Connection
+    def checkin: (PG::Connection c) -> Integer
+    # Diagnostic: how many connections are currently available.
+    def available: () -> Integer
+    def close_all: () -> Integer
+  end
+end

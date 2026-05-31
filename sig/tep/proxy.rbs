@@ -1,0 +1,123 @@
+# Tep::Proxy -- a reverse-proxy / API-gateway Handler. Subclass and
+# override the hooks (or use the bin/tep block-DSL) to route, rewrite,
+# retry, transform, and stream. The buffered path runs
+# before_forward / after_forward; opting into streaming via
+# stream_request? switches to the on_stream_chunk / on_stream_end
+# pumping path. Hooks receive object wrappers (StreamChunk /
+# StreamStats / UpstreamRequest) rather than bare primitives so they
+# survive spinel's poly-receiver dispatch as typed pointers
+# (see [[spinel-widening-dispatch]]).
+module Tep
+  class Proxy < Tep::Handler
+    attr_accessor upstream: String
+    attr_accessor timeout: Integer
+    # Body-size caps (chunk 6.6). Request over the cap -> 413 before
+    # any upstream call; response over the cap -> 502. 0 disables a cap.
+    attr_accessor max_request_body_bytes: Integer
+    attr_accessor max_response_body_bytes: Integer
+
+    def initialize: (String upstream) -> void
+
+    # ---- Overridable hooks ----
+
+    # Per-request retry policy. Default: a fresh RetryPolicy (1 attempt,
+    # no retry). Only the buffered path consults it; streaming never
+    # retries.
+    def retry_policy: (Tep::Request req) -> Tep::Proxy::RetryPolicy
+    # Per-request upstream selection. Default: @upstream. Return a
+    # scheme://host:port (+ optional fixed prefix), NOT the request path.
+    def pick_upstream: (Tep::Request req) -> String
+    # Map inbound path+query to the upstream path+query. Default: verbatim.
+    def rewrite_path: (String path) -> String
+    # Pre-forward hook. Mutate `ureq`; return true to short-circuit
+    # (skip the upstream call and send `res`), false to forward.
+    def before_forward: (Tep::Request req, Tep::Response res, Tep::Proxy::UpstreamRequest ureq) -> bool
+    # Post-forward hook (runs on the short-circuit path too). `ures` is
+    # the upstream response (status 0 + empty body on connect failure).
+    def after_forward: (Tep::Request req, Tep::Http::Response ures, Tep::Response res) -> Integer
+    # Streaming opt-in predicate. Default: false (buffered).
+    def stream_request?: (Tep::Request req) -> bool
+    # Per-chunk streaming hook. Default: pass `chunk.chunk_text` through.
+    def on_stream_chunk: (Tep::Proxy::StreamChunk chunk, Tep::Stream out, Tep::Proxy::StreamStats stats) -> Integer
+    # End-of-stream finalizer (fires once; stats.errored distinguishes
+    # clean vs error close). Default: no-op.
+    def on_stream_end: (Tep::Request req, Tep::Stream out, Tep::Proxy::StreamStats stats) -> Integer
+
+    # ---- Tep::Handler interface ----
+    def handle: (Tep::Request req, Tep::Response res) -> Integer
+
+    # Per-request retry configuration. base_backoff_ms grows by
+    # backoff_multiplier each attempt; retriable? treats status 0
+    # (connect/send failure) plus retry_on_status as retriable.
+    class RetryPolicy
+      attr_accessor max_attempts: Integer
+      attr_accessor base_backoff_ms: Integer
+      attr_accessor backoff_multiplier: Integer
+      attr_accessor retry_on_status: Array[Integer]
+
+      def initialize: () -> void
+      # Float-seconds convenience setter (0.5 -> 500ms); stored as int ms.
+      def base_backoff_secs=: (Float f) -> Float
+      def base_backoff_secs: () -> Float
+      # Milliseconds to sleep before attempt N (0-indexed). 0 when base is 0.
+      def backoff_for: (Integer attempt) -> Integer
+      def retriable?: (Integer status) -> bool
+    end
+
+    # Mutable upstream request, pre-filled from the inbound request with
+    # hop-by-hop headers stripped. Passed to before_forward.
+    class UpstreamRequest
+      attr_accessor verb: String
+      attr_accessor path: String
+      attr_accessor headers: Hash[String, String]
+      attr_accessor body: String
+      def initialize: () -> void
+      def set_header: (String k, String v) -> String
+    end
+
+    # Parsed upstream response head, produced by read_upstream_head.
+    class UpstreamHead
+      attr_accessor status: Integer
+      attr_accessor headers: Hash[String, String]
+      attr_accessor is_chunked: bool
+      attr_accessor is_sse: bool
+      attr_accessor leftover: String
+      attr_accessor ok: bool
+      def initialize: () -> void
+      # Parse a header blob (no trailing blank line) into the fields above.
+      def fill_from: (String blob) -> Integer
+    end
+
+    # One streamed body unit handed to on_stream_chunk. Read bytes via
+    # #chunk_text (a bare String arg would arrive poly under dispatch).
+    class StreamChunk
+      attr_accessor chunk_text: String
+      def initialize: (String chunk_text) -> void
+    end
+
+    # Per-stream counters carried across on_stream_chunk / on_stream_end.
+    # The framework maintains byte_count / chunk_count; accumulate your
+    # own counters in meta_bag.
+    class StreamStats
+      attr_accessor byte_count: Integer
+      attr_accessor chunk_count: Integer
+      attr_accessor errored: bool
+      attr_accessor meta_bag: Hash[String, String]
+      def initialize: () -> void
+    end
+
+    # Thin Streamer shim holding the held-open upstream fd + state;
+    # delegates the pump to Proxy#run_stream via polymorphic self so
+    # subclass hooks dispatch.
+    class ProxyStreamer < Tep::Streamer
+      attr_accessor proxy: Tep::Proxy
+      attr_accessor fd: Integer
+      attr_accessor leftover: String
+      attr_accessor is_chunked: bool
+      attr_accessor is_sse: bool
+      attr_accessor req: Tep::Request
+      def initialize: () -> void
+      def pump: (Tep::Stream out) -> Integer
+    end
+  end
+end

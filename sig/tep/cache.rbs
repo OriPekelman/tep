@@ -1,0 +1,13 @@
+# Tep::Cache -- HTTP conditional-GET evaluation (issue #152).
+#
+# A response opts in by setting a validator (res.etag / res.last_modified).
+# The server short-circuits to 304 Not Modified when the request carries
+# a matching precondition. Responses that set no validator are unaffected.
+module Tep
+  module Cache
+    # True iff `req`'s precondition says the client's cached copy of
+    # `res` is still fresh (=> answer 304). Safe methods (GET/HEAD) only;
+    # returns false for any other verb.
+    def self.not_modified?: (Tep::Request req, Tep::Response res) -> bool
+  end
+end

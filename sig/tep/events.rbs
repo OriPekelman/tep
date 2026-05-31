@@ -1,0 +1,32 @@
+# Tep::Events -- newline-delimited JSON (JSONL) run/telemetry emitter.
+# A "" path disables emission (zero I/O, zero alloc). Timestamps are
+# ISO-8601 UTC via Sock.sphttp_iso8601_utc (spinel's Time.now exposes
+# only integer epoch seconds). All emit methods return an Integer
+# (0 / a count); they're no-ops when disabled.
+module Tep
+  class Events
+    # `path` of "" disables emission.
+    def initialize: (String path) -> void
+
+    # True when a non-empty path was configured.
+    def enabled?: () -> bool
+
+    # Emit `run_start` once, before any request. host / backend_kind /
+    # model_name / model_path are plain strings; config_json is a
+    # caller-built JSON object emitted verbatim.
+    def run_start: (String host, String backend_kind, String model_name, String model_path, String config_json) -> Integer
+
+    # Per-inference record. extra_json is caller-built JSON (e.g. the
+    # sampling block, including any Float fields) emitted verbatim.
+    def inference: (String model, Integer prompt_tokens, Integer completion_tokens, Integer wall_us, String extra_json) -> Integer
+
+    # Bump the run-level error counter (surfaced in run_end_aggregated).
+    def record_error: () -> Integer
+
+    # Emit a `run_end` record with the given reason.
+    def run_end: (String reason) -> Integer
+    # Emit a `run_end` carrying aggregated counters (requests, errors,
+    # output tokens) accumulated over the run.
+    def run_end_aggregated: (String reason) -> Integer
+  end
+end

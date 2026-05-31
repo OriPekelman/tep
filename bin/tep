@@ -1358,9 +1358,21 @@ def handle_top_call(node, routes, websockets, mcp_tools, mcp_resources, filters,
       first = args.first
       if first.is_a?(Prism::StringNode)
         path = first.unescaped
-        if path != "tep" && !path.start_with?("tep/")
-          base = input_path ? File.dirname(input_path) : Dir.pwd
-          cand = File.expand_path(path.end_with?(".rb") ? path : path + ".rb", base)
+        base = input_path ? File.dirname(input_path) : Dir.pwd
+        cand = File.expand_path(path.end_with?(".rb") ? path : path + ".rb", base)
+        # tep's own library is already inlined wholesale at the top
+        # (inlined_tep_library), so requiring it here must be a no-op --
+        # otherwise we inline the whole library a SECOND time. Beyond the
+        # by-name forms ("tep" / "tep/foo"), an example loads it by PATH
+        # (`require_relative "../lib/tep"`); since the app-local inliner
+        # became recursive (#166) that path form would re-pull every
+        # tep/*.rb, duplicating `module Pg` + its ffi_const into a C
+        # `redefinition` error. Resolve and compare against LIB_DIR so all
+        # spellings that land inside tep's own lib are skipped.
+        is_tep_lib = path == "tep" || path.start_with?("tep/") ||
+                     cand == File.join(LIB_DIR, "tep.rb") ||
+                     cand.start_with?(LIB_DIR + File::SEPARATOR)
+        if !is_tep_lib
           if File.file?(cand)
             passthrough << "# --- inlined require_relative #{path.inspect} (#{File.basename(cand)}) ---"
             passthrough << inline_require_relative_tree(cand, inlined_seen, warnings)
