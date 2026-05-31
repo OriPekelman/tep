@@ -293,7 +293,8 @@ module Tep
       # Runs one streaming completion. Subclass of Tep::Streamer so the
       # server pumps `pump(out)` cooperatively; we own the SSE shape
       # end-to-end: drive the backend through StreamSink, write the
-      # terminating data:[DONE], then emit the toy/v1 inference event.
+      # terminating data:[DONE], then emit the toy/v1 serving event
+      # (kind:eval, phase:serve, name:request) via Events#inference.
       class CompletionsStreamer < Tep::Streamer
         attr_accessor :model, :token_ids, :sampling
         attr_accessor :prompt_tokens, :t0, :request_id, :principal_id
@@ -416,8 +417,8 @@ module Tep
       # Runs one streaming chat completion. Subclass of Tep::Streamer.
       # Drives backend.chat_completion_stream through ChatStreamSink,
       # writes the terminating data:[DONE], then emits the toy/v1
-      # inference event with sink.completion_count (mirrors
-      # CompletionsStreamer's #128 shape).
+      # serving event (kind:eval, phase:serve, name:request) with
+      # sink.completion_count (mirrors CompletionsStreamer's #128 shape).
       class ChatCompletionsStreamer < Tep::Streamer
         attr_accessor :req_ref, :model, :prompt_tokens
         attr_accessor :t0, :request_id, :principal_id

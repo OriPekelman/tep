@@ -183,7 +183,7 @@ lives in [`docs/BATTERIES-DESIGN.md`](docs/BATTERIES-DESIGN.md).
   chat, agent-spawn with OAuth2-style delegation. ~270 lines.
 - **[`examples/chatbot/`](examples/chatbot/app.rb)** — minimalistic
   OpenWebUI-style client backed by any OpenAI-compatible endpoint
-  (Ollama / OpenAI / [toy](https://github.com/OriPekelman/toy/tree/main/tep_demo))
+  (Ollama / OpenAI / [toy](https://github.com/OriPekelman/toy)'s `toy serve`)
   exercising the full pre-agentic battery surface
   (`Tep::Server::Scheduled` + `Tep::Llm` + `Tep::SQLite` +
   `Tep::Streamer` + `Tep::Session` + `Tep::Password` + `Tep::Jwt` +

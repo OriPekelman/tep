@@ -2,8 +2,9 @@
 #
 # Fronts a remote OpenAI-compatible upstream: swaps the client's
 # credential for the server-side key, streams the SSE response back
-# unchanged, and emits ONE toy/v1 `inference` telemetry event per
-# request at end-of-stream (via Tep::Events). This is the payoff of
+# unchanged, and emits ONE toy/v1 serving event (kind:eval,
+# phase:serve, name:request) per request at end-of-stream (via
+# Tep::Events#inference). This is the payoff of
 # the proxy streaming battery (chunk 6.2) + the events emitter --
 # token-count + latency telemetry with the right cardinality (one
 # event per request, not per chunk), using on_stream_end as the
@@ -14,12 +15,13 @@
 #   EVENTS_JSONL=/tmp/gateway.events.jsonl \
 #     bin/tep build examples/llm_gateway/app.rb -o /tmp/gw && /tmp/gw -p 4567
 #
-#   # streaming chat completion -> SSE passthrough + one inference event
+#   # streaming chat completion -> SSE passthrough + one serving event
 #   curl -s localhost:4567/v1/chat/completions -H 'content-type: application/json' \
 #     -d '{"model":"gpt-4o-mini","stream":true,"messages":[{"role":"user","content":"hi"}]}'
 #   tail -1 /tmp/gateway.events.jsonl
-#   # {"kind":"inference","phase":"serve","t":3,"model":"gpt-4o-mini",
-#   #  "prompt_tokens":0,"completion_tokens":42,"wall_us":3000000,"extra":{...}}
+#   # {"kind":"eval","phase":"serve","t":3,"name":"request","extra":{
+#   #   "model":"gpt-4o-mini","prompt_tokens":0,"completion_tokens":42,
+#   #   "latency_us":3000000, ...}}
 require 'sinatra'
 
 # Streaming proxying needs the cooperative server (the pump parks on
