@@ -1,0 +1,132 @@
+# Tep::Llm::OpenAI -- a mountable, OpenAI-compatible HTTP surface
+# (/v1/models, /v1/completions, /v1/chat/completions). An app
+# implements a Backend subclass, wires it with Server.use, then
+# Server.serve! mounts the routes. Streaming backends write tokens to
+# a typed sink (StreamSink / ChatStreamSink) rather than a block --
+# blocks don't lower across the spinel backend-call boundary.
+module Tep
+  class Llm
+    module OpenAI
+      # The interface an app's backend implements. The base methods are
+      # safe defaults (empty model list, chat/embeddings unsupported,
+      # cpu device) so a bare backend compiles + serves; subclasses
+      # override what they offer.
+      class Backend
+        # Available model names. /v1/models wraps these.
+        def list_models: () -> Array[String]
+        # PRIMARY: token-level generation (non-streaming /v1/completions).
+        def generate_from_tokens: (String model, Array[Integer] token_ids, Tep::Llm::OpenAI::Sampling sampling) -> Tep::Llm::OpenAI::Completion
+        # Streaming /v1/completions: write each token via sink.emit_token.
+        def generate_stream_from_tokens: (String model, Array[Integer] token_ids, Tep::Llm::OpenAI::Sampling sampling, Tep::Llm::OpenAI::StreamSink sink) -> Integer
+        # When false, /v1/chat/completions returns 501.
+        def supports_chat?: () -> bool
+        # Message-level generation; receives the raw req to apply its own
+        # chat template (use parse_messages to decode `messages`).
+        def chat_completion: (Tep::Request req) -> Tep::Llm::OpenAI::Completion
+        # Streaming chat: write each token via sink.emit_token.
+        def chat_completion_stream: (Tep::Request req, Tep::Llm::OpenAI::ChatStreamSink sink) -> Integer
+        # Device label surfaced into the run_start event's backend.kind.
+        def device_kind: () -> String
+        # When true, gates /v1/embeddings (chunk 7.3).
+        def supports_embeddings?: () -> bool
+      end
+
+      # The mountable server. Class methods: one backend per process is
+      # wired at boot (`use`), then the standard routes are mounted
+      # (`serve!`).
+      class Server
+        # Register the app's Backend subclass instance.
+        def self.use: (Tep::Llm::OpenAI::Backend backend) -> Integer
+        # Mount /v1/models, /v1/completions, /v1/chat/completions and
+        # (optionally) start the toy/v1 events stream. `events_jsonl` ""
+        # disables emission.
+        def self.serve!: (?String events_jsonl) -> Integer
+      end
+
+      # Parse the `messages` array from an OpenAI chat request body into
+      # [Tep::Llm::Message, ...] (one per {role, content}); empty when
+      # the key is missing or not an array.
+      def self.parse_messages: (String body) -> Array[Tep::Llm::Message]
+      # Locate a string value for `key` within the object spanning
+      # [obj_start, obj_end) in `body`; "" if absent.
+      def self.find_obj_key_str: (String body, Integer obj_start, Integer obj_end, String key) -> String
+
+      # Sampling parameters parsed from the request (max_tokens int;
+      # temperature / top_p Float).
+      class Sampling
+        attr_accessor max_tokens: Integer
+        attr_accessor temperature: Float
+        attr_accessor top_p: Float
+        def initialize: () -> void
+      end
+
+      # A backend's generation result: decoded text + token usage.
+      class Completion
+        attr_accessor text: String
+        attr_accessor prompt_tokens: Integer
+        attr_accessor completion_tokens: Integer
+        def initialize: () -> void
+      end
+
+      # Per-token write surface for streaming /v1/completions. The
+      # backend calls emit_token(piece); the sink formats the OpenAI
+      # text_completion SSE frame and writes one chunked frame.
+      class StreamSink
+        attr_accessor out: Tep::Stream
+        attr_accessor model: String
+        attr_accessor completion_count: Integer
+        def initialize: () -> void
+        def emit_token: (String piece) -> Integer
+      end
+
+      # Per-token write surface for streaming /v1/chat/completions. The
+      # backend calls emit_role_prelude once, then emit_token per delta,
+      # then emit_finish; each writes one OpenAI chat-streaming frame.
+      class ChatStreamSink
+        attr_accessor out: Tep::Stream
+        attr_accessor model: String
+        attr_accessor completion_count: Integer
+        def initialize: () -> void
+        def emit_role_prelude: (String role) -> Integer
+        def emit_token: (String piece) -> Integer
+        def emit_finish: (String reason) -> Integer
+      end
+
+      # Internal Streamer plumbing -- the server pumps these
+      # cooperatively; apps don't instantiate them directly.
+      class CompletionsStreamer < Tep::Streamer
+        attr_accessor model: String
+        attr_accessor token_ids: Array[Integer]
+        attr_accessor sampling: Tep::Llm::OpenAI::Sampling
+        attr_accessor prompt_tokens: Integer
+        attr_accessor t0: Integer
+        attr_accessor request_id: String
+        attr_accessor principal_id: String
+        def initialize: () -> void
+        def pump: (Tep::Stream out) -> Integer
+      end
+
+      class ChatCompletionsStreamer < Tep::Streamer
+        attr_accessor req_ref: Tep::Request
+        attr_accessor model: String
+        attr_accessor prompt_tokens: Integer
+        attr_accessor t0: Integer
+        attr_accessor request_id: String
+        attr_accessor principal_id: String
+        def initialize: () -> void
+        def pump: (Tep::Stream out) -> Integer
+      end
+
+      # Route handlers mounted by serve!; apps don't instantiate them.
+      class ModelsHandler < Tep::Handler
+        def handle: (Tep::Request req, Tep::Response res) -> Integer
+      end
+      class CompletionsHandler < Tep::Handler
+        def handle: (Tep::Request req, Tep::Response res) -> Integer
+      end
+      class ChatCompletionsHandler < Tep::Handler
+        def handle: (Tep::Request req, Tep::Response res) -> Integer
+      end
+    end
+  end
+end
