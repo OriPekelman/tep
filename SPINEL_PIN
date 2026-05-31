@@ -1,9 +1,20 @@
-f7602f4e1e00e99c7c48adf34d8cdc28e1fa1f7b
+cc94707765c376e507ebac1ac2d902ac765c6da5
 
 # Pinned matz/spinel commit tep is verified to build + test against.
 # Only the first line (the ref) is read by tools/spinel-fresh.sh.
 #
-# f7602f4 (2026-05-30). Bumped from 23ba632 (+31 commits) onto current
+# cc94707 (2026-05-31). Bumped from f7602f4 (+2 commits), both on the
+# `require` path that the spinelgems flow exercises (vendored gems emit
+# plain `require "json"` / `require "set"` that reach spinel's resolver):
+#   - fe4810f: clearer "not available in Spinel" diagnostic + native-lib
+#     allowlist so `require "json"` no longer warns.
+#   - cc94707: two resolve_plain_requires line-scanning fixes -- a
+#     `require "x"; code` one-liner no longer drops `code`, and a
+#     first-line `require` is no longer skipped when another follows
+#     (previously leaked to codegen as `cannot resolve call to require`).
+# No tep workaround to revert; robustness-only for the gem flow.
+#
+# Prior (f7602f4, 2026-05-30). Bumped from 23ba632 (+31 commits) onto current
 # master, which now additionally carries:
 #   - "Root heap-typed method parameters across internal GC" (#1068) ->
 #     another GC-rooting fix in the #1052 family (heap-typed params no
