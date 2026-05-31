@@ -57,10 +57,17 @@ module Sqlite
   ffi_func :tep_sqlite_prepare,           [:int, :str],    :int
   ffi_func :tep_sqlite_prepare_cached,    [:int, :str],    :int
   ffi_func :tep_sqlite_bind_str,          [:int, :str],    :int
-  ffi_func :tep_sqlite_bind_int,          [:int, :int],    :int
+  # bind_int / col_int are 64-bit: the value arg + return use the FFI
+  # `:long` (64-bit on LP64) routed through sqlite3_bind_int64 /
+  # sqlite3_column_int64, so an integer column > 2^31 round-trips
+  # without the 32-bit truncation that wrapped large values negative
+  # (issue #171). Spinel's mrb_int is pointer-width, so the Ruby side
+  # holds the full range. `:long` still maps to the `int` Spinel token,
+  # so callers see an Integer exactly as before.
+  ffi_func :tep_sqlite_bind_int,          [:int, :long],   :int
   ffi_func :tep_sqlite_step,              [],              :int
   ffi_func :tep_sqlite_col_str,           [:int],          :str
-  ffi_func :tep_sqlite_col_int,           [:int],          :int
+  ffi_func :tep_sqlite_col_int,           [:int],          :long
   ffi_func :tep_sqlite_col_count,         [],              :int
   ffi_func :tep_sqlite_finalize,          [],              :int
   ffi_func :tep_sqlite_reset,             [],              :int

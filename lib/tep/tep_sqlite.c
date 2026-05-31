@@ -241,9 +241,12 @@ int tep_sqlite_bind_str(int idx, const char *value) {
                 == SQLITE_OK ? 0 : -1;
 }
 
-int tep_sqlite_bind_int(int idx, int value) {
+/* 64-bit bind. `long` is the FFI `:long` type (64-bit on the LP64
+ * targets Spinel compiles for); routed through sqlite3_bind_int64 so a
+ * value > 2^31 isn't truncated on the way in (issue #171). */
+int tep_sqlite_bind_int(int idx, long value) {
     if (!tep_sqlite_stmt) return -1;
-    return sqlite3_bind_int(tep_sqlite_stmt, idx, value) == SQLITE_OK ? 0 : -1;
+    return sqlite3_bind_int64(tep_sqlite_stmt, idx, (sqlite3_int64)value) == SQLITE_OK ? 0 : -1;
 }
 
 /* 1 -> row available, 0 -> done (no more rows), -1 -> error */
@@ -268,9 +271,14 @@ const char *tep_sqlite_col_str(int idx) {
     return buf;
 }
 
-int tep_sqlite_col_int(int idx) {
+/* 64-bit column read. sqlite3_column_int (32-bit) silently wrapped a
+ * value > 2^31 negative -- e.g. a 3.4e9 download count read back as
+ * -867422609 (issue #171). sqlite3_column_int64 + a `long` (FFI
+ * `:long`, 64-bit) return path preserves the full range; mrb_int is
+ * pointer-width so the Ruby side holds it losslessly. */
+long tep_sqlite_col_int(int idx) {
     if (!tep_sqlite_stmt) return 0;
-    return sqlite3_column_int(tep_sqlite_stmt, idx);
+    return (long)sqlite3_column_int64(tep_sqlite_stmt, idx);
 }
 
 int tep_sqlite_col_count(void) {

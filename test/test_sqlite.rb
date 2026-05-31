@@ -69,6 +69,26 @@ class TestSqlite < TepTest
       db.close
       "inserted=" + id.to_s
     end
+
+    # 64-bit round-trip (issue #171): bind a value > 2^31 via bind_int,
+    # read it back via col_int. With the old 32-bit path this wrapped
+    # negative (3427544687 -> -867422609); now it must survive intact.
+    get '/bigint' do
+      db = Tep::SQLite.new
+      db.open("#{TMP_DB}")
+      db.exec("CREATE TABLE IF NOT EXISTS bignums (n INTEGER)")
+      db.exec("DELETE FROM bignums")
+      db.prepare("INSERT INTO bignums (n) VALUES (?)")
+      db.bind_int(1, 3427544687)
+      db.step
+      db.finalize
+      db.prepare("SELECT n FROM bignums LIMIT 1")
+      db.step
+      n = db.col_int(0)
+      db.finalize
+      db.close
+      "n=" + n.to_s
+    end
   RB
 
   Minitest.after_run do
@@ -116,5 +136,13 @@ class TestSqlite < TepTest
 
     res2 = get("/note/#{inserted_id}")
     assert_match(/body=via-test/, res2.body)
+  end
+
+  def test_bind_and_col_int_round_trip_64bit
+    # 3,427,544,687 > 2^31-1. The old 32-bit bind/col path truncated it
+    # to -867,422,609 (issue #171); 64-bit bind_int/col_int preserve it.
+    res = get("/bigint")
+    assert_equal "200", res.code
+    assert_equal "n=3427544687", res.body
   end
 end
