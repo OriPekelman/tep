@@ -65,7 +65,12 @@ def self.locate_spinel
   return e if e && !e.empty? && e != "spinel"
   sibling = File.expand_path("../../spinel/spinel", __dir__)
   return sibling if File.executable?(sibling)
-  provisioned = File.expand_path("~/.cache/spinel/current/spinel")
+  # Engine provisioned by `spinel-compat install-engine`. Honor
+  # SPINEL_CACHE like bundler-spinel does so a relocated cache resolves
+  # for both tools (default ~/.cache/spinel; `current` -> the pinned rev).
+  cache_root = ENV["SPINEL_CACHE"]
+  cache_root = "~/.cache/spinel" if cache_root.nil? || cache_root.empty?
+  provisioned = File.expand_path(cache_root + "/current/spinel")
   return provisioned if File.executable?(provisioned)
   "spinel"
 end
