@@ -46,6 +46,14 @@ Gem::Specification.new do |s|
   # concern, not a gem-install constraint.
   s.required_ruby_version = ">= 3.2.0"
 
+  # Ship only git-TRACKED files matching these globs. Intersecting with
+  # `git ls-files` is what keeps gitignored build artifacts OUT: the
+  # compiled C objects (lib/tep/*.o) and the native example binaries
+  # (examples/hello, pg_hello, ...) land in-tree after `make`, and a bare
+  # Dir glob would scoop ~1.7 MB of stale, platform-specific junk into
+  # the gem. The `.reject` is a belt-and-suspenders for a no-git build
+  # (e.g. from an unpacked source tree).
+  tracked = (`git ls-files -z`.split("\x0") rescue [])
   s.files = Dir[
     "README.md", "LICENSE", "SINATRA_COMPAT.md",
     "Makefile",
@@ -58,7 +66,8 @@ Gem::Specification.new do |s|
     "examples/**/*",
     "public/**/*",
     "test/**/*"
-  ].reject { |f| File.directory?(f) }
+  ].reject { |f| File.directory?(f) || f =~ /\.(o|so|a|dylib|bundle)$/ }
+   .select { |f| tracked.empty? || tracked.include?(f) }
 
   s.bindir              = "bin"
   s.executables         = ["tep"]
