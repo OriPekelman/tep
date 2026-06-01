@@ -55,14 +55,18 @@ require "json"
 
 # Resolve spinel: explicit env var wins, then a sibling
 # `../spinel/spinel` checkout (matches the typical dev layout where
-# tep and spinel are checked out side by side), then plain `spinel`
-# on PATH. The Makefile exports SPINEL=spinel by default; treat the
-# literal placeholder as unset so the sibling fallback still fires.
+# tep and spinel are checked out side by side), then the engine
+# provisioned by `spinel-compat install-engine` (spinelgems) at
+# `~/.cache/spinel/current/spinel`, then plain `spinel` on PATH. The
+# Makefile exports SPINEL=spinel by default; treat the literal
+# placeholder as unset so the fallbacks still fire.
 def self.locate_spinel
   e = ENV["SPINEL"]
   return e if e && !e.empty? && e != "spinel"
   sibling = File.expand_path("../../spinel/spinel", __dir__)
   return sibling if File.executable?(sibling)
+  provisioned = File.expand_path("~/.cache/spinel/current/spinel")
+  return provisioned if File.executable?(provisioned)
   "spinel"
 end
 SPINEL = locate_spinel
@@ -1928,13 +1932,13 @@ end
 def tep_ext_subs
   ext_path = File.join(REPO_ROOT, "spinel-ext.json")
   return {} unless File.exist?(ext_path)
+  entries = JSON.parse(File.read(ext_path))
   subs = {}
-  JSON.parse(File.read(ext_path)).each do |entry|
+  entries.each do |entry|
     placeholder = entry["placeholder"]
     env_var = placeholder.delete("@")          # @TEP_SPHTTP_O@ -> TEP_SPHTTP_O
     if entry["source"]
-      default_o = File.expand_path(entry["source"].sub(/\.c\z/, ".o"), REPO_ROOT)
-      subs[placeholder] = ENV.fetch(env_var, default_o)
+      subs[placeholder] = resolve_ext_o(entry, entries, env_var)
     else
       cflags       = ENV.fetch(env_var, "")
       libs_var     = env_var.sub(/_CFLAGS\z/, "_LIBS")
@@ -1944,6 +1948,53 @@ def tep_ext_subs
     end
   end
   subs
+end
+
+# Resolve a helper `.o`. An explicit env override or a prebuilt `make helper`
+# artifact wins; otherwise build it on demand. The published gem ships the C
+# *sources* but no `.o` (a `gem install tep` user has no `make helper` step), so
+# without this `tep build` fails at link with `cannot find lib/tep/<x>.o`.
+# Compiles into a writable per-gem cache (the installed gem's lib/ is often
+# read-only). Returns the `.o` path, or "" for an optional ext whose system dep
+# is missing (required exts are fatal).
+def resolve_ext_o(entry, entries, env_var)
+  if (o = ENV[env_var]) && !o.empty?
+    return o if File.exist?(o)
+  end
+  prebuilt = File.expand_path(entry["source"].sub(/\.c\z/, ".o"), REPO_ROOT)
+  return prebuilt if File.exist?(prebuilt)
+
+  src = File.expand_path(entry["source"], REPO_ROOT)
+  fatal("ext source missing: #{entry["source"]}") unless File.exist?(src)
+
+  # own cflags + any same-name sibling's pkg_config include path (the split
+  # @MOD_O@ / @MOD_CFLAGS@ pair — e.g. pg's libpq lives on @TEP_PG_CFLAGS@).
+  cflags = Array(entry["cflags"]).dup
+  missing = nil
+  entries.each do |sib|
+    next unless sib["name"] == entry["name"] && sib["pkg_config"]
+    pc = `pkg-config --cflags #{sib["pkg_config"]} 2>/dev/null`
+    $?.success? ? cflags.concat(pc.split) : (missing = sib["pkg_config"])
+  end
+  if missing
+    return "" if entry["optional"]
+    fatal("ext '#{entry["name"]}' needs #{missing} — install its -dev headers")
+  end
+
+  cache = File.join(ENV["HOME"] || Dir.tmpdir, ".cache", "tep", "ext", File.basename(REPO_ROOT))
+  FileUtils.mkdir_p(cache)
+  out = File.join(cache, File.basename(prebuilt))
+  return out if File.exist?(out) && File.mtime(out) >= File.mtime(src)
+
+  warn "[tep] building ext '#{entry["name"]}' on demand (#{entry["source"]})"
+  if system(ENV.fetch("CC", "cc"), *cflags, "-c", src, "-o", out) && File.exist?(out)
+    out
+  elsif entry["optional"]
+    warn "[tep] optional ext '#{entry["name"]}' failed to build — disabling"
+    ""
+  else
+    fatal("failed to build required ext '#{entry["name"]}' (#{entry["source"]})")
+  end
 end
 
 # Split a Sinatra-style source on `__END__` and parse the trailing
