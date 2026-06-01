@@ -1,0 +1,70 @@
+name: build-matrix
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+# Sibling to ci.yml (which runs the full suite on ubuntu-x64). This matrix
+# proves tep's *build path* — Spinel + the C helpers (sphttp/sqlite/pg) + a
+# compiled example — works across x64 + arm64 / Linux + macOS. We ship tep as a
+# gem and compile on the target (Spinel uses the host cc, no cross-compile), so
+# there are no per-platform binaries to publish; this just keeps the
+# build-from-source path honest on every platform a user might be on.
+jobs:
+  build:
+    name: build + compile example (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-14]
+    env:
+      TEP_SKIP_SPINEL_FRESH: "1"   # we provide a fresh spinel below
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Build deps (sqlite headers on Linux; macOS ships libsqlite3)
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            sudo apt-get update && sudo apt-get install -y build-essential libsqlite3-dev
+          fi
+
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.4"
+          bundler-cache: true
+
+      - name: Build Spinel from master
+        run: |
+          git clone --depth 1 https://github.com/matz/spinel.git spinel-src
+          make -C spinel-src deps
+          make -C spinel-src all
+          echo "TEP_SPINEL_DIR=$PWD/spinel-src" >> "$GITHUB_ENV"
+          echo "SPINEL=$PWD/spinel-src/spinel"  >> "$GITHUB_ENV"
+
+      - name: make helper (compile the C extensions — sphttp / sqlite / pg)
+        run: make helper
+
+      - name: Compile an example app (Spinel -> native binary)
+        run: |
+          "$SPINEL" --version >/dev/null 2>&1 || true
+          bin/tep build examples/hello.rb -o hello_bin
+          test -x hello_bin
+
+      - name: Run the compiled binary (start, probe, stop)
+        if: runner.os == 'Linux'
+        run: |
+          ./hello_bin -p 4567 &
+          pid=$!
+          ok=0
+          for i in $(seq 1 30); do
+            if curl -fsS "http://127.0.0.1:4567/" >/dev/null; then ok=1; break; fi
+            sleep 0.5
+          done
+          kill "$pid" 2>/dev/null || true
+          test "$ok" = "1"   # fail if the compiled server never answered
