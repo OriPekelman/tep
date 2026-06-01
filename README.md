@@ -7,9 +7,10 @@
 A Sinatra-flavoured web framework that compiles to a native binary
 via [Spinel][spinel].
 
-> **Current release:** [v0.10.0](https://github.com/OriPekelman/tep/releases/tag/v0.10.0)
-> — the Proxy + OpenAI-server + Events batteries on top of the agentic
-> surface (Auth, Broadcast, Presence, LiveView, MCP).
+> **Current release:** [v0.11.0](https://github.com/OriPekelman/tep/releases/tag/v0.11.0)
+> — now on [RubyGems](https://rubygems.org/gems/tep) (`gem install tep`):
+> TLS, HTTP caching, connection pooling, PG raise-on-error + embeddings,
+> on top of the agentic surface (Auth, Broadcast, Presence, LiveView, MCP).
 > Pre-alpha; API still in motion.
 
 > **Why Tep exists.** Two complementary goals:
@@ -39,22 +40,25 @@ via [Spinel][spinel].
 
 ## Quick start
 
-```sh
-# 1. install Spinel
-git clone https://github.com/matz/spinel
-cd spinel && make all
-export PATH="$PWD:$PATH"
+**A new project (the simple path).** The Spinel toolbelt
+([bundler-spinel](https://github.com/OriPekelman/spinelgems)) scaffolds a
+project and provisions the Spinel compiler for you:
 
-# 2. install Tep
-git clone https://github.com/OriPekelman/tep
-cd tep && make all
-./examples/hello -p 4567
+```sh
+gem install bundler-spinel
+spinel-compat init my_app && cd my_app
+./bin/build            # ensures tep, vendors deps, provisions Spinel, compiles → ./app
+./app -p 4567
 ```
 
-Your own app:
+`spinel-compat init` writes a `Gemfile` (`gem "tep"`), an `app.rb`, and a
+`bin/build`. The build step provisions a pinned Spinel compiler (cached under
+`~/.cache/spinel`), vendors dependencies where Spinel can follow them, and
+compiles `app.rb` to a native binary — no Ruby runtime in the result.
+
+Your `app.rb` is plain Sinatra-flavoured Ruby:
 
 ```ruby
-# hello.rb
 require 'sinatra'
 
 get '/' do
@@ -66,10 +70,35 @@ get '/hi/:name' do
 end
 ```
 
+**Already have a Sinatra app?** Scaffold a project and use your source as its
+`app.rb` — the build reports any Spinel-incompatible patterns:
+
 ```sh
-tep build hello.rb       # -> ./hello (~80 KB binary, no Ruby runtime)
-./hello -p 4567
+gem install bundler-spinel
+spinel-compat init my_app && cd my_app
+cp /path/to/your_app.rb app.rb
+./bin/build                      # → ./app  (or a clear report of what won't translate)
 ```
+
+The `tep` translator is also on RubyGems on its own (`gem install tep`) for use
+in your own build scripts, once a Spinel engine is on `$SPINEL` / PATH.
+
+<details>
+<summary><b>From source</b> (hacking on tep itself, or no bundler)</summary>
+
+```sh
+# 1. Spinel (the AOT compiler)
+git clone https://github.com/matz/spinel && cd spinel && make all
+export PATH="$PWD:$PATH"
+
+# 2. tep
+git clone https://github.com/OriPekelman/tep && cd tep && make all
+./examples/hello -p 4567
+
+# your own app
+tep build hello.rb       # → ./hello (~80 KB binary, no Ruby runtime)
+```
+</details>
 
 The translator (`bin/tep`) needs CRuby >= 3.2 with the `prism` gem
 installed (a development-only dependency — `bundle install` brings it
