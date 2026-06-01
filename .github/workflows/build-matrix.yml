@@ -28,10 +28,23 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - name: Build deps (sqlite headers on Linux; macOS ships libsqlite3)
+      - name: Build deps (C-ext headers — sqlite / libpq / openssl)
         run: |
           if [ "$RUNNER_OS" = "Linux" ]; then
-            sudo apt-get update && sudo apt-get install -y build-essential libsqlite3-dev
+            sudo apt-get update
+            sudo apt-get install -y build-essential libsqlite3-dev libpq-dev libssl-dev
+          elif [ "$RUNNER_OS" = "macOS" ]; then
+            # macOS ships libsqlite3 in the SDK; OpenSSL + libpq live
+            # under Homebrew off the default include/lib path. cc/clang
+            # honor CPATH (find openssl/ssl.h + libpq-fe.h at compile)
+            # and LIBRARY_PATH (find -lssl/-lcrypto/-lpq at link) without
+            # any source-side cflags. PKG_CONFIG_PATH additionally feeds
+            # the Makefile's `pkg-config libpq` (TEP_PG_CFLAGS).
+            brew install pkg-config openssl@3 libpq
+            SSL="$(brew --prefix openssl@3)"; PQ="$(brew --prefix libpq)"
+            echo "CPATH=$SSL/include:$PQ/include"               >> "$GITHUB_ENV"
+            echo "LIBRARY_PATH=$SSL/lib:$PQ/lib"                 >> "$GITHUB_ENV"
+            echo "PKG_CONFIG_PATH=$SSL/lib/pkgconfig:$PQ/lib/pkgconfig" >> "$GITHUB_ENV"
           fi
 
       - uses: ruby/setup-ruby@v1
