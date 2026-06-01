@@ -70,6 +70,18 @@ class TestOpenAIServer < TepTest
     assert_match(/chat completions not supported/, body["error"]["message"])
   end
 
+  def test_embeddings_returns_501_when_unsupported
+    # EchoBackend doesn't override supports_embeddings? -> the
+    # /v1/embeddings route is mounted but 501s with an OpenAI-shape
+    # error (same gate as chat completions).
+    res = post("/v1/embeddings", "{\"model\":\"echo-1\",\"input\":[10,20,30]}")
+    assert_equal "501", res.code
+    assert_match(%r{application/json}, res["content-type"])
+    body = JSON.parse(res.body)
+    assert_equal "not_implemented", body["error"]["type"]
+    assert_match(/embeddings not supported/, body["error"]["message"])
+  end
+
   def test_completions_returns_text_completion
     # No temperature / top_p sent -> defaults of 1.0 reach the backend.
     res = post("/v1/completions",
@@ -532,5 +544,55 @@ class TestOpenAIServerChatStreaming < TepTest
     assert_equal "chat-stream", inf["extra"]["model"]
     assert_equal 3,             inf["extra"]["completion_tokens"]
     assert_equal "chatcmpl-tep", inf["extra"]["request_id"]
+  end
+end
+
+# Tep::Llm::OpenAI /v1/embeddings positive path (#168 part A item 3): a
+# backend that opts into embeddings returns an Array[Float]; the handler
+# serializes the OpenAI embeddings envelope. Exercises the float-array
+# return through Spinel end to end.
+class TestOpenAIEmbeddings < TepTest
+  app_source <<~RB
+    require 'sinatra'
+
+    class EmbedBackend < Tep::Llm::OpenAI::Backend
+      def list_models
+        ["embed-1"]
+      end
+      def supports_embeddings?
+        true
+      end
+      def generate_embeddings(model, token_ids)
+        # Fixed 3-dim vector so the test asserts exact values; a real
+        # backend mean-pools per-token embeddings (toy's shape).
+        [0.5, -0.25, 1.0]
+      end
+    end
+
+    Tep::Llm::OpenAI::Server.use(EmbedBackend.new)
+    Tep::Llm::OpenAI::Server.serve!
+  RB
+
+  def test_embeddings_returns_vector_and_usage
+    res = post("/v1/embeddings", "{\"model\":\"embed-1\",\"input\":[10,20,30,40]}")
+    assert_equal "200", res.code
+    assert_match(%r{application/json}, res["content-type"])
+    body = JSON.parse(res.body)
+    assert_equal "list",    body["object"]
+    assert_equal "embed-1", body["model"]
+    row = body["data"][0]
+    assert_equal "embedding", row["object"]
+    assert_equal 0, row["index"]
+    assert_equal [0.5, -0.25, 1.0], row["embedding"]
+    # prompt/total tokens == input id count (4).
+    assert_equal 4, body["usage"]["prompt_tokens"]
+    assert_equal 4, body["usage"]["total_tokens"]
+  end
+
+  def test_embeddings_empty_input_returns_400
+    res = post("/v1/embeddings", "{\"model\":\"embed-1\",\"input\":[]}")
+    assert_equal "400", res.code
+    body = JSON.parse(res.body)
+    assert_equal "invalid_request_error", body["error"]["type"]
   end
 end
