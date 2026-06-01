@@ -23,7 +23,22 @@
 # Spinel-incompatible patterns (template engines, helpers blocks,
 # rack middleware, etc.) get warned about; they don't translate.
 
-require "prism"
+# The translator parses the user's Sinatra source with Prism. Prism
+# ships with Ruby 3.4+, but tep keeps it a *development-only* gem
+# dependency (it's a C extension Spinel can't compile, so a runtime dep
+# would drag it into a spinelgems consumer's lock + fail the compat
+# gate). So on a `gem install tep` under Ruby 3.2/3.3 it may be absent
+# -- fail with an actionable message instead of a bare LoadError.
+begin
+  require "prism"
+rescue LoadError
+  abort "tep: the translator needs the `prism` parser, which isn't " \
+        "available here.\n" \
+        "  - Ruby 3.4+ bundles it (no action needed).\n" \
+        "  - On Ruby 3.2/3.3:  gem install prism\n" \
+        "Prism is a build-time-only dep (a C extension Spinel can't " \
+        "compile), so tep deliberately doesn't pull it into your lock."
+end
 require "fileutils"
 require "tmpdir"
 require "pathname"
