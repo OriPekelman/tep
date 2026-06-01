@@ -102,6 +102,13 @@ module Tep
       # load order means PG::Connection isn't safely callable from
       # App#initialize when this is loaded before pg.rb's full surface.
       @nf_handler     = Handler.new
+      # No-op default so a never-mounted OpenAI server doesn't leave
+      # @openai_events null. Tep.on_shutdown calls openai_events.enabled?
+      # unconditionally; under Spinel a null receiver is a hard null-deref
+      # (not a NoMethodError), so any app that doesn't call
+      # Tep::Llm::OpenAI::Server.serve! would SEGV on shutdown after a
+      # SIGTERM. "" => enabled? is false (zero I/O). (matz/spinel#1259)
+      @openai_events  = Tep::Events.new("")
       @asset_bodies   = Tep.str_hash # path -> bytes (filled at boot
       @asset_mimes    = Tep.str_hash # by Tep::Assets._add lines
                                      # the bin/tep translator emits)
