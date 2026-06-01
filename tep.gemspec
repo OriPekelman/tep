@@ -16,10 +16,24 @@ Gem::Specification.new do |s|
   s.license     = "MIT"
   s.homepage    = "https://github.com/OriPekelman/tep"
   s.metadata    = {
-    "source_code_uri"   => "https://github.com/OriPekelman/tep",
-    "bug_tracker_uri"   => "https://github.com/OriPekelman/tep/issues",
-    "documentation_uri" => "https://github.com/OriPekelman/tep#readme",
+    "source_code_uri"      => "https://github.com/OriPekelman/tep",
+    "bug_tracker_uri"      => "https://github.com/OriPekelman/tep/issues",
+    "documentation_uri"    => "https://github.com/OriPekelman/tep#readme",
+    "rubygems_mfa_required" => "true",
   }
+
+  # Shown on `gem install tep`. The gem is Spinel-AOT source, not a
+  # CRuby library -- reinforce the model the lib/tep.rb stock-Ruby guard
+  # also enforces at require-time, so a `gem install` user isn't left
+  # guessing why `require "tep"` raises.
+  s.post_install_message = <<~MSG
+    tep is a Spinel-AOT framework: it compiles your Sinatra-style app to
+    a native binary -- there is no `require "tep"` runtime under CRuby.
+      build an app:   tep build app.rb && ./app -p 4567
+      or vendor it:   declare `gem "tep"` in a bundler-spinel (spinelgems)
+                      Gemfile, then `spinel-compat vendor`.
+    Docs: https://github.com/OriPekelman/tep
+  MSG
 
   # Runtime target is Spinel's Ruby level (3.2.x — the gx10 host Ruby
   # and toy's `ruby "3.2.3"` engine marker both sit here). Was 3.4.0,
