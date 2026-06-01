@@ -99,6 +99,20 @@ module Tep
         def supports_embeddings?
           false
         end
+
+        # Embedding generation for /v1/embeddings. `token_ids` is the
+        # encoded input (Array[Integer]; this server speaks IDs only,
+        # tokenize client-side, same policy as generate_from_tokens).
+        # Returns the pooled embedding as an Array[Float] of length
+        # d_model -- the backend owns the lookup + pooling strategy
+        # (toy mean-pools per-token embeddings). Base returns an empty
+        # vector so a bare backend compiles; only reached when
+        # supports_embeddings? is true (EmbeddingsHandler gates 501).
+        def generate_embeddings(model, token_ids)
+          empty = [0.0]
+          empty.delete_at(0)
+          empty
+        end
       end
 
       # The mountable server. Class methods because an app wires one
@@ -136,6 +150,9 @@ module Tep
           Tep.get("/v1/models",            Tep::Llm::OpenAI::ModelsHandler.new)
           Tep.post("/v1/completions",      Tep::Llm::OpenAI::CompletionsHandler.new)
           Tep.post("/v1/chat/completions", Tep::Llm::OpenAI::ChatCompletionsHandler.new)
+          # Always mounted; the handler 501s when supports_embeddings?
+          # is false (same gate shape as chat completions).
+          Tep.post("/v1/embeddings",       Tep::Llm::OpenAI::EmbeddingsHandler.new)
           0
         end
       end
@@ -633,6 +650,72 @@ module Tep
               Tep::Json.encode_pair_int("prompt_tokens", comp.prompt_tokens) + "," +
               Tep::Json.encode_pair_int("completion_tokens", comp.completion_tokens) + "," +
               Tep::Json.encode_pair_int("total_tokens", total) +
+            "}" +
+          "}"
+        end
+      end
+
+      # POST /v1/embeddings -- OpenAI embeddings shape. Gated 501 when
+      # backend.supports_embeddings? is false (the default). When a
+      # backend opts in, parses the IDs-only `input` array, asks the
+      # backend for the pooled vector, and formats the standard
+      # embeddings envelope. Mirrors toy's mean-pooled handler -- the
+      # pooling strategy lives in the backend, not here.
+      class EmbeddingsHandler < Tep::Handler
+        def handle(req, res)
+          res.headers["Content-Type"] = "application/json"
+          if !Tep::APP.openai_backend.supports_embeddings?
+            res.set_status(501)
+            return "{" +
+              "\"error\":{" +
+                Tep::Json.encode_pair_str("message",
+                  "embeddings not supported by this backend") + "," +
+                Tep::Json.encode_pair_str("type", "not_implemented") +
+              "}" +
+            "}"
+          end
+          body  = req.raw_body
+          model = Tep::Json.get_str(body, "model")
+          ids   = Tep::Json.get_int_array(body, "input")
+          if ids.length == 0
+            res.set_status(400)
+            return "{" +
+              "\"error\":{" +
+                Tep::Json.encode_pair_str("message",
+                  "input must be a non-empty integer array " +
+                  "(this server speaks token IDs only; tokenize client-side)") + "," +
+                Tep::Json.encode_pair_str("type", "invalid_request_error") +
+              "}" +
+            "}"
+          end
+
+          vec = Tep::APP.openai_backend.generate_embeddings(model, ids)
+
+          # Build the embedding float array by hand: Tep::Json has no
+          # float-array encoder, and Float#to_s yields a JSON number.
+          emb = "["
+          k = 0
+          while k < vec.length
+            if k > 0
+              emb = emb + ","
+            end
+            emb = emb + vec[k].to_s
+            k = k + 1
+          end
+          emb = emb + "]"
+
+          n = ids.length
+          "{" +
+            Tep::Json.encode_pair_str("object", "list") + "," +
+            "\"data\":[{" +
+              Tep::Json.encode_pair_str("object", "embedding") + "," +
+              Tep::Json.encode_pair_int("index", 0) + "," +
+              "\"embedding\":" + emb +
+            "}]," +
+            Tep::Json.encode_pair_str("model", model) + "," +
+            "\"usage\":{" +
+              Tep::Json.encode_pair_int("prompt_tokens", n) + "," +
+              Tep::Json.encode_pair_int("total_tokens", n) +
             "}" +
           "}"
         end

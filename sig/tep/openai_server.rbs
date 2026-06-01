@@ -29,6 +29,9 @@ module Tep
         def device_kind: () -> String
         # When true, gates /v1/embeddings (chunk 7.3).
         def supports_embeddings?: () -> bool
+        # Pooled embedding for /v1/embeddings: token_ids in (IDs only),
+        # an Array[Float] of length d_model out. Backend owns pooling.
+        def generate_embeddings: (String model, Array[Integer] token_ids) -> Array[Float]
       end
 
       # The mountable server. Class methods: one backend per process is
@@ -125,6 +128,10 @@ module Tep
         def handle: (Tep::Request req, Tep::Response res) -> Integer
       end
       class ChatCompletionsHandler < Tep::Handler
+        def handle: (Tep::Request req, Tep::Response res) -> Integer
+      end
+      # /v1/embeddings; 501s unless backend.supports_embeddings?.
+      class EmbeddingsHandler < Tep::Handler
         def handle: (Tep::Request req, Tep::Response res) -> Integer
       end
     end
