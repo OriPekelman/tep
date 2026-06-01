@@ -16,6 +16,25 @@
 # `bin/tep build app.rb`, which translates blocks into Handler
 # subclasses before invoking spinel.
 
+# --- stock-Ruby guard --------------------------------------------------
+# tep's lib/ is Spinel-AOT source: it's COMPILED into a native binary
+# (or inlined by `tep build`), not run under CRuby. A plain
+# `require "tep"` on MRI/JRuby/TruffleRuby has no FFI runtime and would
+# otherwise die with a cryptic `undefined method 'ffi_cflags'` deep in a
+# sub-file. RUBY_ENGINE is defined on every stock Ruby but NOT in a
+# Spinel binary, so this fires only under a real `require` and stays a
+# dead no-op once compiled (it inlines harmlessly into every app).
+if defined?(RUBY_ENGINE)
+  raise "tep is a Spinel-AOT framework, not a CRuby library -- " \
+        "`require \"tep\"` has no runtime here. tep compiles your " \
+        "Sinatra-style app to a native binary; build it with the " \
+        "translator:\n" \
+        "    tep build app.rb && ./app -p 4567\n" \
+        "or declare `gem \"tep\"` in a bundler-spinel (spinelgems) " \
+        "Gemfile and let `spinel-compat vendor` inline it. " \
+        "See https://github.com/OriPekelman/tep"
+end
+
 require_relative "tep/version"
 require_relative "tep/url"
 require_relative "tep/multipart"
