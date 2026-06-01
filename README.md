@@ -7,9 +7,9 @@
 A Sinatra-flavoured web framework that compiles to a native binary
 via [Spinel][spinel].
 
-> **Current release:** [v0.9.0](https://github.com/OriPekelman/tep/releases/tag/v0.9.0)
-> — the MCP battery (agent-as-driver) on top of the four-battery
-> agentic surface (Auth, Broadcast, Presence, LiveView).
+> **Current release:** [v0.10.0](https://github.com/OriPekelman/tep/releases/tag/v0.10.0)
+> — the Proxy + OpenAI-server + Events batteries on top of the agentic
+> surface (Auth, Broadcast, Presence, LiveView, MCP).
 > Pre-alpha; API still in motion.
 
 > **Why Tep exists.** Two complementary goals:
