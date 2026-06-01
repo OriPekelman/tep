@@ -31,8 +31,14 @@ jobs:
       - name: Build deps (C-ext headers — sqlite / libpq / openssl)
         run: |
           if [ "$RUNNER_OS" = "Linux" ]; then
+            # NB: do NOT add libssl-dev -- OpenSSL headers ship on the
+            # GitHub Ubuntu images already (sphttp.c compiled fine before
+            # this fix), and pulling libssl-dev upgrades the *running*
+            # libssl3/openssl, which on the ubuntu-24.04-arm runner
+            # SIGTERMs the job mid-apt (exit 143). libpq-dev is the only
+            # genuinely-missing header.
             sudo apt-get update
-            sudo apt-get install -y build-essential libsqlite3-dev libpq-dev libssl-dev
+            sudo apt-get install -y build-essential libsqlite3-dev libpq-dev
           elif [ "$RUNNER_OS" = "macOS" ]; then
             # macOS ships libsqlite3 in the SDK; OpenSSL + libpq live
             # under Homebrew off the default include/lib path. cc/clang
