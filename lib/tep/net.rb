@@ -12,6 +12,9 @@ module Sock
   # libssl/libcrypto. Linked for every app (like sqlite3 elsewhere);
   # the plaintext path never calls into it, so apps that make no HTTPS
   # requests pay only the link cost, not runtime. See tep#148.
+  # (When OpenSSL is off the default path -- macOS/Homebrew -- the build
+  # finds it via CPATH/LIBRARY_PATH in the environment, not a cflag
+  # here; spinel's ffi_cflags rejects an empty-string placeholder.)
   ffi_lib "ssl"
   ffi_lib "crypto"
 
