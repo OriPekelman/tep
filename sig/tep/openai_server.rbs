@@ -27,6 +27,8 @@ module Tep
         def chat_completion_stream: (Tep::Request req, Tep::Llm::OpenAI::ChatStreamSink sink) -> Integer
         # Device label surfaced into the run_start event's backend.kind.
         def device_kind: () -> String
+        # owned_by value for /v1/models entries (default "tep").
+        def model_owner: () -> String
         # When true, gates /v1/embeddings (chunk 7.3).
         def supports_embeddings?: () -> bool
         # Pooled embedding for /v1/embeddings: token_ids in (IDs only),
@@ -68,6 +70,11 @@ module Tep
         attr_accessor text: String
         attr_accessor prompt_tokens: Integer
         attr_accessor completion_tokens: Integer
+        # Generated token IDs for IDs-only backends; emitted as
+        # choices[0].ids when non-empty (omitted for text backends).
+        attr_accessor token_ids: Array[Integer]
+        # choices[0].finish_reason (default "stop").
+        attr_accessor finish_reason: String
         def initialize: () -> void
       end
 
