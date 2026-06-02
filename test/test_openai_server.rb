@@ -596,3 +596,65 @@ class TestOpenAIEmbeddings < TepTest
     assert_equal "invalid_request_error", body["error"]["type"]
   end
 end
+
+# IDs-only backend (toy#30 convergence): a backend with no detokenizer
+# returns the generated token IDs in Completion#token_ids. The
+# CompletionsHandler then emits choices[0].ids (text stays ""), honors
+# Completion#finish_reason, and ModelsHandler reflects Backend#model_owner
+# + a created stamp. This is the exact surface toy's serve path adopts to
+# drop its hand-rolled handlers.
+class TestOpenAIServerIdsBackend < TepTest
+  app_source <<~RB
+    require 'sinatra'
+
+    class IdsBackend < Tep::Llm::OpenAI::Backend
+      def list_models
+        ["toy-1"]
+      end
+      def model_owner
+        "toy"
+      end
+      def generate_from_tokens(model, token_ids, sampling)
+        c = Tep::Llm::OpenAI::Completion.new
+        # Echo input IDs +1000 as the "generated" IDs so the test can
+        # assert the ids field round-trips; a real backend decodes.
+        ids = [0]; ids.delete_at(0)
+        i = 0
+        while i < token_ids.length
+          ids.push(token_ids[i] + 1000)
+          i = i + 1
+        end
+        c.token_ids         = ids
+        c.prompt_tokens     = token_ids.length
+        c.completion_tokens = ids.length
+        c.finish_reason     = "length"
+        c
+      end
+    end
+
+    Tep::Llm::OpenAI::Server.use(IdsBackend.new)
+    Tep::Llm::OpenAI::Server.serve!
+  RB
+
+  def test_completions_emit_ids_field
+    res = post("/v1/completions",
+               "{\"model\":\"toy-1\",\"prompt\":[10,20,30],\"max_tokens\":3}")
+    assert_equal "200", res.code
+    body = JSON.parse(res.body)
+    assert_equal "text_completion", body["object"]
+    # Generated IDs surface as choices[0].ids (input + 1000); text is "".
+    assert_equal [1010, 1020, 1030], body["choices"][0]["ids"]
+    assert_equal "", body["choices"][0]["text"]
+    assert_equal "length", body["choices"][0]["finish_reason"]
+    assert_equal 3, body["usage"]["prompt_tokens"]
+    assert_equal 3, body["usage"]["completion_tokens"]
+  end
+
+  def test_models_reflects_backend_owner_and_created
+    body = JSON.parse(get("/v1/models").body)
+    m = body["data"][0]
+    assert_equal "toy-1", m["id"]
+    assert_equal "toy",   m["owned_by"]
+    assert_kind_of Integer, m["created"]
+  end
+end

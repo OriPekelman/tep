@@ -40,9 +40,9 @@ curl -s localhost:4567/v1/chat/completions \
        "messages":[{"role":"user","content":"hi"}]}'
 
 tail -1 /tmp/gateway.events.jsonl
-# {"kind":"inference","phase":"serve","t":3,"model":"gpt-4o-mini",
-#  "prompt_tokens":0,"completion_tokens":42,"wall_us":3000000,
-#  "extra":{"request_id":"...","principal_id":"anonymous"}}
+# {"kind":"eval","phase":"serve","t":3,"name":"request","extra":{
+#   "model":"gpt-4o-mini","prompt_tokens":0,"completion_tokens":42,
+#   "latency_us":3000000,"request_id":"...","principal_id":"anonymous"}}
 ```
 
 The events stream is the toy/v1 envelope, so a research-lab
@@ -58,8 +58,9 @@ the same way it ingests a training run.
   0. A real gateway parses `delta.content` / the request `messages`.
   The origin-server battery (`Tep::Llm::OpenAI::Server`) reports exact
   counts from the backend.
-- **`wall_us` is second-resolution** (`Time.now` exposes only integer
-  epoch seconds; LLM requests are seconds-scale, so latency is still
+- **`latency_us` is second-resolution** (the caller passes `wall_us`,
+  emitted on the wire as `latency_us`; `Time.now` exposes only integer
+  epoch seconds, and LLM requests are seconds-scale, so latency is still
   meaningful). Sub-second timing would need a µs-clock primitive.
 - **Auth/capabilities** flow through `req.identity` like any tep
   route — gate the gateway with `req.identity.may?(:call_upstream)` in

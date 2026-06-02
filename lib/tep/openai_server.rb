@@ -94,6 +94,13 @@ module Tep
           "cpu"
         end
 
+        # owned_by value for each entry in the /v1/models list. Defaults
+        # to "tep"; a backend overrides to attribute models to its own
+        # project (e.g. toy returns "toy").
+        def model_owner
+          "tep"
+        end
+
         # Backends that can embed override this -> true (gates
         # /v1/embeddings, chunk 7.3).
         def supports_embeddings?
@@ -257,13 +264,27 @@ module Tep
       end
 
       # A backend's generation result: the decoded text + token usage.
+      #
+      # token_ids carries the GENERATED token IDs for an IDs-only backend
+      # (no detokenizer): when non-empty, CompletionsHandler emits them as
+      # choices[0].ids alongside text (which such a backend leaves ""),
+      # matching the "tokenize/detokenize client-side" serving contract.
+      # Text backends leave token_ids empty and the ids field is omitted.
+      # finish_reason defaults to "stop"; a fixed-length greedy backend
+      # sets "length".
       class Completion
         attr_accessor :text, :prompt_tokens, :completion_tokens
+        attr_accessor :token_ids, :finish_reason
 
         def initialize
           @text              = ""
           @prompt_tokens     = 0
           @completion_tokens = 0
+          # Typed-empty Array[Integer] seed (the [0]; delete_at(0) landmine
+          # pattern) so Spinel emits an IntArray slot, not poly.
+          @token_ids         = [0]
+          @token_ids.delete_at(0)
+          @finish_reason     = "stop"
         end
       end
 
@@ -474,7 +495,9 @@ module Tep
       class ModelsHandler < Tep::Handler
         def handle(req, res)
           res.headers["Content-Type"] = "application/json"
-          models = Tep::APP.openai_backend.list_models
+          models  = Tep::APP.openai_backend.list_models
+          owner   = Tep::APP.openai_backend.model_owner
+          created = Time.now.to_i
           out = "{\"object\":\"list\",\"data\":["
           i = 0
           while i < models.length
@@ -484,7 +507,8 @@ module Tep
             out = out + "{" +
               Tep::Json.encode_pair_str("id", models[i]) + "," +
               Tep::Json.encode_pair_str("object", "model") + "," +
-              Tep::Json.encode_pair_str("owned_by", "tep") +
+              Tep::Json.encode_pair_int("created", created) + "," +
+              Tep::Json.encode_pair_str("owned_by", owner) +
             "}"
             i += 1
           end
@@ -564,6 +588,14 @@ module Tep
             model, comp.prompt_tokens, comp.completion_tokens, wall_us, extra
           )
 
+          # IDs-only backends (no detokenizer) carry the generated token
+          # IDs; emit them as choices[0].ids. Text backends leave token_ids
+          # empty and the field is omitted (standard OpenAI shape).
+          ids_frag = ""
+          if comp.token_ids.length > 0
+            ids_frag = "\"ids\":" + Tep::Json.from_int_array(comp.token_ids) + ","
+          end
+
           "{" +
             Tep::Json.encode_pair_str("id", "cmpl-tep") + "," +
             Tep::Json.encode_pair_str("object", "text_completion") + "," +
@@ -572,7 +604,8 @@ module Tep
             "\"choices\":[{" +
               Tep::Json.encode_pair_int("index", 0) + "," +
               Tep::Json.encode_pair_str("text", comp.text) + "," +
-              Tep::Json.encode_pair_str("finish_reason", "stop") +
+              ids_frag +
+              Tep::Json.encode_pair_str("finish_reason", comp.finish_reason) +
             "}]," +
             "\"usage\":{" +
               Tep::Json.encode_pair_int("prompt_tokens", comp.prompt_tokens) + "," +

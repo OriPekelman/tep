@@ -1,9 +1,26 @@
-cc94707765c376e507ebac1ac2d902ac765c6da5
+a782696
 
 # Pinned matz/spinel commit tep is verified to build + test against.
 # Only the first line (the ref) is read by tools/spinel-fresh.sh.
 #
-# cc94707 (2026-05-31). Bumped from f7602f4 (+2 commits), both on the
+# a782696 (2026-06-02). Bumped from cc94707 (+81 commits) onto current
+# master to harvest the GC-rooting + dispatch fixes that close tep's
+# remaining spinel gates:
+#   - #1177 (004dc03): root the poly each-loop receiver temp across the
+#     loop body -- the residual rooting gap consistent with the #157
+#     auth-flake (poly-recv enumeration under parallel caps round-trip).
+#   - #1196 (deb1d81 + 2e3eb5f): fix two GC use-after-frees in generated
+#     view rendering.
+#   - 0b5237d: keep subclass initialize params out of override
+#     poly-unification (dispatch narrowing).
+#   - matz/spinel#628 (typed yield loses type at block-local) now CLOSED
+#     -- reverify whether the instance-method case (PG::Pool#with) is lit.
+#   - plus typed-array surface (map!/select!/grep/product/object_id),
+#     Comparable#between? via <=>, lexical const-ref typing, Float
+#     value-based rounding.
+# Verify: full parallel suite + #157 stress in the dev container.
+#
+# Prior (cc94707, 2026-05-31). Bumped from f7602f4 (+2 commits), both on the
 # `require` path that the spinelgems flow exercises (vendored gems emit
 # plain `require "json"` / `require "set"` that reach spinel's resolver):
 #   - fe4810f: clearer "not available in Spinel" diagnostic + native-lib
