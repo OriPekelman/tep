@@ -67,10 +67,27 @@ jobs:
             echo "PKG_CONFIG_PATH=$SSL/lib/pkgconfig:$PQ/lib/pkgconfig" >> "$GITHUB_ENV"
           fi
 
+      # Hosted legs: prebuilt Ruby via setup-ruby. Skipped on gx10, where
+      # setup-ruby hardcodes /opt/hostedtoolcache (root-owned) -- we use
+      # an rv-managed user-space Ruby there instead (next step).
       - uses: ruby/setup-ruby@v1
+        if: matrix.os != 'gx10-arm64'
         with:
           ruby-version: "4.0"
           bundler-cache: true
+
+      # gx10 self-hosted: Ruby 4.0 from rv (user-space, no root / no /opt).
+      # Ruby 4.0 ships +PRISM, so bin/tep needs no extra gem. .ruby-version
+      # pins 4.0.0; rv install is idempotent.
+      - name: Ruby 4.0 via rv (gx10)
+        if: matrix.os == 'gx10-arm64'
+        run: |
+          export PATH="$HOME/.local/bin:$PATH"
+          rv ruby install 4.0.0
+          rbin="$(dirname "$(rv ruby find 4.0.0)")"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          echo "$rbin"            >> "$GITHUB_PATH"
+          "$rbin/ruby" --version
 
       - name: Build Spinel from master
         run: |
