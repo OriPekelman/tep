@@ -87,6 +87,39 @@ module TepHarness
     @running.delete(s)
   end
 
+  # Like terminate, but RETURNS the Process::Status of the SIGTERM'd
+  # process (or nil if not found) so a test can assert on how it exited
+  # -- e.g. that a no-events server doesn't SIGSEGV on shutdown (the #186
+  # regression: termsig == SEGV => exit 139). Bounded: escalates to
+  # SIGKILL after `timeout` so a wedged server can't hang the suite.
+  def self.terminate_status(port, timeout: 5.0)
+    s = find_by_port(port)
+    return nil unless s
+    pid = s[:pid]
+    signal_group(pid, "TERM")
+    deadline = Time.now + timeout
+    status = nil
+    loop do
+      begin
+        got, st = Process.waitpid2(pid, Process::WNOHANG)
+        if got
+          status = st
+          break
+        end
+      rescue Errno::ECHILD
+        break
+      end
+      if Time.now > deadline
+        signal_group(pid, "KILL")
+        _, status = (Process.waitpid2(pid) rescue [nil, nil])
+        break
+      end
+      sleep 0.02
+    end
+    @running.delete(s)
+    status
+  end
+
   def self.kill_all
     @running.each do |s|
       reap(s[:pid])
