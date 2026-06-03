@@ -34,7 +34,7 @@ TEP_PG_LIBS   ?= $(shell \
     (pg_config --libdir 2>/dev/null | sed -e 's|^|-L|' ; echo "-lpq") | tr '\n' ' ')
 export TEP_PG_CFLAGS TEP_PG_LIBS
 
-.PHONY: all clean helper hello sinatra_style bench bench-tep bench-sinatra demo test test-parallel spinel-fresh test-pg vendor-examples
+.PHONY: all clean helper hello sinatra_style bench bench-tep bench-sinatra demo test test-parallel spinel-fresh test-pg vendor-examples doctor
 
 # Vendor each gem example's Gemfile-declared dependencies via
 # bundler-spinel (spinel-compat vendor, from $(SPINELGEMS)) into
@@ -95,6 +95,28 @@ demo: hello
 test: helper
 	@pkill -f tep-test 2>/dev/null; true
 	ruby test/run_all.rb
+
+# `make doctor` -- OPTIONAL, DEV-ONLY inference health check via
+# spinel-dev's `doctor` (compile-probe + emit-rbs untyped scan +
+# value-bisect). Runs on the inlined .tep.rb of a couple of examples
+# (tep apps are FFI, so --no-cruby single-sided). NOT a prerequisite of
+# `all`/`test`/CI -- it self-skips when ../spinel-dev is absent, so tep
+# never gains a hard dependency on the tooling. Run `make all` first to
+# produce the .tep.rb. Override the tool path with DOCTOR=.
+DOCTOR ?= ../spinel-dev/tools/doctor/doctor.sh
+doctor:
+	@if [ ! -x "$(DOCTOR)" ]; then \
+	  echo "make doctor: spinel-dev not found at $(DOCTOR) (optional dev tooling); skipping."; \
+	else \
+	  for tep in examples/.hello.tep.rb examples/.sinatra_style.tep.rb; do \
+	    if [ -f "$$tep" ]; then \
+	      echo "== doctor $$tep =="; \
+	      SPINEL_DIR="$${SPINEL_DIR:-$$HOME/sites/spinel}" "$(DOCTOR)" --no-cruby "$$tep" || true; \
+	    else \
+	      echo "make doctor: $$tep not built (run \`make all\`); skipping it."; \
+	    fi; \
+	  done; \
+	fi
 
 # `make test-parallel` -- dev fast loop. Runs each test/test_*.rb in
 # its own process in parallel (sidestepping the harness's "one thread
