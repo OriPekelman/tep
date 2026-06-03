@@ -62,3 +62,6 @@ examples/*/vendor/
 # Per-project AI assistant context (local-only; the canonical file
 # lives on the Mac and is rsynced to gx10). Public repo doesn't ship it.
 CLAUDE.md
+
+# Optional spinel --emit-rbs output (rake rbs:emit, dev-only)
+sig/.emitted/
