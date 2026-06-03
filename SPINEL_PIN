@@ -1,4 +1,15 @@
-a782696
+f6d5eef
+
+# f6d5eef (2026-06-03). Bumped from a782696 (+32) onto current master to
+# absorb the spinel-dev tooling surfaces + codegen fixes:
+#   - `spinel --emit-rbs` (#1276, MERGED): whole-program inference -> RBS,
+#     for regenerating/diffing tep's hand-authored sig/.
+#   - `--debug` / `-g` line-mapped builds (#1292, landing): native-debugger
+#     stepping across require_relative.
+#   - codegen: implicit allocation-site specialization (perf), covariant
+#     return dispatch, poly-setter unbox into narrow attr_accessor field.
+# No tep workaround obviated. Instance-method typed-yield (each/each_row/
+# Pool#with) is STILL broken here (no fix upstream); tracked tep#189.
 
 # Pinned matz/spinel commit tep is verified to build + test against.
 # Only the first line (the ref) is read by tools/spinel-fresh.sh.
