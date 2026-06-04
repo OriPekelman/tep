@@ -89,9 +89,12 @@ jobs:
           echo "$rbin"            >> "$GITHUB_PATH"
           "$rbin/ruby" --version
 
-      - name: Build Spinel from master
+      - name: Build Spinel at SPINEL_PIN
         run: |
-          git clone --depth 1 https://github.com/matz/spinel.git spinel-src
+          pin="$(head -1 SPINEL_PIN | tr -d '[:space:]')"
+          echo "pinning spinel to $pin"
+          git clone https://github.com/matz/spinel.git spinel-src
+          git -C spinel-src checkout "$pin"
           make -C spinel-src deps
           make -C spinel-src all
           echo "TEP_SPINEL_DIR=$PWD/spinel-src" >> "$GITHUB_ENV"
