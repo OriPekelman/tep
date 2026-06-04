@@ -275,6 +275,16 @@ class TepTest < Minitest::Test
       r = klass.new(uri)
       r.body = body if body && %i[post put patch].include?(method)
       headers.each { |k, v| r[k] = v }
+      # Ruby <= 3.x's Net::HTTP auto-set Content-Type:
+      # application/x-www-form-urlencoded whenever request.body was
+      # assigned; Ruby 4.0 dropped that default, so a bodied POST goes
+      # out with no Content-Type and tep (correctly) doesn't parse it as
+      # form params. Restore the historical default for bodied requests
+      # unless a test set its own Content-Type -- matches what real form
+      # clients send and keeps the suite Ruby-version-agnostic.
+      if r.body && !r["content-type"]
+        r["Content-Type"] = "application/x-www-form-urlencoded"
+      end
       http.request(r)
     end
   end

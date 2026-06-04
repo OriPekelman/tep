@@ -18,25 +18,31 @@ permissions:
 jobs:
   build:
     name: build + compile example (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    # The ubuntu-24.04-arm HOSTED runner is unreliable for this workload:
-    # it gets reclaimed/cancelled mid-job (the spinel-from-source build),
-    # at inconsistent points, while the build itself is sound (it built
-    # fully once, and builds reliably on our aarch64 dev box). Mark only
-    # the arm leg advisory so a runner preemption doesn't red the gate;
-    # ubuntu-latest + macos-14 stay required. A gx10 self-hosted arm
-    # runner will restore a strict arm gate -- see #183.
-    continue-on-error: ${{ matrix.os == 'ubuntu-24.04-arm' }}
+    runs-on: ${{ matrix.runs_on }}
+    # The arm leg runs on gx10, our self-hosted aarch64-Linux box (#183),
+    # restoring a STRICT arm gate. The GitHub-hosted ubuntu-24.04-arm
+    # runner was unreliable (reclaimed/cancelled mid-job during the
+    # spinel-from-source build) so it's retired here. All three legs are
+    # required now -- no continue-on-error.
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, ubuntu-24.04-arm, macos-14]
+        include:
+          - os: ubuntu-latest
+            runs_on: ubuntu-latest
+          - os: gx10-arm64
+            runs_on: [self-hosted, gx10, ARM64]
+          - os: macos-14
+            runs_on: macos-14
     env:
       TEP_SKIP_SPINEL_FRESH: "1"   # we provide a fresh spinel below
     steps:
       - uses: actions/checkout@v5
 
       - name: Build deps (C-ext headers — sqlite / libpq / openssl)
+        # gx10 (self-hosted) already has the headers and the tmux runner
+        # has no passwordless sudo; skip apt there. Hosted legs install.
+        if: matrix.os != 'gx10-arm64'
         run: |
           if [ "$RUNNER_OS" = "Linux" ]; then
             # NB: do NOT add libssl-dev -- OpenSSL headers ship on the
@@ -61,14 +67,34 @@ jobs:
             echo "PKG_CONFIG_PATH=$SSL/lib/pkgconfig:$PQ/lib/pkgconfig" >> "$GITHUB_ENV"
           fi
 
+      # Hosted legs: prebuilt Ruby via setup-ruby. Skipped on gx10, where
+      # setup-ruby hardcodes /opt/hostedtoolcache (root-owned) -- we use
+      # an rv-managed user-space Ruby there instead (next step).
       - uses: ruby/setup-ruby@v1
+        if: matrix.os != 'gx10-arm64'
         with:
-          ruby-version: "3.4"
+          ruby-version: "4.0"
           bundler-cache: true
 
-      - name: Build Spinel from master
+      # gx10 self-hosted: Ruby 4.0 from rv (user-space, no root / no /opt).
+      # Ruby 4.0 ships +PRISM, so bin/tep needs no extra gem. .ruby-version
+      # pins 4.0.0; rv install is idempotent.
+      - name: Ruby 4.0 via rv (gx10)
+        if: matrix.os == 'gx10-arm64'
         run: |
-          git clone --depth 1 https://github.com/matz/spinel.git spinel-src
+          export PATH="$HOME/.local/bin:$PATH"
+          rv ruby install 4.0.0
+          rbin="$(dirname "$(rv ruby find 4.0.0)")"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          echo "$rbin"            >> "$GITHUB_PATH"
+          "$rbin/ruby" --version
+
+      - name: Build Spinel at SPINEL_PIN
+        run: |
+          pin="$(head -1 SPINEL_PIN | tr -d '[:space:]')"
+          echo "pinning spinel to $pin"
+          git clone https://github.com/matz/spinel.git spinel-src
+          git -C spinel-src checkout "$pin"
           make -C spinel-src deps
           make -C spinel-src all
           echo "TEP_SPINEL_DIR=$PWD/spinel-src" >> "$GITHUB_ENV"

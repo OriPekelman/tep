@@ -10,11 +10,14 @@ permissions:
   contents: read
 
 jobs:
-  # Build matz/spinel from tip-of-master and publish the toolchain as
-  # an artifact. Spinel is pre-release and evolves rapidly; tep has a
-  # hard dependency on it, so we deliberately track an unpinned master
-  # to surface upstream breakage early. If this turns flaky, pin a SHA
-  # here (and only here).
+  # Build spinel at tep's SPINEL_PIN (the commit tep is verified against)
+  # and publish the toolchain as an artifact. We used to track tip-of-
+  # master to surface upstream breakage early, but that makes CI red on
+  # any master regression (e.g. a full-lib/tep codegen regression) even
+  # though tep is green at its pin -- so CI now builds the pinned spinel,
+  # the single source of truth being the SPINEL_PIN file. (A separate
+  # non-blocking "spinel master canary" job can restore the early-warning
+  # without gating the suite.)
   #
   # The `spinel` shell wrapper resolves spinel_parse / spinel_analyze /
   # spinel_codegen / lib/ relative to its own directory, so the tree
@@ -22,11 +25,13 @@ jobs:
   build-spinel:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
-        with:
-          repository: matz/spinel
-          ref: master
-          path: spinel-src
+      - uses: actions/checkout@v5            # tep -- for SPINEL_PIN
+      - name: Clone + checkout pinned spinel
+        run: |
+          pin="$(head -1 SPINEL_PIN | tr -d '[:space:]')"
+          echo "pinning spinel to $pin"
+          git clone https://github.com/matz/spinel.git spinel-src
+          git -C spinel-src checkout "$pin"
       - name: make deps (fetch vendored libprism)
         run: make -C spinel-src deps
       - name: make all
@@ -64,7 +69,7 @@ jobs:
       - name: Set up Ruby
         uses: ruby/setup-ruby@v1
         with:
-          ruby-version: "3.4"
+          ruby-version: "4.0"
           bundler-cache: true   # installs Gemfile (rake / minitest / rbs)
       - uses: actions/download-artifact@v7
         with:

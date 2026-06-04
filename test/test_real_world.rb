@@ -245,7 +245,12 @@ class TestRealWorld < TepTest
       # With a successful login + cookie jar...
       uri = URI("http://127.0.0.1:#{@port}/login")
       net = Net::HTTP.new(uri.host, uri.port)
-      r_login = net.post(uri.path, "user=alice&password=hunter2")
+      # Explicit form Content-Type: this direct net.post bypasses the
+      # harness req() helper, and Ruby 4.0's Net::HTTP no longer auto-sets
+      # it for a bodied request (3.x did), so without it the login form
+      # isn't parsed -> 401 instead of 302.
+      r_login = net.post(uri.path, "user=alice&password=hunter2",
+                         {"Content-Type" => "application/x-www-form-urlencoded"})
       assert_equal "302", r_login.code
       cookie = r_login["Set-Cookie"]
       refute_nil cookie
