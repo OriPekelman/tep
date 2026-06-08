@@ -211,21 +211,21 @@ module Tep
     end
 
     # Flat-JSON wire format for a diff event. `kind` is one of
-    # "join" / "leave" / "status". Tep::Json's flat-object
+    # "join" / "leave" / "status". SpinelKit::Json's flat-object
     # extractors handle this on the client side (or any
     # JSON-aware peer).
     def self.encode_diff(kind, entry)
       "{" +
-        Tep::Json.encode_pair_str("kind", kind) + "," +
-        Tep::Json.encode_pair_str("topic", entry.topic) + "," +
-        Tep::Json.encode_pair_str("principal", entry.principal_id) + "," +
-        Tep::Json.encode_pair_str("ekind", entry.kind.to_s) + "," +
-        Tep::Json.encode_pair_str("agent_id", entry.agent_id) + "," +
-        Tep::Json.encode_pair_int("fd", entry.fd) + "," +
-        Tep::Json.encode_pair_int("since", entry.since) + "," +
-        Tep::Json.encode_pair_str("state", entry.status_state.to_s) + "," +
-        Tep::Json.encode_pair_str("note", entry.status_note) + "," +
-        Tep::Json.encode_pair_int("until_ts", entry.status_until) +
+        SpinelKit::Json.encode_pair_str("kind", kind) + "," +
+        SpinelKit::Json.encode_pair_str("topic", entry.topic) + "," +
+        SpinelKit::Json.encode_pair_str("principal", entry.principal_id) + "," +
+        SpinelKit::Json.encode_pair_str("ekind", entry.kind.to_s) + "," +
+        SpinelKit::Json.encode_pair_str("agent_id", entry.agent_id) + "," +
+        SpinelKit::Json.encode_pair_int("fd", entry.fd) + "," +
+        SpinelKit::Json.encode_pair_int("since", entry.since) + "," +
+        SpinelKit::Json.encode_pair_str("state", entry.status_state.to_s) + "," +
+        SpinelKit::Json.encode_pair_str("note", entry.status_note) + "," +
+        SpinelKit::Json.encode_pair_int("until_ts", entry.status_until) +
       "}"
     end
 

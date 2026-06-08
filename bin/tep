@@ -563,7 +563,7 @@ def translate(input_path)
   # Tep::MCP emission. For each `mcp_tool 'name', "desc" do ... end`:
   #
   #   * TepMCP_Tools.call_<i>(req, args_json) -- static cmeth that
-  #     parses args out of args_json (via Tep::Json.get_str/get_int),
+  #     parses args out of args_json (via SpinelKit::Json.get_str/get_int),
   #     binds them as locals, and runs the user's on_call body. The
   #     body is rewritten the same way route bodies are (req / res /
   #     params rewrites). Returns Tep::MCP::Result.
@@ -620,11 +620,11 @@ def translate(input_path)
       end
       t[:params].each do |p|
         if p[:type] == "Integer"
-          out << "    #{p[:name]} = Tep::Json.get_int(args_json, #{p[:name].inspect})"
+          out << "    #{p[:name]} = SpinelKit::Json.get_int(args_json, #{p[:name].inspect})"
         elsif p[:type] == "Float"
-          out << "    #{p[:name]} = Tep::Json.get_str(args_json, #{p[:name].inspect}).to_f"
+          out << "    #{p[:name]} = SpinelKit::Json.get_str(args_json, #{p[:name].inspect}).to_f"
         else
-          out << "    #{p[:name]} = Tep::Json.get_str(args_json, #{p[:name].inspect})"
+          out << "    #{p[:name]} = SpinelKit::Json.get_str(args_json, #{p[:name].inspect})"
         end
       end
       out << indent(body, 4)
@@ -707,8 +707,8 @@ def translate(input_path)
     out << "  def handle(req, res)"
     out << "    res.headers[\"Content-Type\"] = \"application/json\""
     out << "    body = req.raw_body"
-    out << "    method = Tep::Json.get_str(body, \"method\")"
-    out << "    req_id = Tep::Json.get_int(body, \"id\")"
+    out << "    method = SpinelKit::Json.get_str(body, \"method\")"
+    out << "    req_id = SpinelKit::Json.get_int(body, \"id\")"
     out << "    if method == \"initialize\""
     out << "      return Tep::MCP.initialize_envelope(req_id, #{server_name.inspect}, #{server_version.inspect})"
     out << "    end"
@@ -724,7 +724,7 @@ def translate(input_path)
     out << "    end"
     out << "    if method == \"tools/call\""
     out << "      params = Tep::MCP.nested_extract(body, \"params\")"
-    out << "      tool_name = Tep::Json.get_str(params, \"name\")"
+    out << "      tool_name = SpinelKit::Json.get_str(params, \"name\")"
     out << "      args = Tep::MCP.nested_extract(params, \"arguments\")"
     mcp_tools.each_with_index do |t, i|
       out << "      if tool_name == #{t[:name].inspect}"
@@ -740,7 +740,7 @@ def translate(input_path)
       out << "    end"
       out << "    if method == \"resources/read\""
       out << "      res_params = Tep::MCP.nested_extract(body, \"params\")"
-      out << "      res_uri = Tep::Json.get_str(res_params, \"uri\")"
+      out << "      res_uri = SpinelKit::Json.get_str(res_params, \"uri\")"
       mcp_resources.each_with_index do |rdef, i|
         out << "      if res_uri == #{rdef[:name].inspect}"
         out << "        c = TepMCP_Resources.read_#{i}(req)"

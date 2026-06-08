@@ -10,8 +10,8 @@ streaming, regex routes, modular `Sinatra::Base`, ERB. v0.3 added
 `send_file 'path'`, `configure { ... }` (incl. `:env`), `__END__`
 inline templates, `pass`, multiple chained `before`/`after`,
 optional path segments, full Rack::Request method surface, ERB
-ivar locals, a Mustache subset, Tep::SQLite, Tep::Json,
-Tep::Logger, Tep::Jwt, Tep::Password, Tep::Security
+ivar locals, a Mustache subset, Tep::SQLite, SpinelKit::Json,
+SpinelKit::Log, Tep::Jwt, Tep::Password, Tep::Security
 (CORS + secure headers), Tep::Assets (compile-time asset
 bundling), Tep::Scheduler (cooperative fiber scheduler with
 poll(2)-backed `io_wait`), Tep::Shell (popen + small-file
@@ -62,8 +62,8 @@ shape, lowered by the `websocket '/p' do |ws| ... end` DSL hook).
 | **ERB ivar locals (`@name`)**        | ✅ 3    | Sinatra-style: `@x = v` in handler / `before` filter, `<%= @x %>` in template. Translator stores on a per-request `req.ivars` String=>String bag; templates take `(locals, ivars)`. Values are `(...).to_s`-coerced on write. |
 | **Mustache (subset)**                | ✅ 3    | Build-time compiled; `mustache :name` DSL parallel to `erb :name`. See "Mustache subset" below. |
 | **SQLite (libsqlite3 wrapper)**      | ✅ 5    | `Tep::SQLite` class wrapping libsqlite3 via a thin C shim (tep_sqlite.c). Same FFI pattern as sphttp.c -- spinel can't load gem-style native extensions, so we link a static .o instead. See "SQLite" below. |
-| **JSON (subset)**                    | ✅ 13   | Pure-Ruby `Tep::Json`: encode primitives + flat-key decoder. See "JSON subset" below. |
-| **Logger**                           | ✅ 3    | `Tep::Logger` with debug/info/warn/error levels. stderr by default; `to_file(path)` appends. Format: `[<unix_seconds>] [<level>] <msg>`. |
+| **JSON (subset)**                    | ✅ 13   | Pure-Ruby `SpinelKit::Json`: encode primitives + flat-key decoder. See "JSON subset" below. |
+| **Logger**                           | ✅ 3    | `SpinelKit::Log` with debug/info/warn/error levels. stderr by default; `to_file(path)` appends. Format: `[<unix_seconds>] [<level>] <msg>`. |
 | **JWT (HS256)**                      | ✅ 10   | `Tep::Jwt` -- encode/verify/decode. HS256 only (asymmetric algs would need OpenSSL); `none` deliberately not supported (RFC 8725 §3.1). Tokens verify cleanly against the canonical `jwt` Ruby gem (interop test included). New base64url helpers (`sphttp_b64url_encode/decode`, `sphttp_hmac_sha256_b64url`) ride on top of the existing HMAC-SHA256 used by the session store. |
 | **Password hashing (PBKDF2)**        | ✅ 9    | `Tep::Password.hash` / `verify`. PBKDF2-SHA256, 200k iters by default, 16-byte CSPRNG salt. Self-describing storage format (`pbkdf2-sha256$<iters>$<salt>$<derived>`) so iter rotation can land later without breaking old hashes. New `sphttp_pbkdf2_sha256_b64url` + `sphttp_random_b64url` C helpers. (`Klass.hash(plain)` factory shape resolved via spinel #407.) |
 | **CORS + secure headers**            | ✅ 4    | `Tep::Security::Cors` (before-filter; configurable origin / verbs / headers / max-age; OPTIONS preflight short-circuits with 204) and `Tep::Security::Headers` (after-filter; `nosniff`, `SAMEORIGIN`, `Referrer-Policy: strict-origin-when-cross-origin`, `X-XSS-Protection: 0`, optional HSTS via `set_hsts(seconds)`). |
@@ -119,9 +119,9 @@ Two flagship examples that put the framework through its paces.
 ### `examples/blog/`
 
 Posts + users persisted in SQLite, web login via sessions +
-`Tep::Password`, JSON API with `Tep::Json`, JWT-authed writes via
+`Tep::Password`, JSON API with `SpinelKit::Json`, JWT-authed writes via
 `Tep::Jwt`, ERB views with Sinatra-style `@ivar` locals, request
-logging via `Tep::Logger`, CORS + secure headers via
+logging via `SpinelKit::Log`, CORS + secure headers via
 `Tep::Security`. First boot seeds `alice / hunter2` and an intro
 post explaining what tep is.
 
@@ -308,7 +308,7 @@ Constraints:
 
 ## JSON subset
 
-`Tep::Json` is a pure-Ruby JSON shim covering the encode + decode
+`SpinelKit::Json` is a pure-Ruby JSON shim covering the encode + decode
 shapes that JSON-over-HTTP APIs use in practice. It deliberately
 trades full library breadth for spinel-friendly code paths.
 
@@ -316,24 +316,24 @@ trades full library breadth for spinel-friendly code paths.
 
 ```ruby
 # Primitives.
-Tep::Json.escape(s)              # body of a JSON string literal (no quotes)
-Tep::Json.quote(s)               # "<escaped s>"
+SpinelKit::Json.escape(s)              # body of a JSON string literal (no quotes)
+SpinelKit::Json.quote(s)               # "<escaped s>"
 
 # Object building blocks (fixed-arity; compose by concatenation).
-Tep::Json.encode_pair_str("k", v_string)   # "k":"v"
-Tep::Json.encode_pair_int("k", v_int)      # "k":N
+SpinelKit::Json.encode_pair_str("k", v_string)   # "k":"v"
+SpinelKit::Json.encode_pair_int("k", v_int)      # "k":N
 
 # Build a full object literal:
-"{" + Tep::Json.encode_pair_str("name", name) + "," +
-      Tep::Json.encode_pair_int("age", age) + "}"
+"{" + SpinelKit::Json.encode_pair_str("name", name) + "," +
+      SpinelKit::Json.encode_pair_int("age", age) + "}"
 
 # Arrays.
-Tep::Json.from_str_array(["a", "b"])       # ["a","b"]
-Tep::Json.from_int_array([1, 2, 3])        # [1,2,3]
+SpinelKit::Json.from_str_array(["a", "b"])       # ["a","b"]
+SpinelKit::Json.from_int_array([1, 2, 3])        # [1,2,3]
 
 # Hashes (String=>String, String=>Int).
-Tep::Json.from_str_hash({"name" => "alice"})   # {"name":"alice"}
-Tep::Json.from_int_hash({"age" => 30})         # {"age":30}
+SpinelKit::Json.from_str_hash({"name" => "alice"})   # {"name":"alice"}
+SpinelKit::Json.from_int_hash({"age" => 30})         # {"age":30}
 ```
 
 The hash forms `each`-iterate and inline `Json.quote` on the
@@ -345,9 +345,9 @@ a Hash first.
 ### Decode (flat-key, top-level only)
 
 ```ruby
-Tep::Json.get_str(body, "name")  # value of top-level "name", or "" if absent / non-string
-Tep::Json.get_int(body, "age")   # 0 if absent / non-numeric
-Tep::Json.has_key?(body, "x")    # boolean
+SpinelKit::Json.get_str(body, "name")  # value of top-level "name", or "" if absent / non-string
+SpinelKit::Json.get_int(body, "age")   # 0 if absent / non-numeric
+SpinelKit::Json.has_key?(body, "x")    # boolean
 ```
 
 The hand-rolled state-machine parser walks one `{ "k": <value>, ... }`

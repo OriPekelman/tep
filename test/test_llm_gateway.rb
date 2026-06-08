@@ -51,8 +51,8 @@ class TestLlmGateway < TepTest
         0
       end
       def on_stream_end(req, out, stats)
-        model = Tep::Json.get_str(req.raw_body, "model")
-        extra = "{" + Tep::Json.encode_pair_str("request_id", "req-1") + "}"
+        model = SpinelKit::Json.get_str(req.raw_body, "model")
+        extra = "{" + SpinelKit::Json.encode_pair_str("request_id", "req-1") + "}"
         EVENTS.inference(model, 0, stats.chunk_count, 1000000, extra)
         0
       end

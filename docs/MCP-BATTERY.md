@@ -94,7 +94,7 @@ built via one of:
 
 ```ruby
 Tep::MCP.text("plain text")
-Tep::MCP.json(obj)              # serializes via Tep::Json
+Tep::MCP.json(obj)              # serializes via SpinelKit::Json
 Tep::MCP.error("message")       # marks the tool result as isError
 Tep::MCP.stream do |out|
   out.write("chunk\n")
@@ -316,7 +316,7 @@ concerns:
   mixed value types (strings, integers, arrays of literals).
   spinel doesn't track heterogeneous-value hashes well; we'll
   serialize the schema as a pre-built string via
-  `Tep::Json.encode_*` helpers rather than building a Ruby Hash
+  `SpinelKit::Json.encode_*` helpers rather than building a Ruby Hash
   at runtime.
 - **Identity flow.** Already proven via the WS req-bridge
   (matz/spinel#54 → tep PR #56). Same pattern in MCP.

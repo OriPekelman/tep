@@ -39,7 +39,7 @@ api.before do |req, upstream_req|
 end
 
 api.after do |upstream_res, res|
-  Logger.info "upstream returned " + upstream_res.status.to_s
+  LOGGER.info("upstream returned " + upstream_res.status.to_s)  # LOGGER = SpinelKit::Log.new
 end
 
 api.on_stream_chunk do |chunk, out|
@@ -89,7 +89,7 @@ Tep.get  "/v1/models",           api
 >   ureq.set_header("Authorization", "Bearer " + ENV["OPENAI_KEY"])
 >   false                                  # true short-circuits
 > end
-> api.after { |req, ures, res| Tep::Logger.info("up " + ures.status.to_s); 0 }
+> api.after { |req, ures, res| LOGGER.info("up " + ures.status.to_s); 0 }
 > Tep.post "/v1/chat/completions", api
 > ```
 >
@@ -105,7 +105,7 @@ Tep.get  "/v1/models",           api
 >     false                     # return true to short-circuit
 >   end
 >   def after_forward(req, ures, res)
->     Tep::Logger.info("upstream " + ures.status.to_s)
+>     LOGGER.info("upstream " + ures.status.to_s)   # LOGGER = SpinelKit::Log.new
 >     0
 >   end
 > end
@@ -190,7 +190,7 @@ end-of-stream `[DONE]` marker) write to it.
 >   # sniffing -- the client signals intent ("stream": true), and the
 >   # buffered path stays on the unchanged Tep::Http.send_req.
 >   def stream_request?(req)
->     Tep::Json.get_bool(req.raw_body, "stream")
+>     SpinelKit::Json.get_bool(req.raw_body, "stream")
 >   end
 >
 >   # One call per dechunked HTTP chunk / per SSE event record.
@@ -327,7 +327,7 @@ anthropic  = Tep::Proxy.new(upstream: "https://api.anthropic.com")
 # Route by model name in the request body
 post "/v1/chat/completions" do
   body = req.raw_body
-  model = Tep::Json.get_str(body, "model")
+  model = SpinelKit::Json.get_str(body, "model")
   if model.start_with?("claude-")
     anthropic.handle(req, res)
   else

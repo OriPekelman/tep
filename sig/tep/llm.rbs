@@ -28,7 +28,7 @@ module Tep
     def chat_stream: (Array[Tep::Llm::Message] messages, Tep::Stream out_stream) -> String
 
     # Internal: hand-rolled JSON for the request body (nested-array
-    # shape that Tep::Json's flat encoders don't cover).
+    # shape that SpinelKit::Json's flat encoders don't cover).
     def self.build_request_body: (String model, String system_prompt, Array[Tep::Llm::Message] messages) -> String
 
     # Internal: parse the response body's choices[0].message.

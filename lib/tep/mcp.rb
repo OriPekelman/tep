@@ -86,14 +86,14 @@ module Tep
     # handing the arguments sub-object to the per-tool cmeth.
     #
     # Returns "{}" when the key isn't present (so downstream
-    # Tep::Json.get_str / get_int calls see an empty object that
+    # SpinelKit::Json.get_str / get_int calls see an empty object that
     # returns their zero-default cleanly).
     def self.nested_extract(json, key)
-      pos = Tep::Json.find_value_start(json, key)
+      pos = SpinelKit::Json.find_value_start(json, key)
       if pos < 0
         return "{}"
       end
-      end_pos = Tep::Json.skip_value(json, pos)
+      end_pos = SpinelKit::Json.skip_value(json, pos)
       if end_pos <= pos
         return "{}"
       end
@@ -109,8 +109,8 @@ module Tep
           "\"protocolVersion\":\"" + Tep::MCP::PROTOCOL_VERSION + "\"," +
           "\"capabilities\":{\"tools\":{},\"resources\":{}}," +
           "\"serverInfo\":{" +
-            "\"name\":"    + Tep::Json.quote(server_name)    + "," +
-            "\"version\":" + Tep::Json.quote(server_version) +
+            "\"name\":"    + SpinelKit::Json.quote(server_name)    + "," +
+            "\"version\":" + SpinelKit::Json.quote(server_version) +
           "}" +
         "}" +
       "}"
@@ -138,7 +138,7 @@ module Tep
       "{\"jsonrpc\":\"2.0\",\"id\":" + req_id.to_s + "," +
         "\"result\":{" +
           "\"content\":[" +
-            "{\"type\":\"text\",\"text\":" + Tep::Json.quote(text) + "}" +
+            "{\"type\":\"text\",\"text\":" + SpinelKit::Json.quote(text) + "}" +
           "]," +
           "\"isError\":" + is_err_str +
         "}" +
@@ -163,9 +163,9 @@ module Tep
     def self.resources_read_envelope(req_id, uri, mime, text)
       "{\"jsonrpc\":\"2.0\",\"id\":" + req_id.to_s + "," +
         "\"result\":{\"contents\":[" +
-          "{\"uri\":" + Tep::Json.quote(uri) + "," +
-           "\"mimeType\":" + Tep::Json.quote(mime) + "," +
-           "\"text\":" + Tep::Json.quote(text) + "}" +
+          "{\"uri\":" + SpinelKit::Json.quote(uri) + "," +
+           "\"mimeType\":" + SpinelKit::Json.quote(mime) + "," +
+           "\"text\":" + SpinelKit::Json.quote(text) + "}" +
         "]}" +
       "}"
     end
@@ -175,7 +175,7 @@ module Tep
     def self.unknown_resource_envelope(req_id, uri)
       "{\"jsonrpc\":\"2.0\",\"id\":" + req_id.to_s + "," +
         "\"error\":{\"code\":-32602," +
-          "\"message\":" + Tep::Json.quote("unknown resource: " + uri) +
+          "\"message\":" + SpinelKit::Json.quote("unknown resource: " + uri) +
         "}" +
       "}"
     end
@@ -185,7 +185,7 @@ module Tep
     def self.unknown_tool_envelope(req_id, tool_name)
       "{\"jsonrpc\":\"2.0\",\"id\":" + req_id.to_s + "," +
         "\"error\":{\"code\":-32602," +
-          "\"message\":" + Tep::Json.quote("unknown tool: " + tool_name) +
+          "\"message\":" + SpinelKit::Json.quote("unknown tool: " + tool_name) +
         "}" +
       "}"
     end
@@ -195,7 +195,7 @@ module Tep
     def self.method_not_found_envelope(req_id, method_name)
       "{\"jsonrpc\":\"2.0\",\"id\":" + req_id.to_s + "," +
         "\"error\":{\"code\":-32601," +
-          "\"message\":" + Tep::Json.quote("method not found: " + method_name) +
+          "\"message\":" + SpinelKit::Json.quote("method not found: " + method_name) +
         "}" +
       "}"
     end

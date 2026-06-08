@@ -1,6 +1,6 @@
 require_relative "helper"
 
-# Tep::Json -- pure-Ruby JSON encode primitives + flat-key decode.
+# SpinelKit::Json -- pure-Ruby JSON encode primitives + flat-key decode.
 class TestJson < TepTest
   app_source <<~RB
     require 'sinatra'
@@ -8,56 +8,56 @@ class TestJson < TepTest
     # ---- encode side ----
     get '/escape' do
       res.headers["Content-Type"] = "application/json"
-      Tep::Json.quote("a\\"b\\nc")
+      SpinelKit::Json.quote("a\\"b\\nc")
     end
 
     get '/object' do
       res.headers["Content-Type"] = "application/json"
-      "{" + Tep::Json.encode_pair_str("name", "alice") + "," +
-            Tep::Json.encode_pair_int("age", 30) + "}"
+      "{" + SpinelKit::Json.encode_pair_str("name", "alice") + "," +
+            SpinelKit::Json.encode_pair_int("age", 30) + "}"
     end
 
     get '/array' do
       res.headers["Content-Type"] = "application/json"
-      Tep::Json.from_str_array(["a", "b", "c"])
+      SpinelKit::Json.from_str_array(["a", "b", "c"])
     end
 
     get '/int_array' do
       res.headers["Content-Type"] = "application/json"
-      Tep::Json.from_int_array([1, 2, 3])
+      SpinelKit::Json.from_int_array([1, 2, 3])
     end
 
     get '/echo_html' do
       res.headers["Content-Type"] = "application/json"
-      "{" + Tep::Json.encode_pair_str("payload", "<script>alert(1)</script>") + "}"
+      "{" + SpinelKit::Json.encode_pair_str("payload", "<script>alert(1)</script>") + "}"
     end
 
     # ---- decode side ----
     post '/parse_str' do
       res.headers["Content-Type"] = "text/plain"
-      Tep::Json.get_str(req.raw_body, "name")
+      SpinelKit::Json.get_str(req.raw_body, "name")
     end
 
     post '/parse_int' do
       res.headers["Content-Type"] = "text/plain"
-      Tep::Json.get_int(req.raw_body, "n").to_s
+      SpinelKit::Json.get_int(req.raw_body, "n").to_s
     end
 
     post '/has_key' do
       res.headers["Content-Type"] = "text/plain"
-      Tep::Json.has_key?(req.raw_body, "x") ? "yes" : "no"
+      SpinelKit::Json.has_key?(req.raw_body, "x") ? "yes" : "no"
     end
 
     post '/skip_nested' do
       # Read a top-level key past a nested object (skip_value should
       # walk the nested object correctly).
       res.headers["Content-Type"] = "text/plain"
-      Tep::Json.get_str(req.raw_body, "after")
+      SpinelKit::Json.get_str(req.raw_body, "after")
     end
 
     post '/parse_float' do
       res.headers["Content-Type"] = "text/plain"
-      Tep::Json.get_float(req.raw_body, "x").to_s
+      SpinelKit::Json.get_float(req.raw_body, "x").to_s
     end
   RB
 

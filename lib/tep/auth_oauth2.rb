@@ -161,10 +161,10 @@ module Tep
       delegate_str = rec.client_id + "|" + now_ts.to_s + "|" +
                      exp_ts.to_s + "|oauth_grant"
       payload = "{" +
-        Tep::Json.encode_pair_str("sub", rec.principal_id) + "," +
-        Tep::Json.encode_pair_int("exp", exp_ts) + "," +
-        Tep::Json.encode_pair_str("caps", rec.caps_str) + "," +
-        Tep::Json.encode_pair_str("delegate", delegate_str) +
+        SpinelKit::Json.encode_pair_str("sub", rec.principal_id) + "," +
+        SpinelKit::Json.encode_pair_int("exp", exp_ts) + "," +
+        SpinelKit::Json.encode_pair_str("caps", rec.caps_str) + "," +
+        SpinelKit::Json.encode_pair_str("delegate", delegate_str) +
       "}"
       Tep::Jwt.encode_hs256(payload, secret)
     end

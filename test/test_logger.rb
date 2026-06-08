@@ -1,13 +1,13 @@
 require_relative "helper"
 
-# Tep::Logger -- levelled logger with stderr / file output.
+# SpinelKit::Log -- levelled logger with stderr / file output.
 class TestLogger < TepTest
   TMP_LOG = "/tmp/tep_logger_test_#{$$}.log"
 
   app_source <<~RB
     require 'sinatra'
 
-    LOGGER = Tep::Logger.new
+    LOGGER = SpinelKit::Log.new
     LOGGER.set_level("debug")
     LOGGER.to_file("#{TMP_LOG}")
 

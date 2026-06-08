@@ -1,7 +1,7 @@
 # HS256 JWT encode / verify / decode. Pure Ruby on `Crypto` FFI.
 module Tep
   class Jwt
-    # Encode `payload_json` (caller-built; `Tep::Json.from_str_hash`
+    # Encode `payload_json` (caller-built; `SpinelKit::Json.from_str_hash`
     # is the usual source) with HS256 using `secret`. Returns the
     # three-part token string.
     def self.encode_hs256: (String payload_json, String secret) -> String

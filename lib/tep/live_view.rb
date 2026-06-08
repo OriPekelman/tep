@@ -132,8 +132,8 @@ module Tep
     #     "note":      <free text>,
     #     "until_ts":  <unix ts or 0> }
     #
-    # Subclasses typically pull a few keys via Tep::Json.get_str /
-    # Tep::Json.get_int + update an @presence ivar; then either
+    # Subclasses typically pull a few keys via SpinelKit::Json.get_str /
+    # SpinelKit::Json.get_int + update an @presence ivar; then either
     # call broadcast_render (to fan out the new HTML to every
     # subscriber) or just mutate (if the LiveView is the only
     # observer).
@@ -176,8 +176,8 @@ module Tep
     # imeth on the base class dispatches through the typed slot
     # of the subclass instance and avoids the box.
     def dispatch_event_json(json_msg, req)
-      event   = Tep::Json.get_str(json_msg, "event")
-      payload = Tep::Json.get_str(json_msg, "payload")
+      event   = SpinelKit::Json.get_str(json_msg, "event")
+      payload = SpinelKit::Json.get_str(json_msg, "payload")
       handle_event(event, payload, req)
       0
     end

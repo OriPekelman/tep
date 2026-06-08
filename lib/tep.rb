@@ -59,7 +59,7 @@ require_relative "tep/router"
 require_relative "tep/app"
 # Auth provider classes land after App so Tep::AuthFilter < Tep::Filter
 # resolves and the install! helper can reach Tep::APP. References to
-# Tep::Jwt / Tep::Json inside their method bodies resolve at runtime.
+# Tep::Jwt / SpinelKit::Json inside their method bodies resolve at runtime.
 require_relative "tep/auth_bearer_token"
 require_relative "tep/auth_session_cookie"
 require_relative "tep/auth_oauth2"
@@ -71,9 +71,10 @@ require_relative "tep/server"
 require_relative "tep/server_scheduled"
 require_relative "tep/sqlite"
 require_relative "tep/pg"
-require_relative "tep/json"
+require_relative "spinel_kit/json"
+require_relative "spinel_kit/json_decoder"
 require_relative "tep/mcp"
-require_relative "tep/logger"
+require_relative "spinel_kit/log"
 require_relative "tep/jwt"
 require_relative "tep/password"
 require_relative "tep/security"
@@ -453,27 +454,27 @@ module Tep
   # NB: don't checkout/checkin against the size-0 seed pool; it'd
   # spin until timeout. The seed has @free.length=0 forever.
 
-  # Tep::Json type-seeding. Pin every public method's parameter
+  # SpinelKit::Json type-seeding. Pin every public method's parameter
   # types so an app that uses one method but not another still
   # compiles cleanly. Calls have no side effects beyond producing
   # discardable strings.
-  Tep::Json.escape("")
-  Tep::Json.quote("")
-  Tep::Json.encode_pair_str("", "")
-  Tep::Json.encode_pair_int("", 0)
+  SpinelKit::Json.escape("")
+  SpinelKit::Json.quote("")
+  SpinelKit::Json.encode_pair_str("", "")
+  SpinelKit::Json.encode_pair_int("", 0)
   _tep_seed_str_h = Tep.str_hash
   _tep_seed_str_h["k"] = "v"
-  Tep::Json.from_str_hash(_tep_seed_str_h)
+  SpinelKit::Json.from_str_hash(_tep_seed_str_h)
   _tep_seed_int_h = {"" => 0}
   _tep_seed_int_h.delete("")
   _tep_seed_int_h["k"] = 1
-  Tep::Json.from_int_hash(_tep_seed_int_h)
+  SpinelKit::Json.from_int_hash(_tep_seed_int_h)
 
-  # Tep::Logger seed -- pin parameter types for every method even
+  # SpinelKit::Log seed -- pin parameter types for every method even
   # when an app uses one but not another. The level-name string
   # ("info") and the messages ("") pin the :str shape; the file-
   # path setter pins to_file's :str arg.
-  _tep_seed_logger = Tep::Logger.new
+  _tep_seed_logger = SpinelKit::Log.new
   _tep_seed_logger.set_level("info")
   _tep_seed_logger.to_file("")
   _tep_seed_logger.to_stderr
@@ -481,7 +482,7 @@ module Tep
   _tep_seed_logger.info("")
   _tep_seed_logger.warn("")
   _tep_seed_logger.error("")
-  Tep::Logger.level_value("info")
+  SpinelKit::Log.level_value("info")
 
   # Tep::Jwt seed -- pin every method's :str arg types. The
   # secret + payload are blank but the call shapes pin the FFI
@@ -623,10 +624,10 @@ module Tep
   # Pin Sock.sphttp_sleep_ms's :int param so the backoff call site
   # resolves (called from Tep::Proxy#handle).
   Sock.sphttp_sleep_ms(0)
-  # Tep::Json.get_float seed (#133). Pin the (String, String) -> Float
+  # SpinelKit::Json.get_float seed (#133). Pin the (String, String) -> Float
   # surface so callers (CompletionsHandler temperature/top_p,
   # backends that parse their own bodies) resolve cleanly.
-  Tep::Json.get_float("{\"temperature\":0.7}", "temperature")
+  SpinelKit::Json.get_float("{\"temperature\":0.7}", "temperature")
   _tep_seed_retry_policy.backoff_for(0)
   _tep_seed_retry_policy.retriable?(502)
   _tep_seed_proxy.retry_policy(_tep_seed_proxy_req)
@@ -679,13 +680,13 @@ module Tep
   _tep_seed_oai_models = Tep::Llm::OpenAI::ModelsHandler.new
   _tep_seed_oai_models.handle(_tep_seed_proxy_req, _tep_seed_proxy_res)
   # 7.1b /v1/completions surface.
-  Tep::Json.get_int_array("{}", "prompt")
+  SpinelKit::Json.get_int_array("{}", "prompt")
   _tep_seed_oai_sampling = Tep::Llm::OpenAI::Sampling.new
   _tep_seed_oai_sampling.max_tokens  = 0
   _tep_seed_oai_sampling.temperature = 1.0
   _tep_seed_oai_sampling.top_p       = 1.0
   _tep_seed_oai_comp = Tep::Llm::OpenAI::Completion.new
-  _tep_seed_oai_backend.generate_from_tokens("m", Tep::Json.get_int_array("{}", "prompt"), _tep_seed_oai_sampling)
+  _tep_seed_oai_backend.generate_from_tokens("m", SpinelKit::Json.get_int_array("{}", "prompt"), _tep_seed_oai_sampling)
   _tep_seed_oai_completions = Tep::Llm::OpenAI::CompletionsHandler.new
   _tep_seed_oai_completions.handle(_tep_seed_proxy_req, _tep_seed_proxy_res)
   # Chat completions skeleton (POST /v1/chat/completions). Default
@@ -717,10 +718,10 @@ module Tep
   # makes the underlying sphttp_write_chunk a harmless EBADF at boot.
   _tep_seed_oai_sink.emit_token("seed")
   _tep_seed_oai_backend.generate_stream_from_tokens(
-    "m", Tep::Json.get_int_array("{}", "prompt"), _tep_seed_oai_sampling, _tep_seed_oai_sink)
+    "m", SpinelKit::Json.get_int_array("{}", "prompt"), _tep_seed_oai_sampling, _tep_seed_oai_sink)
   _tep_seed_oai_cstreamer = Tep::Llm::OpenAI::CompletionsStreamer.new
   _tep_seed_oai_cstreamer.model         = "m"
-  _tep_seed_oai_cstreamer.token_ids     = Tep::Json.get_int_array("{}", "prompt")
+  _tep_seed_oai_cstreamer.token_ids     = SpinelKit::Json.get_int_array("{}", "prompt")
   _tep_seed_oai_cstreamer.sampling      = _tep_seed_oai_sampling
   _tep_seed_oai_cstreamer.prompt_tokens = 0
   _tep_seed_oai_cstreamer.t0            = 0
@@ -774,13 +775,13 @@ module Tep
   Tep::Job.mark_failed(":memory:", 0)
   _tep_seed_str_arr = [""]
   _tep_seed_str_arr.delete_at(0)
-  Tep::Json.from_str_array(_tep_seed_str_arr)
+  SpinelKit::Json.from_str_array(_tep_seed_str_arr)
   _tep_seed_int_arr = [0]
   _tep_seed_int_arr.delete_at(0)
-  Tep::Json.from_int_array(_tep_seed_int_arr)
-  Tep::Json.get_str("{}", "")
-  Tep::Json.get_int("{}", "")
-  Tep::Json.has_key?("{}", "")
+  SpinelKit::Json.from_int_array(_tep_seed_int_arr)
+  SpinelKit::Json.get_str("{}", "")
+  SpinelKit::Json.get_int("{}", "")
+  SpinelKit::Json.has_key?("{}", "")
 
   # Tep::MCP seeds (chunk 5.1). Tools register at compile time via
   # bin/tep's mcp_tool DSL; the runtime helpers below are the
@@ -810,7 +811,7 @@ module Tep
 
   # Tep::Llm seeds. attr_accessor return types default to mrb_int
   # if spinel sees no concrete callsite -- and Tep::Llm.build_request_body
-  # passes msg.role / msg.content into Tep::Json.quote(String) which
+  # passes msg.role / msg.content into SpinelKit::Json.quote(String) which
   # then mismatches. Pin Message + Response attrs to String, and
   # run one full encode + parse round-trip so the static analyzer
   # sees every public method called with concrete types.

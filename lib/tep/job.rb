@@ -24,7 +24,7 @@
 #   )
 #
 # The single-arg payload is intentional: structured data goes
-# through JSON (Tep::Json) which we already ship. Sidekiq's
+# through JSON (SpinelKit::Json) which we already ship. Sidekiq's
 # multi-arg `perform_async(a, b, c)` translates to encoding the
 # tuple as a JSON string and decoding it in `perform`.
 #
@@ -34,7 +34,7 @@
 #
 #     class HelloJob < Tep::Job
 #       def perform(arg)
-#         Tep::Logger.new.info("hello " + arg)
+#         SpinelKit::Log.new.info("hello " + arg)
 #         "done"
 #       end
 #     end

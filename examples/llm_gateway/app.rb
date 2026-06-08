@@ -53,7 +53,7 @@ gw.before do |req, res, ureq|
 end
 
 # Stream when the client asked for it. OpenAI signals streaming with
-# `"stream": true` in the JSON body; Tep::Json has no bool getter, so
+# `"stream": true` in the JSON body; SpinelKit::Json has no bool getter, so
 # we match the literal (with or without the space).
 gw.stream_request? do |req|
   b = req.raw_body
@@ -70,15 +70,15 @@ end
 
 # One inference event at end-of-stream -- the right cardinality.
 gw.on_stream_end do |req, out, stats|
-  model = Tep::Json.get_str(req.raw_body, "model")
+  model = SpinelKit::Json.get_str(req.raw_body, "model")
   t0    = req.ivars["t0"].to_i
   wall  = Time.now.to_i - t0
   if wall < 0
     wall = 0
   end
   extra = "{" +
-    Tep::Json.encode_pair_str("request_id", req.req_headers["x-request-id"]) + "," +
-    Tep::Json.encode_pair_str("principal_id", req.identity.principal_id) +
+    SpinelKit::Json.encode_pair_str("request_id", req.req_headers["x-request-id"]) + "," +
+    SpinelKit::Json.encode_pair_str("principal_id", req.identity.principal_id) +
   "}"
   # prompt_tokens unknown at the proxy (no tokenizer); completion_tokens
   # approximated by the SSE event count. wall_us is second-resolution

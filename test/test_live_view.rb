@@ -150,9 +150,9 @@ class TestLiveView < TepTest
         "<div id='tep-live-root'>" + @last_principal + ":" + @last_state + "</div>"
       end
       def handle_presence_diff(diff_json)
-        @last_principal = Tep::Json.get_str(diff_json, "principal")
-        @last_kind      = Tep::Json.get_str(diff_json, "kind")
-        @last_state     = Tep::Json.get_str(diff_json, "state")
+        @last_principal = SpinelKit::Json.get_str(diff_json, "principal")
+        @last_kind      = SpinelKit::Json.get_str(diff_json, "kind")
+        @last_state     = SpinelKit::Json.get_str(diff_json, "state")
         0
       end
     end

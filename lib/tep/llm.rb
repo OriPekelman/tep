@@ -123,15 +123,15 @@ module Tep
       out
     end
 
-    # Hand-rolled JSON build. Tep::Json doesn't ship nested
+    # Hand-rolled JSON build. SpinelKit::Json doesn't ship nested
     # array-of-hash support (its public encoders are flat); the
     # request body is a fixed shape so the inline assembly stays
     # bounded.
     def self.build_request_body(model, system_prompt, messages)
-      out = "{\"model\":" + Json.quote(model) + ",\"messages\":["
+      out = "{\"model\":" + SpinelKit::Json.quote(model) + ",\"messages\":["
       first = true
       if system_prompt.length > 0
-        out = out + "{\"role\":\"system\",\"content\":" + Json.quote(system_prompt) + "}"
+        out = out + "{\"role\":\"system\",\"content\":" + SpinelKit::Json.quote(system_prompt) + "}"
         first = false
       end
       i = 0
@@ -140,8 +140,8 @@ module Tep
           out = out + ","
         end
         msg = messages[i]
-        out = out + "{\"role\":" + Json.quote(msg.role) +
-                    ",\"content\":" + Json.quote(msg.content) + "}"
+        out = out + "{\"role\":" + SpinelKit::Json.quote(msg.role) +
+                    ",\"content\":" + SpinelKit::Json.quote(msg.content) + "}"
         first = false
         i += 1
       end
@@ -152,7 +152,7 @@ module Tep
     # OpenAI response shape:
     #   {"choices":[{"message":{"role":"assistant","content":"..."},
     #                "finish_reason":"stop"}], ...}
-    # We extract two fields, both inside choices[0]. Tep::Json's
+    # We extract two fields, both inside choices[0]. SpinelKit::Json's
     # flat-key decoder doesn't dive that deep, so we hand-walk the
     # JSON looking for `"message":{...}` and pull "content" + (the
     # surrounding) "finish_reason" out of it.
@@ -344,7 +344,7 @@ module Tep
           delta = Llm.extract_str_field(payload, "content", 0)
           if delta.length > 0
             state.acc = state.acc + delta
-            out_stream.write("data: {" + Json.encode_pair_str("content", delta) + "}\n\n")
+            out_stream.write("data: {" + SpinelKit::Json.encode_pair_str("content", delta) + "}\n\n")
           end
           # finish_reason on the last frame -- not load-bearing for
           # the accumulator but signals upstream end-of-stream.

@@ -158,8 +158,8 @@ through Spinel.
 | Battery          | What it covers |
 |------------------|---|
 | `Tep::SQLite`    | libsqlite3 wrapper via a small C shim — exec / prepare / bind / step / col / first_str / first_int. |
-| `Tep::Json`      | encode primitives + flat-key decoder for JSON-over-HTTP. |
-| `Tep::Logger`    | levelled logger (debug/info/warn/error), stderr or file. |
+| `SpinelKit::Json`      | encode primitives + flat-key decoder for JSON-over-HTTP. |
+| `SpinelKit::Log`    | levelled logger (debug/info/warn/error), stderr or file. |
 | `Tep::Jwt`       | HS256 JWT encode / verify / decode. |
 | `Tep::Password`  | PBKDF2-SHA256, 200k iters, self-describing storage. |
 | `Tep::Security`  | `Cors` (before-filter) + `Headers` (HSTS, nosniff, ...). |
@@ -216,8 +216,8 @@ lives in [`docs/BATTERIES-DESIGN.md`](docs/BATTERIES-DESIGN.md).
   exercising the full pre-agentic battery surface
   (`Tep::Server::Scheduled` + `Tep::Llm` + `Tep::SQLite` +
   `Tep::Streamer` + `Tep::Session` + `Tep::Password` + `Tep::Jwt` +
-  `Tep::Security::{Cors,Headers}` + `Tep::Assets` + `Tep::Json` +
-  `Tep::Job` + `Tep::Logger`) in ~1500 lines of Ruby + HTML + CSS + JS.
+  `Tep::Security::{Cors,Headers}` + `Tep::Assets` + `SpinelKit::Json` +
+  `Tep::Job` + `SpinelKit::Log`) in ~1500 lines of Ruby + HTML + CSS + JS.
 - **[`examples/llm_gateway/`](examples/llm_gateway/app.rb)** — the
   `Tep::Proxy` streaming demo. Block-form DSL gateway in front of an
   OpenAI-compatible upstream; pumps SSE token deltas straight through

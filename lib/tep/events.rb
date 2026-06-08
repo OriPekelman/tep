@@ -80,19 +80,19 @@ module Tep
       # was a bare string before #115. os + arch come from uname() via
       # Sock.sphttp_os_kind / sphttp_arch_kind.
       line = "{" +
-        Json.encode_pair_str("kind", "run_start") + "," +
-        Json.encode_pair_str("schema", "toy/v1") + "," +
-        Json.encode_pair_int("t", 0) + "," +
-        Json.encode_pair_str("started_at", started) + "," +
+        SpinelKit::Json.encode_pair_str("kind", "run_start") + "," +
+        SpinelKit::Json.encode_pair_str("schema", "toy/v1") + "," +
+        SpinelKit::Json.encode_pair_int("t", 0) + "," +
+        SpinelKit::Json.encode_pair_str("started_at", started) + "," +
         "\"host\":{" +
-          Json.encode_pair_str("name", host) + "," +
-          Json.encode_pair_str("os",   Sock.sphttp_os_kind) + "," +
-          Json.encode_pair_str("arch", Sock.sphttp_arch_kind) +
+          SpinelKit::Json.encode_pair_str("name", host) + "," +
+          SpinelKit::Json.encode_pair_str("os",   Sock.sphttp_os_kind) + "," +
+          SpinelKit::Json.encode_pair_str("arch", Sock.sphttp_arch_kind) +
         "}," +
-        "\"backend\":{" + Json.encode_pair_str("kind", backend_kind) + "}," +
+        "\"backend\":{" + SpinelKit::Json.encode_pair_str("kind", backend_kind) + "}," +
         "\"model\":{" +
-          Json.encode_pair_str("name", model_name) + "," +
-          Json.encode_pair_str("path", model_path) +
+          SpinelKit::Json.encode_pair_str("name", model_name) + "," +
+          SpinelKit::Json.encode_pair_str("path", model_path) +
         "}," +
         "\"config\":" + config_json +
       "}"
@@ -120,10 +120,10 @@ module Tep
       # Build the merged extra: spec fields first, then caller's
       # fields appended (if non-empty).
       extra = "{" +
-        Json.encode_pair_str("model", model) + "," +
-        Json.encode_pair_int("prompt_tokens", prompt_tokens) + "," +
-        Json.encode_pair_int("completion_tokens", completion_tokens) + "," +
-        Json.encode_pair_int("latency_us", wall_us)
+        SpinelKit::Json.encode_pair_str("model", model) + "," +
+        SpinelKit::Json.encode_pair_int("prompt_tokens", prompt_tokens) + "," +
+        SpinelKit::Json.encode_pair_int("completion_tokens", completion_tokens) + "," +
+        SpinelKit::Json.encode_pair_int("latency_us", wall_us)
       caller_inner = ""
       if extra_json.length > 2
         # Strip the outer braces -- "{...}" -> "...".
@@ -134,10 +134,10 @@ module Tep
       end
       extra = extra + "}"
       line = "{" +
-        Json.encode_pair_str("kind", "eval") + "," +
-        Json.encode_pair_str("phase", "serve") + "," +
-        Json.encode_pair_int("t", rel_t) + "," +
-        Json.encode_pair_str("name", "request") + "," +
+        SpinelKit::Json.encode_pair_str("kind", "eval") + "," +
+        SpinelKit::Json.encode_pair_str("phase", "serve") + "," +
+        SpinelKit::Json.encode_pair_int("t", rel_t) + "," +
+        SpinelKit::Json.encode_pair_str("name", "request") + "," +
         "\"extra\":" + extra +
       "}"
       append_line(line)
@@ -163,14 +163,14 @@ module Tep
       end
       ended = Sock.sphttp_iso8601_utc(Time.now.to_i)
       line = "{" +
-        Json.encode_pair_str("kind", "run_end") + "," +
-        Json.encode_pair_int("t", rel_t) + "," +
-        Json.encode_pair_str("ended_at", ended) + "," +
-        Json.encode_pair_str("reason", reason) + "," +
+        SpinelKit::Json.encode_pair_str("kind", "run_end") + "," +
+        SpinelKit::Json.encode_pair_int("t", rel_t) + "," +
+        SpinelKit::Json.encode_pair_str("ended_at", ended) + "," +
+        SpinelKit::Json.encode_pair_str("reason", reason) + "," +
         "\"stats\":{" +
-          Json.encode_pair_int("requests", @req_count) + "," +
-          Json.encode_pair_int("errors", @err_count) + "," +
-          Json.encode_pair_int("tokens_out", @tok_out) +
+          SpinelKit::Json.encode_pair_int("requests", @req_count) + "," +
+          SpinelKit::Json.encode_pair_int("errors", @err_count) + "," +
+          SpinelKit::Json.encode_pair_int("tokens_out", @tok_out) +
         "}" +
       "}"
       append_line(line)
@@ -205,28 +205,28 @@ module Tep
            Tep.str_find(line_s, "\"name\":\"request\"", 0) >= 0
           reqs += 1
           # completion_tokens now lives nested inside the `extra`
-          # object. Tep::Json.find_value_start walks only the
+          # object. SpinelKit::Json.find_value_start walks only the
           # top-level keys (it skips over nested objects), so we
           # have to extract extra first, then get_int within it.
-          extra_pos = Json.find_value_start(line_s, "extra")
+          extra_pos = SpinelKit::Json.find_value_start(line_s, "extra")
           if extra_pos >= 0
-            obj_end = Json.skip_container(line_s, extra_pos)
+            obj_end = SpinelKit::Json.skip_container(line_s, extra_pos)
             extra_obj = line_s[extra_pos, obj_end - extra_pos]
-            toks += Json.get_int(extra_obj, "completion_tokens")
+            toks += SpinelKit::Json.get_int(extra_obj, "completion_tokens")
           end
         end
         i += 1
       end
       ended = Sock.sphttp_iso8601_utc(Time.now.to_i)
       out = "{" +
-        Json.encode_pair_str("kind", "run_end") + "," +
-        Json.encode_pair_int("t", rel_t) + "," +
-        Json.encode_pair_str("ended_at", ended) + "," +
-        Json.encode_pair_str("reason", reason) + "," +
+        SpinelKit::Json.encode_pair_str("kind", "run_end") + "," +
+        SpinelKit::Json.encode_pair_int("t", rel_t) + "," +
+        SpinelKit::Json.encode_pair_str("ended_at", ended) + "," +
+        SpinelKit::Json.encode_pair_str("reason", reason) + "," +
         "\"stats\":{" +
-          Json.encode_pair_int("requests", reqs) + "," +
-          Json.encode_pair_int("errors", errs) + "," +
-          Json.encode_pair_int("tokens_out", toks) +
+          SpinelKit::Json.encode_pair_int("requests", reqs) + "," +
+          SpinelKit::Json.encode_pair_int("errors", errs) + "," +
+          SpinelKit::Json.encode_pair_int("tokens_out", toks) +
         "}" +
       "}"
       append_line(out)
@@ -243,7 +243,7 @@ module Tep
     end
 
     # Append one JSON line. Best-effort, append mode -- mirrors
-    # Tep::Logger's file sink. Telemetry must never fail a request, so
+    # SpinelKit::Log's file sink. Telemetry must never fail a request, so
     # a malformed/unwritable path degrades to a dropped line rather
     # than a raised error reaching the handler. Callers gate on a
     # non-empty @path before reaching here.
