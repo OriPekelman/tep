@@ -30,10 +30,51 @@ module TepHarness
     attr_reader :port
   end
 
+  # Hand out the next port that's actually bindable, skipping any that's
+  # already held -- a squatter (stray server from an earlier run) or an orphan
+  # the reap missed. Without this, a class boots on a squatted port, its own
+  # bind fails, and wait_for_port connects to the SQUATTER instead -> requests
+  # routed to the wrong app (cross-talk). Probing closes the TOCTOU window to
+  # nearly nothing: under the parallel runner each worker owns a DISJOINT port
+  # range (PORT_BASE_START + idx*STEP), so no two workers probe the same port,
+  # and the range sits below the OS ephemeral range so client source ports
+  # can't race it either. Stays well within the per-file headroom (STEP=50,
+  # <=9 classes).
   def self.next_port
-    p = @port
-    @port += 1
-    p
+    loop do
+      p = @port
+      @port += 1
+      begin
+        TCPServer.new("127.0.0.1", p).close
+        return p
+      rescue Errno::EADDRINUSE, Errno::EACCES
+        next
+      end
+    end
+  end
+
+  # Run a compile, retrying once on a non-success exit that produced NO
+  # compiler diagnostic -- i.e. the toolchain was killed/crashed rather than
+  # rejecting the source. Under the parallel runner, N concurrent Spinel
+  # compiles can transiently exhaust a resource and one gets reaped mid-build
+  # (empty error, nonzero exit); a real codegen error is deterministic and
+  # surfaces on the retry too, so this never hides genuine breakage. Also
+  # helps the serial suite shrug off a one-off hiccup.
+  def self.build_with_retry(cmd, what, tries: 2)
+    out = ""
+    tries.times do |i|
+      out = `#{cmd} 2>&1`
+      return out if $?.success?
+      # Only retry a diagnostic-free (killed/crashed) failure. A genuine
+      # rejection carries an "error:" (cc) or "undefined reference" (link).
+      # The inlined lib's "cannot resolve ... (emitting 0)" lines are
+      # "warning:" only, so they don't trip this -- otherwise every build
+      # (they all emit those) would look like a real error and never retry.
+      real_error = out.match?(/\berror:|fatal error|undefined reference/i)
+      break if real_error || i == tries - 1
+      sleep 0.5
+    end
+    raise "#{what} failed:\n#{out}"
   end
 
   # Compile `source` (Sinatra-classic by default) and return the bound
@@ -47,11 +88,9 @@ module TepHarness
     bin  = File.join(tmp, "app")
     case mode
     when :sinatra
-      out = `#{TEP_BIN} build #{src} -o #{bin} 2>&1`
-      raise "tep build failed:\n#{out}" unless $?.success?
+      build_with_retry("#{TEP_BIN} build #{src} -o #{bin}", "tep build")
     when :direct
-      out = `#{SPINEL} #{src} -o #{bin} 2>&1`
-      raise "spinel failed:\n#{out}" unless $?.success?
+      build_with_retry("#{SPINEL} #{src} -o #{bin}", "spinel")
     else
       raise "unknown mode: #{mode}"
     end
@@ -207,7 +246,12 @@ Minitest.after_run { TepHarness.kill_all }
 
 # Kill any zombie tep test processes leaking from previous runs.
 # Skip on hosts that don't ship `pgrep` (some slim containers don't).
-if system("which pgrep >/dev/null 2>&1")
+# Skip under the parallel runner (TEP_PARALLEL): sibling workers each run
+# their own tep-test binaries concurrently, so a global pgrep-kill here
+# would tear down another worker's live servers. The parallel runner does
+# one stale-proc sweep up front instead, and each worker reaps only its
+# own via Minitest.after_run.
+if !ENV["TEP_PARALLEL"] && system("which pgrep >/dev/null 2>&1")
   `pgrep -f tep-test 2>/dev/null`.split.each do |pid|
     Process.kill("TERM", pid.to_i) rescue nil
   end
