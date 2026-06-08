@@ -9,7 +9,7 @@
 #   Tep::AuthBearerToken.set_secret(ENV["JWT_SECRET"])
 #
 # Token payload schema (flat JSON, single level -- matches
-# Tep::Json's flat-object extraction surface):
+# SpinelKit::Json's flat-object extraction surface):
 #
 #   {
 #     "sub":      "user:42",                    # principal_id (required)
@@ -22,7 +22,7 @@
 #                                               # agent_id|issued_at|expires_at|origin
 #   }
 #
-# Why flat (not nested `acting_via: { ... }`): Tep::Json today
+# Why flat (not nested `acting_via: { ... }`): SpinelKit::Json today
 # extracts flat keys only. A nested-object getter is a separate
 # tiny battery; for v1 of Auth the flat pipe-encoded delegate
 # string is the smallest thing that ships and round-trips
@@ -64,20 +64,20 @@ module Tep
 
       # Check expiry first -- a token whose exp passed gets rejected
       # even if the signature still verifies. exp is unix epoch sec.
-      exp = Tep::Json.get_int(payload, "exp")
+      exp = SpinelKit::Json.get_int(payload, "exp")
       if exp > 0 && Time.now.to_i >= exp
         return nil
       end
 
-      sub = Tep::Json.get_str(payload, "sub")
+      sub = SpinelKit::Json.get_str(payload, "sub")
       if sub.length == 0
         return nil
       end
 
-      caps_str = Tep::Json.get_str(payload, "caps")
+      caps_str = SpinelKit::Json.get_str(payload, "caps")
       caps = Tep::AuthBearerToken.parse_caps(caps_str)
 
-      delegate_str = Tep::Json.get_str(payload, "delegate")
+      delegate_str = SpinelKit::Json.get_str(payload, "delegate")
       delegation = Tep::AuthBearerToken.parse_delegate(delegate_str)
 
       Tep::Identity.new(sub, delegation, caps)

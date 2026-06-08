@@ -69,7 +69,7 @@ module Tep
         # but receives the raw req so the backend can parse the
         # messages array itself + apply its own chat template. Tep
         # doesn't pre-build a Message[] because templating + role
-        # ordering is per-model; the JSON tools live in Tep::Json. The
+        # ordering is per-model; the JSON tools live in SpinelKit::Json. The
         # return is reused from the token path (text becomes the
         # assistant message's content). Base no-op; subclasses override.
         # Only reached when supports_chat? returns true -- the handler
@@ -150,8 +150,8 @@ module Tep
           # override answers (e.g. ToyBackend returning "cuda").
           backend_kind = Tep::APP.openai_backend.device_kind
           config_json = "{" +
-            Tep::Json.encode_pair_str("server", "tep-llm-openai") + "," +
-            Tep::Json.encode_pair_str("events_jsonl", events_jsonl) +
+            SpinelKit::Json.encode_pair_str("server", "tep-llm-openai") + "," +
+            SpinelKit::Json.encode_pair_str("events_jsonl", events_jsonl) +
           "}"
           events.run_start(host, backend_kind, "", "", config_json)
           Tep.get("/v1/models",            Tep::Llm::OpenAI::ModelsHandler.new)
@@ -185,17 +185,17 @@ module Tep
       def self.parse_messages(body)
         out = [Tep::Llm::Message.new("", "")]
         out.delete_at(0)
-        pos = Tep::Json.find_value_start(body, "messages")
+        pos = SpinelKit::Json.find_value_start(body, "messages")
         if pos < 0
           return out
         end
-        pos = Tep::Json.skip_ws(body, pos)
+        pos = SpinelKit::Json.skip_ws(body, pos)
         if pos >= body.length || body[pos] != "["
           return out
         end
         pos += 1
         while pos < body.length
-          pos = Tep::Json.skip_ws(body, pos)
+          pos = SpinelKit::Json.skip_ws(body, pos)
           if pos >= body.length
             return out
           end
@@ -208,9 +208,9 @@ module Tep
             next
           end
           if c == "{"
-            obj_end = Tep::Json.skip_container(body, pos)
+            obj_end = SpinelKit::Json.skip_container(body, pos)
             # Parse role + content within this object range. Run two
-            # passes scoped via Tep::Json's existing key search: the
+            # passes scoped via SpinelKit::Json's existing key search: the
             # body-wide find could match a key in a sibling object so
             # we instead walk the bytes between `pos` and `obj_end`
             # manually, looking only for `"role"` / `"content"`.
@@ -219,7 +219,7 @@ module Tep
             out.push(Tep::Llm::Message.new(role, cont))
             pos = obj_end
           else
-            pos = Tep::Json.skip_value(body, pos)
+            pos = SpinelKit::Json.skip_value(body, pos)
           end
         end
         out
@@ -236,21 +236,21 @@ module Tep
           return ""
         end
         pos = pos + needle.length
-        pos = Tep::Json.skip_ws(body, pos)
+        pos = SpinelKit::Json.skip_ws(body, pos)
         if pos >= obj_end || body[pos] != ":"
           return ""
         end
         pos += 1
-        pos = Tep::Json.skip_ws(body, pos)
+        pos = SpinelKit::Json.skip_ws(body, pos)
         if pos >= obj_end
           return ""
         end
-        Tep::Json.parse_str_value(body, pos)
+        SpinelKit::Json.parse_str_value(body, pos)
       end
 
       # Sampling parameters handed to the backend. v1 carries
       # max_tokens + temperature + top_p (the three OpenAI completion
-      # knobs every client sets). Floats parsed via Tep::Json.get_float.
+      # knobs every client sets). Floats parsed via SpinelKit::Json.get_float.
       # Defaults match OpenAI's API defaults so a backend that ignores
       # sampling gets pass-through behavior.
       class Sampling
@@ -313,13 +313,13 @@ module Tep
         def emit_token(piece)
           @completion_count = @completion_count + 1
           frame = "{" +
-            Tep::Json.encode_pair_str("id", "cmpl-tep") + "," +
-            Tep::Json.encode_pair_str("object", "text_completion") + "," +
-            Tep::Json.encode_pair_int("created", Time.now.to_i) + "," +
-            Tep::Json.encode_pair_str("model", @model) + "," +
+            SpinelKit::Json.encode_pair_str("id", "cmpl-tep") + "," +
+            SpinelKit::Json.encode_pair_str("object", "text_completion") + "," +
+            SpinelKit::Json.encode_pair_int("created", Time.now.to_i) + "," +
+            SpinelKit::Json.encode_pair_str("model", @model) + "," +
             "\"choices\":[{" +
-              Tep::Json.encode_pair_int("index", 0) + "," +
-              Tep::Json.encode_pair_str("text", piece) + "," +
+              SpinelKit::Json.encode_pair_int("index", 0) + "," +
+              SpinelKit::Json.encode_pair_str("text", piece) + "," +
               "\"finish_reason\":null" +
             "}]" +
           "}"
@@ -361,8 +361,8 @@ module Tep
           out.write("data: [DONE]\n\n")
           wall_us = (Time.now.to_i - @t0) * 1_000_000
           extra = "{" +
-            Tep::Json.encode_pair_str("request_id", @request_id) + "," +
-            Tep::Json.encode_pair_str("principal_id", @principal_id) +
+            SpinelKit::Json.encode_pair_str("request_id", @request_id) + "," +
+            SpinelKit::Json.encode_pair_str("principal_id", @principal_id) +
           "}"
           Tep::APP.openai_events.inference(
             @model, @prompt_tokens, sink.completion_count, wall_us, extra)
@@ -397,14 +397,14 @@ module Tep
         # wire shape, sent once before content frames.
         def emit_role_prelude(role)
           frame = "{" +
-            Tep::Json.encode_pair_str("id", "chatcmpl-tep") + "," +
-            Tep::Json.encode_pair_str("object", "chat.completion.chunk") + "," +
-            Tep::Json.encode_pair_int("created", Time.now.to_i) + "," +
-            Tep::Json.encode_pair_str("model", @model) + "," +
+            SpinelKit::Json.encode_pair_str("id", "chatcmpl-tep") + "," +
+            SpinelKit::Json.encode_pair_str("object", "chat.completion.chunk") + "," +
+            SpinelKit::Json.encode_pair_int("created", Time.now.to_i) + "," +
+            SpinelKit::Json.encode_pair_str("model", @model) + "," +
             "\"choices\":[{" +
-              Tep::Json.encode_pair_int("index", 0) + "," +
+              SpinelKit::Json.encode_pair_int("index", 0) + "," +
               "\"delta\":{" +
-                Tep::Json.encode_pair_str("role", role) +
+                SpinelKit::Json.encode_pair_str("role", role) +
               "}," +
               "\"finish_reason\":null" +
             "}]" +
@@ -417,14 +417,14 @@ module Tep
         def emit_token(piece)
           @completion_count = @completion_count + 1
           frame = "{" +
-            Tep::Json.encode_pair_str("id", "chatcmpl-tep") + "," +
-            Tep::Json.encode_pair_str("object", "chat.completion.chunk") + "," +
-            Tep::Json.encode_pair_int("created", Time.now.to_i) + "," +
-            Tep::Json.encode_pair_str("model", @model) + "," +
+            SpinelKit::Json.encode_pair_str("id", "chatcmpl-tep") + "," +
+            SpinelKit::Json.encode_pair_str("object", "chat.completion.chunk") + "," +
+            SpinelKit::Json.encode_pair_int("created", Time.now.to_i) + "," +
+            SpinelKit::Json.encode_pair_str("model", @model) + "," +
             "\"choices\":[{" +
-              Tep::Json.encode_pair_int("index", 0) + "," +
+              SpinelKit::Json.encode_pair_int("index", 0) + "," +
               "\"delta\":{" +
-                Tep::Json.encode_pair_str("content", piece) +
+                SpinelKit::Json.encode_pair_str("content", piece) +
               "}," +
               "\"finish_reason\":null" +
             "}]" +
@@ -437,14 +437,14 @@ module Tep
         # streamer writes data:[DONE] after this.
         def emit_finish(reason)
           frame = "{" +
-            Tep::Json.encode_pair_str("id", "chatcmpl-tep") + "," +
-            Tep::Json.encode_pair_str("object", "chat.completion.chunk") + "," +
-            Tep::Json.encode_pair_int("created", Time.now.to_i) + "," +
-            Tep::Json.encode_pair_str("model", @model) + "," +
+            SpinelKit::Json.encode_pair_str("id", "chatcmpl-tep") + "," +
+            SpinelKit::Json.encode_pair_str("object", "chat.completion.chunk") + "," +
+            SpinelKit::Json.encode_pair_int("created", Time.now.to_i) + "," +
+            SpinelKit::Json.encode_pair_str("model", @model) + "," +
             "\"choices\":[{" +
-              Tep::Json.encode_pair_int("index", 0) + "," +
+              SpinelKit::Json.encode_pair_int("index", 0) + "," +
               "\"delta\":{}," +
-              Tep::Json.encode_pair_str("finish_reason", reason) +
+              SpinelKit::Json.encode_pair_str("finish_reason", reason) +
             "}]" +
           "}"
           @out.write("data: " + frame + "\n\n")
@@ -480,8 +480,8 @@ module Tep
           out.write("data: [DONE]\n\n")
           wall_us = (Time.now.to_i - @t0) * 1_000_000
           extra = "{" +
-            Tep::Json.encode_pair_str("request_id", @request_id) + "," +
-            Tep::Json.encode_pair_str("principal_id", @principal_id) +
+            SpinelKit::Json.encode_pair_str("request_id", @request_id) + "," +
+            SpinelKit::Json.encode_pair_str("principal_id", @principal_id) +
           "}"
           Tep::APP.openai_events.inference(
             @model, @prompt_tokens, sink.completion_count, wall_us, extra)
@@ -505,10 +505,10 @@ module Tep
               out = out + ","
             end
             out = out + "{" +
-              Tep::Json.encode_pair_str("id", models[i]) + "," +
-              Tep::Json.encode_pair_str("object", "model") + "," +
-              Tep::Json.encode_pair_int("created", created) + "," +
-              Tep::Json.encode_pair_str("owned_by", owner) +
+              SpinelKit::Json.encode_pair_str("id", models[i]) + "," +
+              SpinelKit::Json.encode_pair_str("object", "model") + "," +
+              SpinelKit::Json.encode_pair_int("created", created) + "," +
+              SpinelKit::Json.encode_pair_str("owned_by", owner) +
             "}"
             i += 1
           end
@@ -525,22 +525,22 @@ module Tep
       class CompletionsHandler < Tep::Handler
         def handle(req, res)
           body      = req.raw_body
-          model     = Tep::Json.get_str(body, "model")
-          token_ids = Tep::Json.get_int_array(body, "prompt")
+          model     = SpinelKit::Json.get_str(body, "model")
+          token_ids = SpinelKit::Json.get_int_array(body, "prompt")
           sampling  = Tep::Llm::OpenAI::Sampling.new
-          sampling.max_tokens = Tep::Json.get_int(body, "max_tokens")
+          sampling.max_tokens = SpinelKit::Json.get_int(body, "max_tokens")
           # Floats from the JSON body; defaults stay at 1.0 if the
-          # key is absent (Tep::Json.get_float returns 0.0 for
+          # key is absent (SpinelKit::Json.get_float returns 0.0 for
           # missing, but we only overwrite when present).
-          if Tep::Json.has_key?(body, "temperature")
-            sampling.temperature = Tep::Json.get_float(body, "temperature")
+          if SpinelKit::Json.has_key?(body, "temperature")
+            sampling.temperature = SpinelKit::Json.get_float(body, "temperature")
           end
-          if Tep::Json.has_key?(body, "top_p")
-            sampling.top_p = Tep::Json.get_float(body, "top_p")
+          if SpinelKit::Json.has_key?(body, "top_p")
+            sampling.top_p = SpinelKit::Json.get_float(body, "top_p")
           end
 
           # OpenAI signals streaming with "stream": true in the JSON
-          # body; Tep::Json has no bool getter, so we sniff the literal
+          # body; SpinelKit::Json has no bool getter, so we sniff the literal
           # (same shape as examples/llm_gateway/app.rb). When set, the
           # response is SSE: a CompletionsStreamer pumps per-token
           # frames + the [DONE] sentinel, then emits the inference
@@ -581,8 +581,8 @@ module Tep
           # the auth-filter populated identity (anonymous if none).
           wall_us = (Time.now.to_i - t0) * 1_000_000
           extra = "{" +
-            Tep::Json.encode_pair_str("request_id", "cmpl-tep") + "," +
-            Tep::Json.encode_pair_str("principal_id", req.identity.subject) +
+            SpinelKit::Json.encode_pair_str("request_id", "cmpl-tep") + "," +
+            SpinelKit::Json.encode_pair_str("principal_id", req.identity.subject) +
           "}"
           Tep::APP.openai_events.inference(
             model, comp.prompt_tokens, comp.completion_tokens, wall_us, extra
@@ -593,24 +593,24 @@ module Tep
           # empty and the field is omitted (standard OpenAI shape).
           ids_frag = ""
           if comp.token_ids.length > 0
-            ids_frag = "\"ids\":" + Tep::Json.from_int_array(comp.token_ids) + ","
+            ids_frag = "\"ids\":" + SpinelKit::Json.from_int_array(comp.token_ids) + ","
           end
 
           "{" +
-            Tep::Json.encode_pair_str("id", "cmpl-tep") + "," +
-            Tep::Json.encode_pair_str("object", "text_completion") + "," +
-            Tep::Json.encode_pair_int("created", Time.now.to_i) + "," +
-            Tep::Json.encode_pair_str("model", model) + "," +
+            SpinelKit::Json.encode_pair_str("id", "cmpl-tep") + "," +
+            SpinelKit::Json.encode_pair_str("object", "text_completion") + "," +
+            SpinelKit::Json.encode_pair_int("created", Time.now.to_i) + "," +
+            SpinelKit::Json.encode_pair_str("model", model) + "," +
             "\"choices\":[{" +
-              Tep::Json.encode_pair_int("index", 0) + "," +
-              Tep::Json.encode_pair_str("text", comp.text) + "," +
+              SpinelKit::Json.encode_pair_int("index", 0) + "," +
+              SpinelKit::Json.encode_pair_str("text", comp.text) + "," +
               ids_frag +
-              Tep::Json.encode_pair_str("finish_reason", comp.finish_reason) +
+              SpinelKit::Json.encode_pair_str("finish_reason", comp.finish_reason) +
             "}]," +
             "\"usage\":{" +
-              Tep::Json.encode_pair_int("prompt_tokens", comp.prompt_tokens) + "," +
-              Tep::Json.encode_pair_int("completion_tokens", comp.completion_tokens) + "," +
-              Tep::Json.encode_pair_int("total_tokens", total) +
+              SpinelKit::Json.encode_pair_int("prompt_tokens", comp.prompt_tokens) + "," +
+              SpinelKit::Json.encode_pair_int("completion_tokens", comp.completion_tokens) + "," +
+              SpinelKit::Json.encode_pair_int("total_tokens", total) +
             "}" +
           "}"
         end
@@ -631,14 +631,14 @@ module Tep
             res.set_status(501)
             return "{" +
               "\"error\":{" +
-                Tep::Json.encode_pair_str("message",
+                SpinelKit::Json.encode_pair_str("message",
                   "chat completions not supported by this backend") + "," +
-                Tep::Json.encode_pair_str("type", "not_implemented") +
+                SpinelKit::Json.encode_pair_str("type", "not_implemented") +
               "}" +
             "}"
           end
           body  = req.raw_body
-          model = Tep::Json.get_str(body, "model")
+          model = SpinelKit::Json.get_str(body, "model")
 
           # Streaming branch (#127): same "stream":true sniff as
           # CompletionsHandler. Sends an SSE response driven by
@@ -667,22 +667,22 @@ module Tep
           comp  = Tep::APP.openai_backend.chat_completion(req)
           total = comp.prompt_tokens + comp.completion_tokens
           "{" +
-            Tep::Json.encode_pair_str("id", "chatcmpl-tep") + "," +
-            Tep::Json.encode_pair_str("object", "chat.completion") + "," +
-            Tep::Json.encode_pair_int("created", Time.now.to_i) + "," +
-            Tep::Json.encode_pair_str("model", model) + "," +
+            SpinelKit::Json.encode_pair_str("id", "chatcmpl-tep") + "," +
+            SpinelKit::Json.encode_pair_str("object", "chat.completion") + "," +
+            SpinelKit::Json.encode_pair_int("created", Time.now.to_i) + "," +
+            SpinelKit::Json.encode_pair_str("model", model) + "," +
             "\"choices\":[{" +
-              Tep::Json.encode_pair_int("index", 0) + "," +
+              SpinelKit::Json.encode_pair_int("index", 0) + "," +
               "\"message\":{" +
-                Tep::Json.encode_pair_str("role", "assistant") + "," +
-                Tep::Json.encode_pair_str("content", comp.text) +
+                SpinelKit::Json.encode_pair_str("role", "assistant") + "," +
+                SpinelKit::Json.encode_pair_str("content", comp.text) +
               "}," +
-              Tep::Json.encode_pair_str("finish_reason", "stop") +
+              SpinelKit::Json.encode_pair_str("finish_reason", "stop") +
             "}]," +
             "\"usage\":{" +
-              Tep::Json.encode_pair_int("prompt_tokens", comp.prompt_tokens) + "," +
-              Tep::Json.encode_pair_int("completion_tokens", comp.completion_tokens) + "," +
-              Tep::Json.encode_pair_int("total_tokens", total) +
+              SpinelKit::Json.encode_pair_int("prompt_tokens", comp.prompt_tokens) + "," +
+              SpinelKit::Json.encode_pair_int("completion_tokens", comp.completion_tokens) + "," +
+              SpinelKit::Json.encode_pair_int("total_tokens", total) +
             "}" +
           "}"
         end
@@ -701,30 +701,30 @@ module Tep
             res.set_status(501)
             return "{" +
               "\"error\":{" +
-                Tep::Json.encode_pair_str("message",
+                SpinelKit::Json.encode_pair_str("message",
                   "embeddings not supported by this backend") + "," +
-                Tep::Json.encode_pair_str("type", "not_implemented") +
+                SpinelKit::Json.encode_pair_str("type", "not_implemented") +
               "}" +
             "}"
           end
           body  = req.raw_body
-          model = Tep::Json.get_str(body, "model")
-          ids   = Tep::Json.get_int_array(body, "input")
+          model = SpinelKit::Json.get_str(body, "model")
+          ids   = SpinelKit::Json.get_int_array(body, "input")
           if ids.length == 0
             res.set_status(400)
             return "{" +
               "\"error\":{" +
-                Tep::Json.encode_pair_str("message",
+                SpinelKit::Json.encode_pair_str("message",
                   "input must be a non-empty integer array " +
                   "(this server speaks token IDs only; tokenize client-side)") + "," +
-                Tep::Json.encode_pair_str("type", "invalid_request_error") +
+                SpinelKit::Json.encode_pair_str("type", "invalid_request_error") +
               "}" +
             "}"
           end
 
           vec = Tep::APP.openai_backend.generate_embeddings(model, ids)
 
-          # Build the embedding float array by hand: Tep::Json has no
+          # Build the embedding float array by hand: SpinelKit::Json has no
           # float-array encoder, and Float#to_s yields a JSON number.
           emb = "["
           k = 0
@@ -739,16 +739,16 @@ module Tep
 
           n = ids.length
           "{" +
-            Tep::Json.encode_pair_str("object", "list") + "," +
+            SpinelKit::Json.encode_pair_str("object", "list") + "," +
             "\"data\":[{" +
-              Tep::Json.encode_pair_str("object", "embedding") + "," +
-              Tep::Json.encode_pair_int("index", 0) + "," +
+              SpinelKit::Json.encode_pair_str("object", "embedding") + "," +
+              SpinelKit::Json.encode_pair_int("index", 0) + "," +
               "\"embedding\":" + emb +
             "}]," +
-            Tep::Json.encode_pair_str("model", model) + "," +
+            SpinelKit::Json.encode_pair_str("model", model) + "," +
             "\"usage\":{" +
-              Tep::Json.encode_pair_int("prompt_tokens", n) + "," +
-              Tep::Json.encode_pair_int("total_tokens", n) +
+              SpinelKit::Json.encode_pair_int("prompt_tokens", n) + "," +
+              SpinelKit::Json.encode_pair_int("total_tokens", n) +
             "}" +
           "}"
         end

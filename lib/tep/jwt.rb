@@ -13,14 +13,14 @@
 # Surface
 # -------
 #
-#   payload_json = "{" + Tep::Json.encode_pair_str("sub", user_id) + "," +
-#                        Tep::Json.encode_pair_int("exp", exp_unix) + "}"
+#   payload_json = "{" + SpinelKit::Json.encode_pair_str("sub", user_id) + "," +
+#                        SpinelKit::Json.encode_pair_int("exp", exp_unix) + "}"
 #   token = Tep::Jwt.encode_hs256(payload_json, secret)
 #
 #   # On the receiving side:
 #   if Tep::Jwt.verify_hs256(token, secret)
 #     payload = Tep::Jwt.decode_payload(token)   # the JSON string
-#     sub = Tep::Json.get_str(payload, "sub")
+#     sub = SpinelKit::Json.get_str(payload, "sub")
 #   end
 #
 # Scope
@@ -32,7 +32,7 @@
 #
 # **Claims validation:** the `verify_hs256` only checks the
 # signature. `exp` / `nbf` / `iss` / `aud` claim checks are left
-# to caller code -- pull them with `Tep::Json.get_int(payload, "exp")`
+# to caller code -- pull them with `SpinelKit::Json.get_int(payload, "exp")`
 # and compare against `Time.now.to_i`. This keeps the surface
 # small and lets the app's policy decide what's required (some
 # apps want skew tolerance, some want strict expiry).

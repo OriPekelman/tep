@@ -7,14 +7,14 @@ class TestPassword < TepTest
 
     post '/hash' do
       res.headers["Content-Type"] = "text/plain"
-      pwd = Tep::Json.get_str(req.raw_body, "password")
+      pwd = SpinelKit::Json.get_str(req.raw_body, "password")
       Tep::Password.hash(pwd)
     end
 
     post '/verify' do
       res.headers["Content-Type"] = "text/plain"
-      pwd = Tep::Json.get_str(req.raw_body, "password")
-      hash = Tep::Json.get_str(req.raw_body, "hash")
+      pwd = SpinelKit::Json.get_str(req.raw_body, "password")
+      hash = SpinelKit::Json.get_str(req.raw_body, "hash")
       Tep::Password.verify(pwd, hash) ? "ok" : "bad"
     end
 

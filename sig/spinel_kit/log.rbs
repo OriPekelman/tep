@@ -1,0 +1,21 @@
+# VENDORED from OriPekelman/spinelkit @ a103445 -- DO NOT EDIT HERE.
+# Edit upstream and re-sync with `make vendor-spinelkit`.
+module SpinelKit
+  class Log
+    attr_accessor min_level: String
+    attr_accessor file_path: String
+
+    def initialize: () -> void
+    def set_level: (String name) -> String
+    def to_file: (String path) -> String
+    def to_stderr: () -> String
+    def debug: (String msg) -> void
+    def info: (String msg) -> void
+    def warn: (String msg) -> void
+    def error: (String msg) -> void
+    def log: (String level, String msg) -> void
+    def should_log?: (String level) -> bool
+    def self.level_value: (String name) -> Integer
+    def format_line: (String level, String msg) -> String
+  end
+end

@@ -34,7 +34,15 @@ TEP_PG_LIBS   ?= $(shell \
     (pg_config --libdir 2>/dev/null | sed -e 's|^|-L|' ; echo "-lpq") | tr '\n' ' ')
 export TEP_PG_CFLAGS TEP_PG_LIBS
 
-.PHONY: all clean helper hello sinatra_style bench bench-tep bench-sinatra demo test test-parallel spinel-fresh test-pg vendor-examples doctor
+.PHONY: all clean helper hello sinatra_style bench bench-tep bench-sinatra demo test test-parallel spinel-fresh test-pg vendor-examples vendor-spinelkit doctor
+
+# Re-sync the vendored SpinelKit lib (lib/spinel_kit/, sig/spinel_kit/) from the
+# upstream checkout. spinel_kit is a published gem; tep depends on its JSON codec
+# + logger. INTERIM vendoring (committed under lib/ so it travels with tep) until
+# spinel-compat gains transitive gem->gem vendoring -- OriPekelman/spinelgems#19.
+# Override the source with SPINELKIT_DIR. See tools/vendor-spinelkit.sh.
+vendor-spinelkit:
+	@$(TEP_ROOT)/tools/vendor-spinelkit.sh
 
 # Vendor each gem example's Gemfile-declared dependencies via
 # bundler-spinel (spinel-compat vendor, from $(SPINELGEMS)) into

@@ -33,9 +33,9 @@ class TestHttpPoolSend < TepTest
       r2 = Tep::Http.get(base + "/ping")
       h1 = Tep::Http::Pool.stats["hits"].to_i
       "{" +
-        Tep::Json.encode_pair_int("hits_delta", h1 - h0) + "," +
-        Tep::Json.encode_pair_str("b1", r1.body) + "," +
-        Tep::Json.encode_pair_str("b2", r2.body) +
+        SpinelKit::Json.encode_pair_int("hits_delta", h1 - h0) + "," +
+        SpinelKit::Json.encode_pair_str("b1", r1.body) + "," +
+        SpinelKit::Json.encode_pair_str("b2", r2.body) +
       "}"
     end
   RB

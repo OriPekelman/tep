@@ -65,10 +65,10 @@ get '/users/:id' do
     email  = DB.col_str(2)
     active = DB.col_int(3)
     body = "{" +
-      Tep::Json.encode_pair_int("id", uid)     + "," +
-      Tep::Json.encode_pair_str("name", name)  + "," +
-      Tep::Json.encode_pair_str("email", email) + "," +
-      Tep::Json.encode_pair_int("active", active) +
+      SpinelKit::Json.encode_pair_int("id", uid)     + "," +
+      SpinelKit::Json.encode_pair_str("name", name)  + "," +
+      SpinelKit::Json.encode_pair_str("email", email) + "," +
+      SpinelKit::Json.encode_pair_int("active", active) +
     "}"
   else
     body = "{\"error\":\"not found\"}"

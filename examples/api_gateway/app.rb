@@ -22,7 +22,7 @@ require 'sinatra'
 UPSTREAM     = ENV["UPSTREAM"]     || "http://127.0.0.1:8080"
 UPSTREAM_KEY = ENV["UPSTREAM_KEY"] || ""
 GATEWAY_KEY  = ENV["GATEWAY_KEY"]  || "let-me-in"
-LOGGER       = Tep::Logger.new   # stderr; .to_file(path) to redirect
+LOGGER       = SpinelKit::Log.new   # stderr; .to_file(path) to redirect
 
 # Stand-in for the Auth battery: grant :call_upstream to callers
 # presenting the gateway key. A real app installs Tep::Auth (bearer

@@ -14,46 +14,46 @@ class TestAuth < TepTest
     Tep::Auth.install!
 
     # ---- mint endpoints (test harness uses these to get tokens) ----
-    # The payload is Tep::Json-friendly flat JSON: sub, exp, caps
+    # The payload is SpinelKit::Json-friendly flat JSON: sub, exp, caps
     # (comma-separated), and optionally delegate (pipe-encoded).
 
     post '/mint_human' do
       res.headers["Content-Type"] = "text/plain"
-      sub = Tep::Json.get_str(req.raw_body, "sub")
-      caps = Tep::Json.get_str(req.raw_body, "caps")
+      sub = SpinelKit::Json.get_str(req.raw_body, "sub")
+      caps = SpinelKit::Json.get_str(req.raw_body, "caps")
       exp = Time.now.to_i + 600
       payload = "{" +
-        Tep::Json.encode_pair_str("sub", sub) + "," +
-        Tep::Json.encode_pair_int("exp", exp) + "," +
-        Tep::Json.encode_pair_str("caps", caps) +
+        SpinelKit::Json.encode_pair_str("sub", sub) + "," +
+        SpinelKit::Json.encode_pair_int("exp", exp) + "," +
+        SpinelKit::Json.encode_pair_str("caps", caps) +
       "}"
       Tep::Jwt.encode_hs256(payload, SECRET)
     end
 
     post '/mint_agent' do
       res.headers["Content-Type"] = "text/plain"
-      sub = Tep::Json.get_str(req.raw_body, "sub")
-      caps = Tep::Json.get_str(req.raw_body, "caps")
-      delegate = Tep::Json.get_str(req.raw_body, "delegate")
+      sub = SpinelKit::Json.get_str(req.raw_body, "sub")
+      caps = SpinelKit::Json.get_str(req.raw_body, "caps")
+      delegate = SpinelKit::Json.get_str(req.raw_body, "delegate")
       exp = Time.now.to_i + 600
       payload = "{" +
-        Tep::Json.encode_pair_str("sub", sub) + "," +
-        Tep::Json.encode_pair_int("exp", exp) + "," +
-        Tep::Json.encode_pair_str("caps", caps) + "," +
-        Tep::Json.encode_pair_str("delegate", delegate) +
+        SpinelKit::Json.encode_pair_str("sub", sub) + "," +
+        SpinelKit::Json.encode_pair_int("exp", exp) + "," +
+        SpinelKit::Json.encode_pair_str("caps", caps) + "," +
+        SpinelKit::Json.encode_pair_str("delegate", delegate) +
       "}"
       Tep::Jwt.encode_hs256(payload, SECRET)
     end
 
     post '/mint_expired' do
       res.headers["Content-Type"] = "text/plain"
-      sub = Tep::Json.get_str(req.raw_body, "sub")
+      sub = SpinelKit::Json.get_str(req.raw_body, "sub")
       # Issued in the past, expired in the past.
       exp = Time.now.to_i - 60
       payload = "{" +
-        Tep::Json.encode_pair_str("sub", sub) + "," +
-        Tep::Json.encode_pair_int("exp", exp) + "," +
-        Tep::Json.encode_pair_str("caps", "read") +
+        SpinelKit::Json.encode_pair_str("sub", sub) + "," +
+        SpinelKit::Json.encode_pair_int("exp", exp) + "," +
+        SpinelKit::Json.encode_pair_str("caps", "read") +
       "}"
       Tep::Jwt.encode_hs256(payload, SECRET)
     end

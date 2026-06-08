@@ -10,8 +10,8 @@ class TestJwt < TepTest
 
     post '/issue' do
       res.headers["Content-Type"] = "text/plain"
-      user = Tep::Json.get_str(req.raw_body, "user")
-      payload = "{" + Tep::Json.encode_pair_str("sub", user) + "}"
+      user = SpinelKit::Json.get_str(req.raw_body, "user")
+      payload = "{" + SpinelKit::Json.encode_pair_str("sub", user) + "}"
       Tep::Jwt.encode_hs256(payload, SECRET)
     end
 
@@ -42,8 +42,8 @@ class TestJwt < TepTest
 
     post '/timing_eq' do
       res.headers["Content-Type"] = "text/plain"
-      a = Tep::Json.get_str(req.raw_body, "a")
-      b = Tep::Json.get_str(req.raw_body, "b")
+      a = SpinelKit::Json.get_str(req.raw_body, "a")
+      b = SpinelKit::Json.get_str(req.raw_body, "b")
       Tep::Jwt.timing_safe_eq(a, b) ? "yes" : "no"
     end
   RB

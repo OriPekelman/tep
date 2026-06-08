@@ -30,17 +30,17 @@ class TestAuthOAuth2 < TepTest
     # only reach here on user-approve. The test stub skips the UI.
 
     post '/consent' do
-      principal_id = Tep::Json.get_str(req.raw_body, "principal_id")
-      client_id    = Tep::Json.get_str(req.raw_body, "client_id")
-      caps_str     = Tep::Json.get_str(req.raw_body, "caps")
+      principal_id = SpinelKit::Json.get_str(req.raw_body, "principal_id")
+      client_id    = SpinelKit::Json.get_str(req.raw_body, "client_id")
+      caps_str     = SpinelKit::Json.get_str(req.raw_body, "caps")
       Tep::AuthOAuth2.issue_code(principal_id, client_id, caps_str, 0)
     end
 
     # ---- token-exchange endpoint: bot redeems code for JWT.
 
     post '/token' do
-      code      = Tep::Json.get_str(req.raw_body, "code")
-      client_id = Tep::Json.get_str(req.raw_body, "client_id")
+      code      = SpinelKit::Json.get_str(req.raw_body, "code")
+      client_id = SpinelKit::Json.get_str(req.raw_body, "client_id")
       Tep::AuthOAuth2.exchange_code(code, client_id, 0)
     end
 

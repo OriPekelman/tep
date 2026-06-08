@@ -59,7 +59,7 @@ HEADERS = Tep::Security::Headers.new
 HEADERS.set_hsts(HSTS_SECONDS)
 Tep.after HEADERS
 
-LOGGER = Tep::Logger.new
+LOGGER = SpinelKit::Log.new
 LOGGER.set_level("info")
 LOGGER.to_stderr
 
@@ -233,7 +233,7 @@ def conversations_as_json
       out = out + ","
     end
     out = out + "{\"id\":" + id.to_s +
-                ",\"title\":" + Tep::Json.quote(title) +
+                ",\"title\":" + SpinelKit::Json.quote(title) +
                 ",\"created_at\":" + created.to_s + "}"
     first = false
   end
@@ -297,7 +297,7 @@ def append_message(conv_id, role, content)
 end
 
 # Build a JSON envelope for the messages list. Hand-rolled because
-# Tep::Json's flat encoders don't cover nested arrays-of-hashes
+# SpinelKit::Json's flat encoders don't cover nested arrays-of-hashes
 # (same shape Tep::Llm uses internally).
 def messages_as_json(conv_id)
   db = db_open
@@ -311,8 +311,8 @@ def messages_as_json(conv_id)
     if !first
       out = out + ","
     end
-    out = out + "{\"role\":" + Tep::Json.quote(role) +
-                ",\"content\":" + Tep::Json.quote(content) + "}"
+    out = out + "{\"role\":" + SpinelKit::Json.quote(role) +
+                ",\"content\":" + SpinelKit::Json.quote(content) + "}"
     first = false
   end
   db.finalize
@@ -415,7 +415,7 @@ class ChatbotFilter < Tep::Filter
   def self.deny(res, why)
     res.set_status(401)
     res.headers["Content-Type"] = "application/json"
-    res.body = '{"error":"unauthorized","reason":' + Tep::Json.quote(why) + '}'
+    res.body = '{"error":"unauthorized","reason":' + SpinelKit::Json.quote(why) + '}'
     res.halted = true
     0
   end
@@ -505,9 +505,9 @@ class JobWorker
     if json.length == 0
       return 0
     end
-    job_id = Tep::Json.get_int(json, "id")
-    name   = Tep::Json.get_str(json, "job_name")
-    arg    = Tep::Json.get_str(json, "arg")
+    job_id = SpinelKit::Json.get_int(json, "id")
+    name   = SpinelKit::Json.get_str(json, "job_name")
+    arg    = SpinelKit::Json.get_str(json, "arg")
     if name == "TitleJob"
       TitleJob.new.perform(arg)
       Tep::Job.mark_done(DB_PATH, job_id, "")
@@ -585,7 +585,7 @@ post '/api/token' do
   payload_json = '{"sub":"user","iat":' + Time.now.to_i.to_s + '}'
   token = Tep::Jwt.encode_hs256(payload_json, JWT_SECRET)
   res.headers["Content-Type"] = "application/json"
-  '{"token":' + Tep::Json.quote(token) + '}'
+  '{"token":' + SpinelKit::Json.quote(token) + '}'
 end
 
 # -------------------------------------------------------------------
@@ -613,7 +613,7 @@ end
 # -------------------------------------------------------------------
 
 # Parse the OpenAI request body into a Tep::Llm::Message array.
-# Hand-rolled because Tep::Json's flat decoder doesn't dive into
+# Hand-rolled because SpinelKit::Json's flat decoder doesn't dive into
 # the messages-array shape. Walks `"messages":[{"role":"...","content":"..."},...]`
 # and pulls each role/content pair.
 def parse_openai_messages(body)
@@ -660,10 +660,10 @@ end
 def openai_envelope(model, content, stop_reason)
   '{"id":"chatcmpl-tep","object":"chat.completion","created":' +
     Time.now.to_i.to_s +
-    ',"model":' + Tep::Json.quote(model) +
+    ',"model":' + SpinelKit::Json.quote(model) +
     ',"choices":[{"index":0,"message":{"role":"assistant","content":' +
-    Tep::Json.quote(content) +
-    '},"finish_reason":' + Tep::Json.quote(stop_reason) +
+    SpinelKit::Json.quote(content) +
+    '},"finish_reason":' + SpinelKit::Json.quote(stop_reason) +
     '}]}'
 end
 
@@ -700,7 +700,7 @@ post '/api/v1/chat/completions' do
 
   # Extract model + stream flag from the JSON body. Model
   # falls back to the chatbot's configured default.
-  model = Tep::Json.get_str(body, "model")
+  model = SpinelKit::Json.get_str(body, "model")
   if model.length == 0
     model = MODEL
   end
@@ -807,10 +807,10 @@ post '/api/compare' do
     if i > 0
       out = out + ","
     end
-    out = out + "{\"backend\":" + Tep::Json.quote(backend) +
-                ",\"model\":" + Tep::Json.quote(model) +
+    out = out + "{\"backend\":" + SpinelKit::Json.quote(backend) +
+                ",\"model\":" + SpinelKit::Json.quote(model) +
                 ",\"took_s\":" + took.to_s +
-                ",\"content\":" + Tep::Json.quote(content) + "}"
+                ",\"content\":" + SpinelKit::Json.quote(content) + "}"
     i += 1
   end
   out + "]}"
@@ -830,8 +830,8 @@ def compare_backends_as_json
     if i > 0
       out = out + ","
     end
-    out = out + "{\"backend\":" + Tep::Json.quote(backend) +
-                ",\"model\":" + Tep::Json.quote(model) + "}"
+    out = out + "{\"backend\":" + SpinelKit::Json.quote(backend) +
+                ",\"model\":" + SpinelKit::Json.quote(model) + "}"
     i += 1
   end
   out + "]"
@@ -961,8 +961,8 @@ end
 # keeps sending message frames.
 websocket "/api/c/ws" do |ws|
   on_message do |evt|
-    conv_id = Tep::Json.get_int(evt.data, "conv_id")
-    content = Tep::Json.get_str(evt.data, "content")
+    conv_id = SpinelKit::Json.get_int(evt.data, "conv_id")
+    content = SpinelKit::Json.get_str(evt.data, "content")
     if conv_id > 0 && content.length > 0
       append_message(conv_id, "user", content)
       msgs = conversation_history(conv_id)
@@ -1019,6 +1019,6 @@ post '/api/send' do
   end
 
   res.headers["Content-Type"] = "application/json"
-  '{"role":"assistant","content":' + Tep::Json.quote(reply.content) +
-    ',"stop_reason":' + Tep::Json.quote(reply.stop_reason) + '}'
+  '{"role":"assistant","content":' + SpinelKit::Json.quote(reply.content) +
+    ',"stop_reason":' + SpinelKit::Json.quote(reply.stop_reason) + '}'
 end

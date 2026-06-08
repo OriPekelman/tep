@@ -66,7 +66,7 @@ closed):
 | `Tep::Llm` | `Tep::Llm.new(BACKEND_URL).chat(history)` + `.chat_stream(history)` |
 | `Tep::Http` | (under `Tep::Llm`) the actual HTTP transport |
 | `Tep::SQLite` | conversations + messages + app_config tables |
-| `Tep::Json` | response payloads, manual encoding for nested arrays |
+| `SpinelKit::Json` | response payloads, manual encoding for nested arrays |
 | `Tep::Password` | first-boot setup + login verify |
 | `Tep::Session` | signed cookie + `authed` flag |
 | `Tep::Assets` | bundled CSS / JS / markdown renderer (served at `/style.css`, `/chat.js`, `/markdown.js` — Tep::Assets paths-relative-to-assets/) |
@@ -77,7 +77,7 @@ closed):
 | `Tep::WebSocket` | live chat over WS (the default `/api/c/ws` route); `Driver#write` is a Streamer-shape alias so `Tep::Llm.chat_stream` drives the socket directly |
 | `Tep::Job` | background conversation-title summarisation |
 | `Tep::Parallel` | multi-backend compare endpoint (sequential dispatch today; the genuine fork fan-out is blocked on [matz/spinel#575](https://github.com/matz/spinel/issues/575)) |
-| `Tep::Logger` | per-request trace to stderr |
+| `SpinelKit::Log` | per-request trace to stderr |
 
 Phase F is done (closes [tep#11](https://github.com/OriPekelman/tep/issues/11)):
 the JS client opens one WebSocket to `/api/c/ws` and sends

@@ -51,10 +51,10 @@ class TestHttpPool < TepTest
       res.headers["Content-Type"] = "application/json"
       s = Tep::Http::Pool.stats
       "{" +
-        Tep::Json.encode_pair_int("checkouts", s["checkouts"].to_i) + "," +
-        Tep::Json.encode_pair_int("checkins",  s["checkins"].to_i) + "," +
-        Tep::Json.encode_pair_int("hits",      s["hits"].to_i) + "," +
-        Tep::Json.encode_pair_int("misses",    s["misses"].to_i) +
+        SpinelKit::Json.encode_pair_int("checkouts", s["checkouts"].to_i) + "," +
+        SpinelKit::Json.encode_pair_int("checkins",  s["checkins"].to_i) + "," +
+        SpinelKit::Json.encode_pair_int("hits",      s["hits"].to_i) + "," +
+        SpinelKit::Json.encode_pair_int("misses",    s["misses"].to_i) +
       "}"
     end
 

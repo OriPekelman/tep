@@ -12,7 +12,7 @@
 #     end
 #
 #     def after_forward(req, ures, res)
-#       Tep::Logger.info("upstream " + ures.status.to_s)
+#       SpinelKit::Log.info("upstream " + ures.status.to_s)
 #       0
 #     end
 #   end
@@ -246,7 +246,7 @@ module Tep
     # An LLM gateway typically overrides this as:
     #
     #   def stream_request?(req)
-    #     Tep::Json.get_bool(req.raw_body, "stream")
+    #     SpinelKit::Json.get_bool(req.raw_body, "stream")
     #   end
     def stream_request?(req)
       false
@@ -298,10 +298,10 @@ module Tep
         res.set_status(413)
         res.headers["Content-Type"] = "application/json"
         err_body = "{\"error\":{" +
-          Tep::Json.encode_pair_str("message",
+          SpinelKit::Json.encode_pair_str("message",
             "request body exceeds proxy cap of " +
             @max_request_body_bytes.to_s + " bytes") + "," +
-          Tep::Json.encode_pair_str("type", "payload_too_large") +
+          SpinelKit::Json.encode_pair_str("type", "payload_too_large") +
         "}}"
         res.set_body(err_body)
         return err_body
@@ -378,10 +378,10 @@ module Tep
         res.set_status(502)
         res.headers["Content-Type"] = "application/json"
         err_body = "{\"error\":{" +
-          Tep::Json.encode_pair_str("message",
+          SpinelKit::Json.encode_pair_str("message",
             "upstream response body exceeds proxy cap of " +
             @max_response_body_bytes.to_s + " bytes") + "," +
-          Tep::Json.encode_pair_str("type", "upstream_body_too_large") +
+          SpinelKit::Json.encode_pair_str("type", "upstream_body_too_large") +
         "}}"
         res.set_body(err_body)
         return err_body

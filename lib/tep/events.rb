@@ -205,7 +205,7 @@ module Tep
            Tep.str_find(line_s, "\"name\":\"request\"", 0) >= 0
           reqs += 1
           # completion_tokens now lives nested inside the `extra`
-          # object. Tep::Json.find_value_start walks only the
+          # object. SpinelKit::Json.find_value_start walks only the
           # top-level keys (it skips over nested objects), so we
           # have to extract extra first, then get_int within it.
           extra_pos = Json.find_value_start(line_s, "extra")
@@ -243,7 +243,7 @@ module Tep
     end
 
     # Append one JSON line. Best-effort, append mode -- mirrors
-    # Tep::Logger's file sink. Telemetry must never fail a request, so
+    # SpinelKit::Log's file sink. Telemetry must never fail a request, so
     # a malformed/unwritable path degrades to a dropped line rather
     # than a raised error reaching the handler. Callers gate on a
     # non-empty @path before reaching here.

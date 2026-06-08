@@ -123,7 +123,7 @@ module Tep
       out
     end
 
-    # Hand-rolled JSON build. Tep::Json doesn't ship nested
+    # Hand-rolled JSON build. SpinelKit::Json doesn't ship nested
     # array-of-hash support (its public encoders are flat); the
     # request body is a fixed shape so the inline assembly stays
     # bounded.
@@ -152,7 +152,7 @@ module Tep
     # OpenAI response shape:
     #   {"choices":[{"message":{"role":"assistant","content":"..."},
     #                "finish_reason":"stop"}], ...}
-    # We extract two fields, both inside choices[0]. Tep::Json's
+    # We extract two fields, both inside choices[0]. SpinelKit::Json's
     # flat-key decoder doesn't dive that deep, so we hand-walk the
     # JSON looking for `"message":{...}` and pull "content" + (the
     # surrounding) "finish_reason" out of it.
