@@ -74,6 +74,40 @@ namespace :rbs do
       end
     end
   end
+
+  # DEV-ONLY drift guard: emit spinel's inferred signatures and fail if sig/
+  # has drifted from them (a stale/wrong declaration would silently mistype
+  # the emitted C once tep#199's `--rbs sig` is enabled). Like :emit it
+  # self-skips cleanly when --emit-rbs is unavailable, so it's never a hard
+  # dependency -- but WHEN it can run, it enforces (non-zero on drift). Not in
+  # :default/CI by choice; run as `rake rbs:check` or wire as a CI canary.
+  #   rake rbs:check                         # uses examples/.sinatra_style.tep.rb
+  #   EMIT_SRC=examples/.hello.tep.rb rake rbs:check
+  desc "Fail if sig/*.rbs has drifted from spinel's inferred types (dev-only)."
+  task :check do
+    spinel = ENV["SPINEL"] || "spinel"
+    src    = ENV["EMIT_SRC"] || "examples/.sinatra_style.tep.rb"
+    help   = (`#{spinel} --help 2>&1` rescue "")
+    if !help.include?("--emit-rbs")
+      warn "rbs:check: `#{spinel}` has no --emit-rbs (needs the f6d5eef+ pin); " \
+           "skipping -- optional dev tooling, not a dependency."
+      next
+    end
+    unless File.exist?(src)
+      warn "rbs:check: #{src} not found -- run `make all` first (or set EMIT_SRC); skipping."
+      next
+    end
+    require "tmpdir"
+    Dir.mktmpdir("rbs-check") do |d|
+      emitted = File.join(d, "emitted.rbs")
+      unless system("#{spinel} --emit-rbs #{src} -o #{emitted}")
+        warn "rbs:check: emit failed (non-fatal); skipping."
+        next
+      end
+      ok = system(RbConfig.ruby, "tools/rbs-check.rb", emitted, "sig")
+      abort "rbs:check: sig/ drifted from spinel-inferred types (above)" unless ok
+    end
+  end
 end
 
 task default: :test
