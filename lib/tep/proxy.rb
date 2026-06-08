@@ -12,7 +12,7 @@
 #     end
 #
 #     def after_forward(req, ures, res)
-#       SpinelKit::Log.info("upstream " + ures.status.to_s)
+#       LOGGER.info("upstream " + ures.status.to_s)   # LOGGER = SpinelKit::Log.new
 #       0
 #     end
 #   end
