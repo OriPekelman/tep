@@ -96,7 +96,7 @@ module Tep
       # argument's typed-callsite to a single shape -- splitting
       # tripped spinel's cross-method param inference.
       body = body[0, body.length - 1] + ",\"stream\":true}"
-      parts = Tep::Url.split_url(@base_url)
+      parts = SpinelKit::Url.split_url(@base_url)
       host = parts["host"]
       port = parts["port"].to_i
       fd = Sock.sphttp_connect(host, port)
@@ -375,11 +375,10 @@ module Tep
           return out
         end
         hex = s[i, eol - i]
-        n = Llm.hex_to_int(hex)
-        if n < 0
-          # Malformed length; bail.
-          return out
-        end
+        # to_int parses the leading hex (so a `size;ext` chunk-extension
+        # yields the size, not a parse error) and is >= 0, so 0 -- empty or
+        # no leading hex -- is the terminating chunk / give-up point.
+        n = SpinelKit::Hex.to_int(hex)
         if n == 0
           # Last chunk -- done.
           return out
@@ -407,10 +406,7 @@ module Tep
           return s[i, s.length - i]
         end
         hex = s[i, eol - i]
-        n = Llm.hex_to_int(hex)
-        if n < 0
-          return s[i, s.length - i]
-        end
+        n = SpinelKit::Hex.to_int(hex)   # leading-hex, >= 0 (see dechunk_consume)
         if n == 0
           return ""
         end
@@ -441,34 +437,6 @@ module Tep
       state.leftover = body_buf + "\n\n"
       Llm.consume_sse_events(out_stream, state)
       state.acc
-    end
-
-    # Parse a (small) hex string to Integer; -1 on malformed.
-    # Chunked sizes are at most 8 hex chars in practice (4 GB);
-    # we cap at 16 for safety.
-    def self.hex_to_int(s)
-      if s.length == 0 || s.length > 16
-        return -1
-      end
-      n = 0
-      i = 0
-      while i < s.length
-        c = s[i]
-        d = -1
-        if c >= "0" && c <= "9"
-          d = (c.ord - 48)
-        elsif c >= "a" && c <= "f"
-          d = (c.ord - 87)
-        elsif c >= "A" && c <= "F"
-          d = (c.ord - 55)
-        end
-        if d < 0
-          return -1
-        end
-        n = n * 16 + d
-        i += 1
-      end
-      n
     end
 
     # Per-stream state carried across consume_sse_events / read

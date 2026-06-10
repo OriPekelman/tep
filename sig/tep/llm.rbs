@@ -45,7 +45,6 @@ module Tep
     def self.dechunk_leftover: (String s) -> String
     def self.dechunk_pass: (String s) -> String
     def self.drain_sse_buf: (String body_buf, Tep::Stream out_stream, String acc) -> String
-    def self.hex_to_int: (String s) -> Integer
 
     class Message
       attr_accessor role: String

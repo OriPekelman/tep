@@ -424,7 +424,7 @@ module Tep
     # 502 and returns "" without starting a stream.
     def start_streaming_forward(req, res, ureq)
       url   = pick_upstream(req) + ureq.path
-      parts = Tep::Url.split_url(url)
+      parts = SpinelKit::Url.split_url(url)
       if parts["scheme"] != "http"
         res.set_status(502)
         return ""

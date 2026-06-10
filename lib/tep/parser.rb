@@ -33,7 +33,7 @@ module Tep
       else
         req.path  = req.raw_path[0, qmark]
         qstring   = req.raw_path[qmark + 1, req.raw_path.length - qmark - 1]
-        req.query = Url.parse_query(qstring)
+        req.query = SpinelKit::Url.parse_query(qstring)
       end
 
       i = 1
@@ -63,7 +63,7 @@ module Tep
           if eq > 0
             cname  = pair[0, eq].strip
             cvalue = pair[eq + 1, pair.length - eq - 1].strip
-            req.cookies[cname] = Url.unescape(cvalue)
+            req.cookies[cname] = SpinelKit::Url.unescape(cvalue)
           end
         end
       end

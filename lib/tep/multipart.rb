@@ -9,7 +9,7 @@
 # different surface (likely `req.files`) plus an NUL-safe byte
 # array, both follow-ups.
 #
-# Public API mirrors Url.parse_query: pass the raw body + the
+# Public API mirrors SpinelKit::Url.parse_query: pass the raw body + the
 # request's Content-Type header value; get back a string-keyed
 # string-valued hash, ready to merge into `req.params`.
 module Tep

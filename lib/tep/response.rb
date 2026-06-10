@@ -88,7 +88,7 @@ module Tep
     # (path, expires, max-age, domain, samesite, httponly, secure).
     # Empty `opts` is fine: just writes "name=value".
     def set_cookie(name, value, opts)
-      line = name + "=" + Url.escape(value)
+      line = name + "=" + SpinelKit::Url.escape(value)
       if opts.length > 0
         opts.each do |k, v|
           if v.length == 0

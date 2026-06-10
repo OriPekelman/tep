@@ -28,8 +28,8 @@ if [ ! -d "$SPINELKIT_DIR/lib/spinel_kit" ]; then
 fi
 
 REV="$(git -C "$SPINELKIT_DIR" rev-parse --short HEAD 2>/dev/null || echo unknown)"
-LIB_FILES="json.rb json_decoder.rb log.rb"
-SIG_FILES="json.rbs json_decoder.rbs log.rbs"
+LIB_FILES="json.rb json_decoder.rb log.rb hex.rb url.rb"
+SIG_FILES="json.rbs json_decoder.rbs log.rbs hex.rbs url.rbs"
 
 mkdir -p "$TEP_ROOT/lib/spinel_kit" "$TEP_ROOT/sig/spinel_kit"
 

@@ -1,4 +1,4 @@
-# VENDORED from OriPekelman/spinelkit @ a103445 -- DO NOT EDIT HERE.
+# VENDORED from OriPekelman/spinelkit @ 09e8558 -- DO NOT EDIT HERE.
 # Edit upstream and re-sync with `make vendor-spinelkit`.
 # Advisory RBS for SpinelKit::Json encoders (lib/spinel_kit/json.rb).
 # Decoders are in json_decoder.rbs; the builder in json_builder.rbs.
