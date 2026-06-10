@@ -33,7 +33,7 @@ module Tep
     # route. Set by `req.set_passed`.
     attr_accessor passed: bool
 
-    def initialize: () -> Integer
+    def initialize: () -> void
     def set_passed: () -> bool
 
     # Aliases / shortcuts.

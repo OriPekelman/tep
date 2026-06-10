@@ -9,7 +9,7 @@ module Tep
   # a single `write` that emits one HTTP chunk.
   class Stream
     attr_accessor fd: Integer
-    def initialize: (Integer fd) -> Integer
+    def initialize: (Integer fd) -> void
 
     # Write one chunk. Returns the byte count of the chunk payload
     # (excludes the chunk framing).
