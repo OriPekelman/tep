@@ -129,17 +129,17 @@ module Tep
 
       # Route handlers mounted by serve!; apps don't instantiate them.
       class ModelsHandler < Tep::Handler
-        def handle: (Tep::Request req, Tep::Response res) -> Integer
+        def handle: (Tep::Request req, Tep::Response res) -> String
       end
       class CompletionsHandler < Tep::Handler
-        def handle: (Tep::Request req, Tep::Response res) -> Integer
+        def handle: (Tep::Request req, Tep::Response res) -> String
       end
       class ChatCompletionsHandler < Tep::Handler
-        def handle: (Tep::Request req, Tep::Response res) -> Integer
+        def handle: (Tep::Request req, Tep::Response res) -> String
       end
       # /v1/embeddings; 501s unless backend.supports_embeddings?.
       class EmbeddingsHandler < Tep::Handler
-        def handle: (Tep::Request req, Tep::Response res) -> Integer
+        def handle: (Tep::Request req, Tep::Response res) -> String
       end
     end
   end

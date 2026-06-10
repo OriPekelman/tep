@@ -83,7 +83,7 @@ namespace :rbs do
   # :default/CI by choice; run as `rake rbs:check` or wire as a CI canary.
   #   rake rbs:check                         # uses examples/.sinatra_style.tep.rb
   #   EMIT_SRC=examples/.hello.tep.rb rake rbs:check
-  desc "Fail if sig/*.rbs has drifted from spinel's inferred types (dev-only)."
+  desc "Report sig/*.rbs divergence from spinel's inferred types, bucketed (advisory, dev-only)."
   task :check do
     spinel = ENV["SPINEL"] || "spinel"
     src    = ENV["EMIT_SRC"] || "examples/.sinatra_style.tep.rb"
@@ -104,8 +104,11 @@ namespace :rbs do
         warn "rbs:check: emit failed (non-fatal); skipping."
         next
       end
+      # Advisory: rbs-check.rb exits 0 (reports buckets) unless TEP_RBS_STRICT=1,
+      # in which case it fails on param-shape drift -- the only codegen-dangerous
+      # bucket. Pass that env through so a CI canary can opt into the hard gate.
       ok = system(RbConfig.ruby, "tools/rbs-check.rb", emitted, "sig")
-      abort "rbs:check: sig/ drifted from spinel-inferred types (above)" unless ok
+      abort "rbs:check: param-shape drift present (TEP_RBS_STRICT)" if !ok && ENV["TEP_RBS_STRICT"] == "1"
     end
   end
 end

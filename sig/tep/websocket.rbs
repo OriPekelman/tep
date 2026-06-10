@@ -21,7 +21,7 @@ module Tep
       attr_accessor opcode: Integer
       attr_accessor payload: String
 
-      def initialize: (bool fin, Integer opcode, String payload) -> Integer
+      def initialize: (bool fin, Integer opcode, String payload) -> void
       def encode_unmasked: () -> String
 
       def self.byte_to_chr: (Integer n) -> String
@@ -36,7 +36,7 @@ module Tep
       attr_accessor consumed: Integer
       attr_accessor close_code: Integer
 
-      def initialize: () -> Integer
+      def initialize: () -> void
     end
 
     # Send-side driver. Owns the fd + the six event-handler slots.
@@ -51,7 +51,7 @@ module Tep
       attr_accessor h_pong: Handler
       attr_accessor h_error: Handler
 
-      def initialize: (Integer fd) -> Integer
+      def initialize: (Integer fd) -> void
 
       def set_max_frame_size: (Integer n) -> void
       def set_fd: (Integer new_fd) -> void
@@ -82,7 +82,7 @@ module Tep
       attr_accessor code: Integer
       attr_accessor reason: String
 
-      def initialize: () -> Integer
+      def initialize: () -> void
     end
 
     # Base handler. Subclasses override handle_event to react to
@@ -99,7 +99,7 @@ module Tep
       attr_accessor fd: Integer
       attr_accessor idle_timeout_seconds: Integer
 
-      def initialize: (Driver driver) -> Integer
+      def initialize: (Driver driver) -> void
       def set_idle_timeout: (Integer seconds) -> void
       def run: () -> Integer
 
@@ -115,14 +115,14 @@ module Tep
       attr_accessor start: Integer
       attr_accessor avail: Integer
 
-      def initialize: () -> Integer
+      def initialize: () -> void
     end
 
     class Handshake
       attr_accessor valid: bool
       attr_accessor accept_key: String
 
-      def initialize: () -> Integer
+      def initialize: () -> void
 
       def self.check: (Tep::Request req) -> Handshake
       def self.build_response: (String accept_key, String subprotocol) -> String

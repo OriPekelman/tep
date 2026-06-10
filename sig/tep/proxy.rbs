@@ -44,7 +44,7 @@ module Tep
     def on_stream_end: (Tep::Request req, Tep::Stream out, Tep::Proxy::StreamStats stats) -> Integer
 
     # ---- Tep::Handler interface ----
-    def handle: (Tep::Request req, Tep::Response res) -> Integer
+    def handle: (Tep::Request req, Tep::Response res) -> String
 
     # Per-request retry configuration. base_backoff_ms grows by
     # backoff_multiplier each attempt; retriable? treats status 0
