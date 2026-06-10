@@ -36,7 +36,7 @@ if defined?(RUBY_ENGINE)
 end
 
 require_relative "tep/version"
-require_relative "tep/url"
+require_relative "spinel_kit/url"
 require_relative "tep/multipart"
 require_relative "tep/net"
 require_relative "tep/agent_delegation"
@@ -544,8 +544,8 @@ module Tep
   Tep::Shell.read("/etc/hostname")
   Tep::Shell.read_limited("/etc/hostname", 64)
 
-  # Tep::Url seed -- the new split_url has to land at compile time.
-  Tep::Url.split_url("http://x/")
+  # SpinelKit::Url seed -- the new split_url has to land at compile time.
+  SpinelKit::Url.split_url("http://x/")
 
   # Tep::Http seed -- every public method gets one canonical call so
   # spinel pins the param types. The URL "http://127.0.0.1:1/" won't
@@ -847,7 +847,7 @@ module Tep
   Tep::Llm.dechunk_leftover("")
   Tep::Llm.dechunk_pass("")
   Tep::Llm.drain_sse_buf("", _tep_seed_llm_stream, "")
-  Tep::Llm.hex_to_int("")
+  SpinelKit::Hex.to_int("")
 
   # Tep::WebSocket seeds. Pins frame/handshake/driver/connection
   # surfaces to concrete typed callsites so the analyzer doesn't

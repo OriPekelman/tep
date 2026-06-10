@@ -1,4 +1,4 @@
-# VENDORED from OriPekelman/spinelkit @ a103445 -- DO NOT EDIT HERE.
+# VENDORED from OriPekelman/spinelkit @ 09e8558 -- DO NOT EDIT HERE.
 # Edit upstream and re-sync with `make vendor-spinelkit`.
 # SpinelKit::Json -- Spinel-safe JSON ENCODERS (stateless).
 #

@@ -77,7 +77,7 @@ module Tep
         pp = pat[i]
         if pp.length > 0 && pp[0] == ":"
           name = @r_params[pi]
-          req.params[name] = Url.unescape(rp[i])
+          req.params[name] = SpinelKit::Url.unescape(rp[i])
           pi += 1
         end
         i += 1

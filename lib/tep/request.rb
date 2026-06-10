@@ -180,7 +180,7 @@ module Tep
     # @raw_body to Content-Length.
     def parse_form_body
       if form?
-        Url.parse_query(@raw_body).each do |k, v|
+        SpinelKit::Url.parse_query(@raw_body).each do |k, v|
           @params[k] = v
         end
       elsif multipart?

@@ -151,7 +151,7 @@ module Tep
 
     def self.send_req_blocking(verb, url, body, headers)
       out = Tep::Http::Response.new
-      parts = Tep::Url.split_url(url)
+      parts = SpinelKit::Url.split_url(url)
       scheme = parts["scheme"]
       if scheme != "http" && scheme != "https"
         # Unknown scheme.
@@ -168,7 +168,7 @@ module Tep
       # pooling TLS sockets is out of scope for 6.7b (#126). HTTP/1.0 +
       # Connection: close + recv-until-EOF over a fresh verified socket.
       if scheme == "https"
-        fd = Sock.sphttp_connect_tls(host, port)   # port 443 via Tep::Url
+        fd = Sock.sphttp_connect_tls(host, port)   # port 443 via SpinelKit::Url
         if fd < 0
           return out
         end
@@ -275,7 +275,7 @@ module Tep
     # docs/MACOS-CONCURRENCY.md for the why.
     def self.send_req_coop(verb, url, body, headers)
       out = Tep::Http::Response.new
-      parts = Tep::Url.split_url(url)
+      parts = SpinelKit::Url.split_url(url)
       scheme = parts["scheme"]
       if scheme != "http" && scheme != "https"
         return out

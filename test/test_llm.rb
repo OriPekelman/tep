@@ -82,14 +82,15 @@ class TestLlm < TepTest
     # --- Phase B: chunked decode + SSE event consume ---
 
     get "/hex_to_int_valid" do
-      Tep::Llm.hex_to_int("ff").to_s + "|" +
-      Tep::Llm.hex_to_int("a").to_s  + "|" +
-      Tep::Llm.hex_to_int("100").to_s
+      SpinelKit::Hex.to_int("ff").to_s + "|" +
+      SpinelKit::Hex.to_int("a").to_s  + "|" +
+      SpinelKit::Hex.to_int("100").to_s
     end
 
-    get "/hex_to_int_invalid" do
-      Tep::Llm.hex_to_int("zz").to_s + "|" +
-      Tep::Llm.hex_to_int("").to_s
+    get "/hex_to_int_leading" do
+      SpinelKit::Hex.to_int("zz").to_s    + "|" +  # no leading hex digit -> 0
+      SpinelKit::Hex.to_int("").to_s      + "|" +  # empty -> 0
+      SpinelKit::Hex.to_int("ff;ext").to_s         # leading hex, stops at ext -> 255
     end
 
     # One chunked body: 5 bytes "Hello", then last-chunk 0.
@@ -212,9 +213,11 @@ class TestLlm < TepTest
     assert_equal "255|10|256", res.body
   end
 
-  def test_hex_to_int_malformed_returns_neg_one
-    res = get("/hex_to_int_invalid")
-    assert_equal "-1|-1", res.body
+  # SpinelKit::Hex.to_int parses LEADING hex (>= 0), unlike the old strict
+  # Tep::Llm.hex_to_int that returned -1 on any malformation. See dechunk_*.
+  def test_hex_to_int_leading_parse
+    res = get("/hex_to_int_leading")
+    assert_equal "0|0|255", res.body
   end
 
   def test_dechunk_complete_single_chunk

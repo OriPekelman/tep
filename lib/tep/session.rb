@@ -46,7 +46,7 @@ module Tep
       if !Tep.timing_safe_eq(sig, expect)
         return false
       end
-      Url.parse_query(payload).each do |k, v|
+      SpinelKit::Url.parse_query(payload).each do |k, v|
         @data[k] = v
       end
       true
@@ -61,7 +61,7 @@ module Tep
         if !first
           payload = payload + "&"
         end
-        payload = payload + Url.escape(k) + "=" + Url.escape(v)
+        payload = payload + SpinelKit::Url.escape(k) + "=" + SpinelKit::Url.escape(v)
         first = false
       end
       payload + "." + Crypto.sp_crypto_hmac_sha256_hex(secret, payload)
