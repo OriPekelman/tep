@@ -89,6 +89,8 @@ class TestOpenAIServer < TepTest
     assert_equal "200", res.code
     body = JSON.parse(res.body)
     assert_equal "text_completion", body["object"]
+    # Backend leaves Completion#id default -> "cmpl-tep" (back-compat).
+    assert_equal "cmpl-tep", body["id"]
     assert_equal "echo-1", body["model"]
     assert_equal "echoed 3 tokens t=1.0 p=1.0", body["choices"][0]["text"]
     assert_equal "stop", body["choices"][0]["finish_reason"]
@@ -131,6 +133,9 @@ class TestOpenAIServerEvents < TepTest
         c.text              = "echoed " + token_ids.length.to_s + " tokens"
         c.prompt_tokens     = token_ids.length
         c.completion_tokens = sampling.max_tokens
+        # Backend-minted per-request id (#209): must surface as the
+        # response `id` AND the inference event's request_id.
+        c.id                = "cmpl-evt-" + token_ids.length.to_s
         c
       end
     end
@@ -168,6 +173,8 @@ class TestOpenAIServerEvents < TepTest
     res = post("/v1/completions",
                "{\"model\":\"echo-1\",\"prompt\":[1,2,3,4],\"max_tokens\":7}")
     assert_equal "200", res.code
+    # Backend-minted id (#209) surfaces as the response `id`.
+    assert_equal "cmpl-evt-4", JSON.parse(res.body)["id"]
 
     lines2 = File.readlines(EVENTS_PATH).map { |l| JSON.parse(l) }
     # #136: inference events are kind:"eval"+name:"request"; per-request
@@ -182,7 +189,9 @@ class TestOpenAIServerEvents < TepTest
     assert_equal 7,        extra["completion_tokens"]
     assert_kind_of Integer, extra["latency_us"]
     assert extra["latency_us"] >= 0
-    assert_equal "cmpl-tep", extra["request_id"]
+    # request_id tracks the backend-minted Completion#id, same value as
+    # the response `id` above (the request_id == response id invariant).
+    assert_equal "cmpl-evt-4", extra["request_id"]
     assert_match(/\Auser:/, extra["principal_id"])
   end
 end

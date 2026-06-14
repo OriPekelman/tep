@@ -75,6 +75,9 @@ module Tep
         attr_accessor token_ids: Array[Integer]
         # choices[0].finish_reason (default "stop").
         attr_accessor finish_reason: String
+        # Response/event completion id (default "cmpl-tep"); a backend may
+        # mint per-request ids for byte-exact downstream ingest.
+        attr_accessor id: String
         def initialize: () -> void
       end
 
