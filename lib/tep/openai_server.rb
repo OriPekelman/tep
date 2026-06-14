@@ -272,9 +272,16 @@ module Tep
       # Text backends leave token_ids empty and the ids field is omitted.
       # finish_reason defaults to "stop"; a fixed-length greedy backend
       # sets "length".
+      #
+      # id is the completion id echoed as the response `id` (and the
+      # inference event's request_id). It defaults to "cmpl-tep"; a backend
+      # that mints its own per-request ids (e.g. so a downstream byte-exact
+      # ingest keeps unique ids) sets it. Leaving it default keeps existing
+      # consumers byte-identical.
       class Completion
         attr_accessor :text, :prompt_tokens, :completion_tokens
         attr_accessor :token_ids, :finish_reason
+        attr_accessor :id
 
         def initialize
           @text              = ""
@@ -285,6 +292,7 @@ module Tep
           @token_ids         = [0]
           @token_ids.delete_at(0)
           @finish_reason     = "stop"
+          @id                = "cmpl-tep"
         end
       end
 
@@ -581,7 +589,7 @@ module Tep
           # the auth-filter populated identity (anonymous if none).
           wall_us = (Time.now.to_i - t0) * 1_000_000
           extra = "{" +
-            SpinelKit::Json.encode_pair_str("request_id", "cmpl-tep") + "," +
+            SpinelKit::Json.encode_pair_str("request_id", comp.id) + "," +
             SpinelKit::Json.encode_pair_str("principal_id", req.identity.subject) +
           "}"
           Tep::APP.openai_events.inference(
@@ -597,7 +605,7 @@ module Tep
           end
 
           "{" +
-            SpinelKit::Json.encode_pair_str("id", "cmpl-tep") + "," +
+            SpinelKit::Json.encode_pair_str("id", comp.id) + "," +
             SpinelKit::Json.encode_pair_str("object", "text_completion") + "," +
             SpinelKit::Json.encode_pair_int("created", Time.now.to_i) + "," +
             SpinelKit::Json.encode_pair_str("model", model) + "," +
