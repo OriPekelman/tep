@@ -34,6 +34,16 @@ TEP_PG_LIBS   ?= $(shell \
     (pg_config --libdir 2>/dev/null | sed -e 's|^|-L|' ; echo "-lpq") | tr '\n' ' ')
 export TEP_PG_CFLAGS TEP_PG_LIBS
 
+# OpenSSL cflags / libs for sphttp.c's outbound-TLS include (#148). On Linux
+# the headers/libs are on the default search path so this is usually empty;
+# on macOS Homebrew keeps openssl@3 keg-only (/opt/homebrew/opt/openssl@3),
+# off the default path, so pkg-config supplies the -I (compile) and -L/-lssl
+# /-lcrypto (link). If pkg-config can't find openssl, fall back to the bare
+# libs and let the include path come from the system default.
+TEP_SPHTTP_CFLAGS ?= $(shell pkg-config --cflags openssl 2>/dev/null)
+TEP_SPHTTP_LIBS   ?= $(shell pkg-config --libs openssl 2>/dev/null || echo "-lssl -lcrypto")
+export TEP_SPHTTP_CFLAGS TEP_SPHTTP_LIBS
+
 .PHONY: all clean helper hello sinatra_style bench bench-tep bench-sinatra demo test test-parallel spinel-fresh test-pg vendor-examples vendor-spinelkit doctor
 
 # Re-sync the vendored SpinelKit lib (lib/spinel_kit/, sig/spinel_kit/) from the
@@ -73,7 +83,7 @@ all: spinel-fresh helper hello sinatra_style bench
 helper: spinel-fresh $(LIB_DIR)/sphttp.o $(LIB_DIR)/tep_sqlite.o $(LIB_DIR)/tep_pg.o
 
 $(LIB_DIR)/sphttp.o: $(LIB_DIR)/sphttp.c
-	cc -O2 -c $< -o $@
+	cc -O2 -c $(TEP_SPHTTP_CFLAGS) $< -o $@
 
 $(LIB_DIR)/tep_sqlite.o: $(LIB_DIR)/tep_sqlite.c
 	cc -O2 -c $< -o $@

@@ -12,9 +12,14 @@ module Sock
   # libssl/libcrypto. Linked for every app (like sqlite3 elsewhere);
   # the plaintext path never calls into it, so apps that make no HTTPS
   # requests pay only the link cost, not runtime. See tep#148.
-  # (When OpenSSL is off the default path -- macOS/Homebrew -- the build
-  # finds it via CPATH/LIBRARY_PATH in the environment, not a cflag
-  # here; spinel's ffi_cflags rejects an empty-string placeholder.)
+  #
+  # OpenSSL include/lib paths come via @TEP_SPHTTP_CFLAGS@ (the
+  # pkg_config sibling in spinel-ext.json -- `pkg-config openssl`,
+  # fallback `-lssl -lcrypto`), mirroring @TEP_PG_CFLAGS@. On Linux it's
+  # often just the libs (headers on the default path); on macOS/Homebrew
+  # it supplies the keg-only -I/-L too, so sphttp.c compiles + the
+  # ffi_lib "ssl"/"crypto" below resolve. See tep#208.
+  ffi_cflags "@TEP_SPHTTP_CFLAGS@"
   ffi_lib "ssl"
   ffi_lib "crypto"
 

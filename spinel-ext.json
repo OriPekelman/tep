@@ -6,6 +6,12 @@
     "cflags": ["-O2"]
   },
   {
+    "name": "sphttp",
+    "placeholder": "@TEP_SPHTTP_CFLAGS@",
+    "pkg_config": "openssl",
+    "pkg_config_fallback": "-lssl -lcrypto"
+  },
+  {
     "name": "sqlite",
     "placeholder": "@TEP_SQLITE_O@",
     "source": "lib/tep/tep_sqlite.c",
