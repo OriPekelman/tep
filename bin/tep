@@ -1947,7 +1947,11 @@ def tep_ext_subs
     else
       cflags       = ENV.fetch(env_var, "")
       libs_var     = env_var.sub(/_CFLAGS\z/, "_LIBS")
-      default_libs = entry["pkg_config"] ? "-l" + entry["pkg_config"].sub(/\Alib/, "") : ""
+      # Prefer an explicit pkg_config_fallback (e.g. openssl -> "-lssl
+      # -lcrypto"); the bare "-l<pkg_config>" derivation is only right when
+      # the lib name matches the .pc name (libpq -> -lpq), not for openssl.
+      default_libs = entry["pkg_config_fallback"] ||
+                     (entry["pkg_config"] ? "-l" + entry["pkg_config"].sub(/\Alib/, "") : "")
       libs         = ENV.fetch(libs_var, default_libs)
       subs[placeholder] = "#{cflags} #{libs}".strip
     end
@@ -1979,7 +1983,16 @@ def resolve_ext_o(entry, entries, env_var)
   entries.each do |sib|
     next unless sib["name"] == entry["name"] && sib["pkg_config"]
     pc = `pkg-config --cflags #{sib["pkg_config"]} 2>/dev/null`
-    $?.success? ? cflags.concat(pc.split) : (missing = sib["pkg_config"])
+    if $?.success?
+      cflags.concat(pc.split)
+    elsif sib["pkg_config_fallback"]
+      # pkg-config can't find a .pc (e.g. openssl on a host without it):
+      # assume the headers are on the default include path -- the
+      # historical behavior before this sibling existed -- and let the
+      # link use the fallback libs. Don't fail an otherwise-fine compile.
+    else
+      missing = sib["pkg_config"]
+    end
   end
   if missing
     return "" if entry["optional"]
