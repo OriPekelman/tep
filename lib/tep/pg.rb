@@ -197,20 +197,34 @@ module PG
           h = Pg.tep_pg_connect(opts)
         end
       else
-        # Hash form. Pack keys and values into parallel \0-delimited
-        # buffers; the shim splits them apart and calls
-        # PQconnectdbParams. (No async-connect path for the Hash
-        # form yet -- AR uses the String form for connect, so the
-        # Scheduled-context shortcut points only at conninfo.)
-        keys = ""
-        vals = ""
-        n = 0
-        opts.each do |k, v|
-          keys = keys + k + "\0"
-          vals = vals + v + "\0"
-          n += 1
-        end
-        h = Pg.tep_pg_connect_kv(keys, vals, n)
+        # ============ WORKAROUND -- REMOVE WHEN UPSTREAM LANDS ============
+        # Hash-conninfo form. The `opts.each` below miscompiles at spinel
+        # master: `opts` is a String|Hash param, but in this is_a?(String)
+        # ELSE branch spinel types it String (the is_a?-else narrowing
+        # gap, matz/spinel#1434) and rejects `opts.each` as String#each
+        # -- the lone blocker to re-pinning tep onto master (tep#196).
+        #
+        # The Hash form is currently UNUSED + untested in tep and toy:
+        # every PG::Connection.new / PG.connect caller passes a String
+        # conninfo (AR connects with the String form too). So we stub
+        # this dead branch to a failed connection to unblock the re-pin.
+        #
+        # RESTORE the original kv-pack loop (preserved below) once the
+        # upstream narrowing fix lands, and re-add Hash-form test
+        # coverage. Until then a Hash arg yields a failed Connection
+        # (connected? == false) rather than a miscompile.
+        #
+        #   keys = ""
+        #   vals = ""
+        #   n = 0
+        #   opts.each do |k, v|
+        #     keys = keys + k + "\0"
+        #     vals = vals + v + "\0"
+        #     n += 1
+        #   end
+        #   h = Pg.tep_pg_connect_kv(keys, vals, n)
+        h = -1
+        # =================================================================
       end
       if h < 0
         # Slot 0 holds the most recent connect-failure error message
