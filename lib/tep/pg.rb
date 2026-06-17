@@ -1126,3 +1126,443 @@ module PG
     end
   end
 end
+
+# ===================================================================
+# Opt-in PG backend overrides (#216). Loaded only via `require "tep/pg"`.
+# These REDEFINE the no-op hooks in core Broadcast/Presence (last-
+# definition-wins) so a PG app gets the real LISTEN/NOTIFY + mirror
+# behavior, while a non-PG app keeps the no-ops and DCEs libpq.
+# ===================================================================
+module Tep
+  module Broadcast
+    # Cross-worker NOTIFY override (#216). Replaces the core no-op so a
+    # `require "tep/pg"` app fans publishes out to other workers over the
+    # LISTEN/NOTIFY channel. Mirrors the pre-#216 inline branch in
+    # Broadcast.publish.
+    def self.cross_worker_notify(topic, payload)
+      if Tep::APP.broadcast_pg_enabled != 0
+        wire = Tep::Broadcast.encode_wire(topic, payload)
+        Tep::APP.broadcast_pg_conn.notify(
+          Tep::APP.broadcast_pg_channel, wire)
+      end
+      0
+    end
+
+    def self.enable_pg_backend(conninfo, channel)
+      conn = PG::Connection.new(conninfo)
+      if conn.pgh < 0
+        return -1
+      end
+      if conn.listen(channel) < 0
+        return -1
+      end
+      Tep::APP.set_broadcast_pg_conn(conn)
+      Tep::APP.set_broadcast_pg_channel(channel)
+      Tep::APP.set_broadcast_pg_enabled(1)
+      0
+    end
+
+    def self.disable_pg_backend
+      if Tep::APP.broadcast_pg_enabled == 0
+        return 0
+      end
+      Tep::APP.broadcast_pg_conn.unlisten(Tep::APP.broadcast_pg_channel)
+      Tep::APP.broadcast_pg_conn.finish
+      Tep::APP.set_broadcast_pg_enabled(0)
+      0
+    end
+
+    def self.poll_pg_once(timeout_ms)
+      if Tep::APP.broadcast_pg_enabled == 0
+        return -1
+      end
+      r = Tep::APP.broadcast_pg_conn.poll_notification(timeout_ms)
+      if r != 1
+        return r
+      end
+      wire = Tep::APP.broadcast_pg_conn.last_notify_payload
+      Tep::Broadcast.deliver_wire_local(wire)
+      1
+    end
+
+    def self.encode_wire(topic, payload)
+      topic.length.to_s + ":" + topic + payload
+    end
+
+    def self.deliver_wire_local(wire)
+      colon = Tep.str_find(wire, ":", 0)
+      if colon <= 0
+        return -1
+      end
+      len_str = wire[0, colon]
+      tlen    = len_str.to_i
+      if tlen < 0 || colon + 1 + tlen > wire.length
+        return -1
+      end
+      topic   = wire[colon + 1, tlen]
+      payload = wire[colon + 1 + tlen, wire.length - colon - 1 - tlen]
+      Tep::Broadcast.publish_local_only(topic, payload)
+    end
+
+  end
+
+  module Presence
+    def self.enable_pg_mirror(conninfo)
+      conn = PG::Connection.new(conninfo)
+      if conn.pgh < 0
+        return -1
+      end
+      # exec raises PG::Error on failure now; degrade gracefully
+      # (close + return -1) rather than letting it escape the worker.
+      begin
+        r = conn.exec(Tep::Presence.schema_sql)
+        r.clear
+        # Heartbeat table for the prune-stale-workers path (#47).
+        r = conn.exec(Tep::Presence.worker_schema_sql)
+        r.clear
+      rescue PG::Error
+        conn.finish
+        return -1
+      end
+      Tep::APP.set_presence_pg_conn(conn)
+      worker_id = Sock.sphttp_getpid.to_s + "-" + Time.now.to_i.to_s
+      Tep::APP.set_presence_pg_worker_id(worker_id)
+      Tep::APP.set_presence_pg_enabled(1)
+      # Drop any rows from a prior worker that managed to leave
+      # stale entries with this same worker_id (unlikely thanks
+      # to the boot-epoch suffix, but defensive). Best-effort.
+      Tep::Presence.mirror_exec(
+        "DELETE FROM tep_presence WHERE worker_id = $1",
+        [worker_id])
+      # Register this worker's heartbeat row immediately. Apps
+      # refresh it periodically via Tep::Presence.heartbeat;
+      # prune_stale_workers deletes rows whose heartbeat is stale.
+      Tep::Presence.heartbeat
+      0
+    end
+
+    def self.disable_pg_mirror
+      if Tep::APP.presence_pg_enabled == 0
+        return 0
+      end
+      # Best-effort cleanup -- swallow PG errors (we're tearing the
+      # mirror down regardless) and still finish + disable below.
+      begin
+        r = Tep::APP.presence_pg_conn.exec_params(
+          "DELETE FROM tep_presence WHERE worker_id = $1",
+          [Tep::APP.presence_pg_worker_id])
+        r.clear
+        # Remove the heartbeat row so prune_stale_workers doesn't
+        # see this worker as live after we're gone.
+        r = Tep::APP.presence_pg_conn.exec_params(
+          "DELETE FROM tep_presence_worker WHERE worker_id = $1",
+          [Tep::APP.presence_pg_worker_id])
+        r.clear
+      rescue PG::Error
+        # swallow -- shutting the mirror down anyway
+      end
+      Tep::APP.presence_pg_conn.finish
+      Tep::APP.set_presence_pg_enabled(0)
+      0
+    end
+
+    def self.schema_sql
+      "CREATE TABLE IF NOT EXISTS tep_presence (" +
+        "worker_id    TEXT NOT NULL, " +
+        "topic        TEXT NOT NULL, " +
+        "fd           INTEGER NOT NULL, " +
+        "principal_id TEXT NOT NULL, " +
+        "kind         TEXT NOT NULL, " +
+        "agent_id     TEXT NOT NULL, " +
+        "since_ts     BIGINT NOT NULL, " +
+        "status_state TEXT NOT NULL, " +
+        "status_note  TEXT NOT NULL, " +
+        "status_until BIGINT NOT NULL, " +
+        "PRIMARY KEY (worker_id, topic, fd)" +
+      ")"
+    end
+
+    def self.worker_schema_sql
+      "CREATE TABLE IF NOT EXISTS tep_presence_worker (" +
+        "worker_id    TEXT PRIMARY KEY, " +
+        "last_seen_ts BIGINT NOT NULL" +
+      ")"
+    end
+
+    def self.heartbeat
+      if Tep::APP.presence_pg_enabled == 0
+        return 0
+      end
+      wid = Tep::APP.presence_pg_worker_id
+      if wid.length == 0
+        return 0
+      end
+      begin
+        r = Tep::APP.presence_pg_conn.exec_params(
+          "INSERT INTO tep_presence_worker (worker_id, last_seen_ts) " +
+          "VALUES ($1, $2) " +
+          "ON CONFLICT (worker_id) DO UPDATE SET " +
+          "  last_seen_ts = EXCLUDED.last_seen_ts",
+          [wid, Time.now.to_i.to_s])
+        r.clear
+      rescue PG::Error
+        return 0
+      end
+      1
+    end
+
+    def self.prune_stale_workers(ttl_seconds)
+      if Tep::APP.presence_pg_enabled == 0
+        return 0
+      end
+      cutoff = Time.now.to_i - ttl_seconds
+      conn = Tep::APP.presence_pg_conn
+      begin
+        # Drop dead heartbeats first; the second DELETE then walks
+        # the worker_id space that's still alive.
+        r1 = conn.exec_params(
+          "DELETE FROM tep_presence_worker WHERE last_seen_ts < $1",
+          [cutoff.to_s])
+        r1.clear
+        # Now drop presence rows whose worker_id isn't in the live
+        # heartbeat table. NOT IN handles both crashed-and-pruned
+        # workers and workers that never registered (legacy rows
+        # from before this prune feature shipped).
+        r2 = conn.exec(
+          "DELETE FROM tep_presence " +
+          "WHERE worker_id NOT IN (SELECT worker_id FROM tep_presence_worker)")
+        n = r2.cmd_tuples
+        r2.clear
+      rescue PG::Error
+        return 0
+      end
+      n
+    end
+
+    def self.mirror_exec(sql, params)
+      begin
+        r = Tep::APP.presence_pg_conn.exec_params(sql, params)
+        r.clear
+      rescue PG::Error
+        # swallow -- advisory mirror, local presence is authoritative
+      end
+      0
+    end
+
+    def self.mirror_insert(entry)
+      if Tep::APP.presence_pg_enabled == 0
+        return 0
+      end
+      Tep::Presence.mirror_exec(
+        "INSERT INTO tep_presence " +
+        "(worker_id, topic, fd, principal_id, kind, agent_id, " +
+        " since_ts, status_state, status_note, status_until) " +
+        "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) " +
+        "ON CONFLICT (worker_id, topic, fd) DO UPDATE SET " +
+        "  principal_id = EXCLUDED.principal_id, " +
+        "  kind         = EXCLUDED.kind, " +
+        "  agent_id     = EXCLUDED.agent_id, " +
+        "  since_ts     = EXCLUDED.since_ts, " +
+        "  status_state = EXCLUDED.status_state, " +
+        "  status_note  = EXCLUDED.status_note, " +
+        "  status_until = EXCLUDED.status_until",
+        [
+          Tep::APP.presence_pg_worker_id,
+          entry.topic,
+          entry.fd.to_s,
+          entry.principal_id,
+          entry.kind.to_s,
+          entry.agent_id,
+          entry.since.to_s,
+          entry.status_state.to_s,
+          entry.status_note,
+          entry.status_until.to_s
+        ])
+    end
+
+    def self.mirror_delete(topic, fd)
+      if Tep::APP.presence_pg_enabled == 0
+        return 0
+      end
+      Tep::Presence.mirror_exec(
+        "DELETE FROM tep_presence " +
+        "WHERE worker_id = $1 AND topic = $2 AND fd = $3",
+        [Tep::APP.presence_pg_worker_id, topic, fd.to_s])
+    end
+
+    def self.mirror_status(topic, fd, state, note, until_ts)
+      if Tep::APP.presence_pg_enabled == 0
+        return 0
+      end
+      Tep::Presence.mirror_exec(
+        "UPDATE tep_presence " +
+        "SET status_state = $4, status_note = $5, status_until = $6 " +
+        "WHERE worker_id = $1 AND topic = $2 AND fd = $3",
+        [Tep::APP.presence_pg_worker_id, topic, fd.to_s,
+         state.to_s, note, until_ts.to_s])
+    end
+
+    def self.list_global(topic)
+      result = [Tep::PresenceEntry.new("", "", :human, "", -1, 0)]
+      result.delete_at(0)
+      if Tep::APP.presence_pg_enabled == 0
+        return result
+      end
+      begin
+        r = Tep::APP.presence_pg_conn.exec_params(
+          "SELECT principal_id, kind, agent_id, fd, since_ts, " +
+          "       status_state, status_note, status_until " +
+          "FROM tep_presence WHERE topic = $1 ORDER BY since_ts",
+          [topic])
+      rescue PG::Error
+        return result
+      end
+      i = 0
+      n = r.ntuples
+      while i < n
+        kind_sym = :human
+        if r.getvalue(i, 1) == "agent_for"
+          kind_sym = :agent_for
+        end
+        state_sym = :available
+        sstr = r.getvalue(i, 5)
+        if sstr == "busy"
+          state_sym = :busy
+        elsif sstr == "blocked"
+          state_sym = :blocked
+        end
+        e = Tep::PresenceEntry.new(
+          topic,
+          r.getvalue(i, 0),
+          kind_sym,
+          r.getvalue(i, 2),
+          r.getvalue(i, 3).to_i,
+          r.getvalue(i, 4).to_i)
+        e.status_state = state_sym
+        e.status_note  = r.getvalue(i, 6)
+        e.status_until = r.getvalue(i, 7).to_i
+        result.push(e)
+        i += 1
+      end
+      r.clear
+      result
+    end
+
+    def self.count_global(topic)
+      if Tep::APP.presence_pg_enabled == 0
+        return 0
+      end
+      begin
+        r = Tep::APP.presence_pg_conn.exec_params(
+          "SELECT count(*) FROM tep_presence WHERE topic = $1",
+          [topic])
+      rescue PG::Error
+        return 0
+      end
+      n = r.getvalue(0, 0).to_i
+      r.clear
+      n
+    end
+
+  end
+end
+
+# ===================================================================
+# Opt-in PG seeds (#216, relocated from lib/tep.rb). Pin parameter /
+# return C types for every PG-backed cmeth so a `require "tep/pg"`
+# app compiles cleanly even when it exercises only a subset.
+# PG::Connection.new("") returns a failed-conn instance (@pgh<0)
+# rather than raising, so all of this is safe at module load.
+# ===================================================================
+
+# Broadcast PG-backend setters + cmeths. set_* via constant because
+# PG::Connection.new cannot run inside App#initialize (Tep::APP is
+# mid-construction). enable_pg_backend("","") connect-fails (-1).
+Tep::APP.set_broadcast_pg_enabled(0)
+Tep::APP.set_broadcast_pg_channel("")
+Tep::APP.set_broadcast_pg_conn(PG::Connection.new(""))
+Tep::Broadcast.enable_pg_backend("", "")
+Tep::Broadcast.poll_pg_once(0)
+Tep::Broadcast.disable_pg_backend
+Tep::Broadcast.encode_wire("", "")
+Tep::Broadcast.deliver_wire_local("0:")
+Tep::Broadcast.cross_worker_notify("_seed", "")
+
+# Presence PG mirror cmeths. mirror_insert needs a PresenceEntry.
+_tep_pg_seed_entry = Tep::PresenceEntry.new("_seed", "_seed", :human, "", -1, 0)
+Tep::Presence.enable_pg_mirror("")
+Tep::Presence.schema_sql
+Tep::Presence.mirror_insert(_tep_pg_seed_entry)
+Tep::Presence.mirror_delete("_seed", -1)
+Tep::Presence.mirror_status("_seed", -1, :available, "", 0)
+Tep::Presence.list_global("_seed")
+Tep::Presence.count_global("_seed")
+Tep::Presence.worker_schema_sql
+Tep::Presence.heartbeat
+Tep::Presence.prune_stale_workers(90)
+Tep::Presence.disable_pg_mirror
+Tep::APP.set_presence_pg_enabled(0)
+Tep::APP.set_presence_pg_worker_id("")
+Tep::APP.set_presence_pg_conn(PG::Connection.new(""))
+
+  # PG::Connection / Result / Pool type-seeding.
+_tep_seed_pg_conn = PG::Connection.new("")
+_tep_seed_pg_conn.connected?
+_tep_seed_pg_conn.status
+_tep_seed_pg_conn.transaction_status
+_tep_seed_pg_conn.server_version
+_tep_seed_pg_conn.error_message
+_tep_seed_pg_conn.escape_string("")
+_tep_seed_pg_conn.escape_identifier("")
+_tep_seed_pg_conn.escape_literal("")
+_tep_seed_pg_conn.last_sqlstate = ""
+_tep_seed_pg_conn.last_error_message = ""
+_tep_seed_pg_conn.last_result_rh = -1
+# Async surface seed -- calling these on a failed-conn instance
+# is harmless (the C shim short-circuits on conn slot < 1).
+_tep_seed_pg_conn.async_exec("")
+_tep_seed_pg_seed_arr = [""]
+_tep_seed_pg_seed_arr.delete_at(0)
+_tep_seed_pg_conn.async_exec_params("", _tep_seed_pg_seed_arr)
+# Async connect cmeth. Returns -1 for empty conninfo from a
+# non-scheduled context (the shim's PQconnectStart-then-FAILED
+# path), which is type-equivalent to the success path.
+PG::Connection.async_connect("")
+# LISTEN / NOTIFY surface (Tep::Broadcast PG backend lands here).
+_tep_seed_pg_conn.listen("_seed")
+_tep_seed_pg_conn.unlisten("_seed")
+_tep_seed_pg_conn.notify("_seed", "")
+_tep_seed_pg_conn.poll_notification(0)
+_tep_seed_pg_conn.last_notify_channel
+_tep_seed_pg_conn.last_notify_payload
+_tep_seed_pg_res = PG::Result.new(-1)
+_tep_seed_pg_res.ntuples
+_tep_seed_pg_res.nfields
+_tep_seed_pg_res.fname(0)
+_tep_seed_pg_res.fnumber("")
+_tep_seed_pg_res.ftype(0)
+_tep_seed_pg_res.fformat(0)
+_tep_seed_pg_res.fmod(0)
+_tep_seed_pg_res.getvalue(0, 0)
+_tep_seed_pg_res.getisnull(0, 0)
+_tep_seed_pg_res.getlength(0, 0)
+_tep_seed_pg_res.value(0, 0)
+_tep_seed_pg_res.error_field(67)
+_tep_seed_pg_res.cmd_status
+_tep_seed_pg_res.cmd_tuples
+_tep_seed_pg_res.error_message
+_tep_seed_pg_res.sql_state
+_tep_seed_pg_res.fields
+_tep_seed_pg_res.values
+_tep_seed_pg_res.column_values(0)
+_tep_seed_pg_res.clear
+_tep_seed_pg_conn.close
+# Pool seed -- size 0 so we don't try to open real conns at load.
+_tep_seed_pg_pool = PG::Pool.new("", 0)
+_tep_seed_pg_pool.healthy?
+_tep_seed_pg_pool.available
+_tep_seed_pg_pool.size
+_tep_seed_pg_pool.set_checkout_timeout_ms(0)
+_tep_seed_pg_pool.close_all
+# NB: don't checkout/checkin against the size-0 seed pool; it'd
+# spin until timeout. The seed has @free.length=0 forever.

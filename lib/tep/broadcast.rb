@@ -114,12 +114,19 @@ module Tep
     # remote deliveries are best-effort and not counted here.
     def self.publish(topic, payload)
       matched = Tep::Broadcast.publish_local_only(topic, payload)
-      if Tep::APP.broadcast_pg_enabled != 0
-        wire = Tep::Broadcast.encode_wire(topic, payload)
-        Tep::APP.broadcast_pg_conn.notify(
-          Tep::APP.broadcast_pg_channel, wire)
-      end
+      # Cross-worker fan-out is an OPT-IN hook (#216): the core build
+      # has no PG reference, so a non-PG app DCEs the entire libpq
+      # closure. `require "tep/pg"` redefines cross_worker_notify with
+      # the real broadcast_pg_conn.notify (last-definition-wins).
+      Tep::Broadcast.cross_worker_notify(topic, payload)
       matched
+    end
+
+    # No-op cross-worker hook. Overridden by lib/tep/pg.rb when the PG
+    # backend is loaded. Keeping the PG NOTIFY out of core is what lets
+    # `Tep::Broadcast.publish` compile without pulling tep_pg_*/libpq.
+    def self.cross_worker_notify(topic, payload)
+      0
     end
 
     # Total subscription count across all topics. Useful for
@@ -157,81 +164,12 @@ module Tep
 
     # ---- PG backend (cross-worker pub/sub) ----
     #
-    # Opens a dedicated PG connection and issues `LISTEN <channel>`.
-    # Subsequent publishes NOTIFY this channel too -- other workers
-    # subscribed to the same channel can receive the message via
-    # poll_pg_once.
-    #
-    # `conninfo` is the libpq connect string. `channel` must be a
-    # safe SQL identifier (e.g. "tep_broadcast") since it lands
-    # inside a LISTEN / NOTIFY command unescaped.
-    #
-    # Returns 0 on success, -1 on connection or LISTEN failure.
-    def self.enable_pg_backend(conninfo, channel)
-      conn = PG::Connection.new(conninfo)
-      if conn.pgh < 0
-        return -1
-      end
-      if conn.listen(channel) < 0
-        return -1
-      end
-      Tep::APP.set_broadcast_pg_conn(conn)
-      Tep::APP.set_broadcast_pg_channel(channel)
-      Tep::APP.set_broadcast_pg_enabled(1)
-      0
-    end
-
-    def self.disable_pg_backend
-      if Tep::APP.broadcast_pg_enabled == 0
-        return 0
-      end
-      Tep::APP.broadcast_pg_conn.unlisten(Tep::APP.broadcast_pg_channel)
-      Tep::APP.broadcast_pg_conn.finish
-      Tep::APP.set_broadcast_pg_enabled(0)
-      0
-    end
-
-    # Process one notification from the PG channel: parse the wire
-    # format, dispatch to local subscribers as if `publish` had
-    # been called locally (but WITHOUT re-NOTIFYing -- that would
-    # loop). Returns 1 if a notification was processed, 0 on
-    # timeout, -1 on connection error or unenabled backend.
-    def self.poll_pg_once(timeout_ms)
-      if Tep::APP.broadcast_pg_enabled == 0
-        return -1
-      end
-      r = Tep::APP.broadcast_pg_conn.poll_notification(timeout_ms)
-      if r != 1
-        return r
-      end
-      wire = Tep::APP.broadcast_pg_conn.last_notify_payload
-      Tep::Broadcast.deliver_wire_local(wire)
-      1
-    end
-
-    # Wire format: "<topic_byte_length>:<topic><payload>".
-    # Length-prefixed so topics and payloads with arbitrary chars
-    # (commas, colons, embedded quotes, newlines) round-trip
-    # unambiguously. Encoded by `publish` when the PG backend is
-    # enabled; decoded by `deliver_wire_local`.
-    def self.encode_wire(topic, payload)
-      topic.length.to_s + ":" + topic + payload
-    end
-
-    def self.deliver_wire_local(wire)
-      colon = Tep.str_find(wire, ":", 0)
-      if colon <= 0
-        return -1
-      end
-      len_str = wire[0, colon]
-      tlen    = len_str.to_i
-      if tlen < 0 || colon + 1 + tlen > wire.length
-        return -1
-      end
-      topic   = wire[colon + 1, tlen]
-      payload = wire[colon + 1 + tlen, wire.length - colon - 1 - tlen]
-      Tep::Broadcast.publish_local_only(topic, payload)
-    end
+    # The PG LISTEN/NOTIFY backend is OPT-IN (#216). enable_pg_backend /
+    # disable_pg_backend / poll_pg_once, plus the wire encode/decode
+    # helpers (encode_wire / deliver_wire_local) and the
+    # cross_worker_notify override, live in lib/tep/pg.rb and only
+    # compile into apps that `require "tep/pg"`. Core Broadcast carries
+    # no PG reference so a non-PG app DCEs the libpq closure entirely.
 
     # Same fan-out as #publish but skips the PG NOTIFY step. Used
     # internally by poll_pg_once when delivering a cross-worker

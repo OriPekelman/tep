@@ -70,7 +70,10 @@ require_relative "tep/live_view"
 require_relative "tep/server"
 require_relative "tep/server_scheduled"
 require_relative "tep/sqlite"
-require_relative "tep/pg"
+# tep/pg is OPT-IN (#216): NOT required here. An app that needs
+# PostgreSQL does `require "tep/pg"`, which bin/tep splices in at build
+# time (and the test suite requires explicitly). Keeping it out of the
+# core require tree is what lets a non-PG app DCE the libpq closure.
 require_relative "spinel_kit/json"
 require_relative "spinel_kit/json_decoder"
 require_relative "tep/mcp"
@@ -213,13 +216,7 @@ module Tep
   APP.set_after(Filter.new)
   APP.set_auth_filter(Filter.new)
   APP.set_auth_bearer_secret("")
-  # Broadcast PG-backend setter seeds. enable_pg_backend reaches
-  # these via set_broadcast_pg_conn / _channel / _enabled when a
-  # connect succeeds; the empty-conninfo seed below short-circuits
-  # before getting there, so we exercise the setters directly.
-  APP.set_broadcast_pg_enabled(0)
-  APP.set_broadcast_pg_channel("")
-  APP.set_broadcast_pg_conn(PG::Connection.new(""))
+  # (broadcast_pg setter seeds relocated to lib/tep/pg.rb -- #216)
   APP.set_not_found(Handler.new)
   # Type-seeding: methods that may not be called by a given user app
   # would otherwise default their param C types to mrb_int and
@@ -275,19 +272,10 @@ module Tep
   Tep::Broadcast.subscriber_count
   Tep::Broadcast.clear
 
-  # Broadcast PG-backend seeds. enable_pg_backend("", "") tries to
-  # open a PG connection -- empty conninfo behaves the same as the
-  # PG::Connection.new("") seed above: connect fails, returns -1.
-  # The point is to pin parameter types on every cmeth.
-  Tep::Broadcast.enable_pg_backend("", "")
-  Tep::Broadcast.poll_pg_once(0)
-  Tep::Broadcast.disable_pg_backend
-  Tep::Broadcast.encode_wire("", "")
-  Tep::Broadcast.deliver_wire_local("0:")
   Tep::Broadcast.publish_local_only("_seed", "")
-  # The new PG::Connection LISTEN/NOTIFY method seeds live further
-  # down with the rest of the PG seeds, where _tep_seed_pg_conn is
-  # already defined.
+  # (Broadcast PG-backend seeds -- enable_pg_backend / poll_pg_once /
+  # disable_pg_backend / encode_wire / deliver_wire_local -- relocated
+  # to lib/tep/pg.rb, #216.)
 
   # Presence type-seeding. Same pattern as Broadcast: pin every
   # cmeth's param C types so compile units that don't otherwise
@@ -317,25 +305,10 @@ module Tep
   Tep::Presence.encode_diff("join", _tep_seed_presence_entry)
   Tep::Presence.publish_diff("join", _tep_seed_presence_entry)
   Tep::Presence.sweep_expired_status
-  # PG mirror seeds (chunk 3.3). enable_pg_mirror("") fails the
-  # connect cleanly (-1) but still pins param types.
-  Tep::Presence.enable_pg_mirror("")
-  Tep::Presence.schema_sql
-  Tep::Presence.mirror_insert(_tep_seed_presence_entry)
-  Tep::Presence.mirror_delete("_seed", -1)
-  Tep::Presence.mirror_status("_seed", -1, :available, "", 0)
-  Tep::Presence.list_global("_seed")
-  Tep::Presence.count_global("_seed")
-  Tep::Presence.worker_schema_sql
-  Tep::Presence.heartbeat
-  Tep::Presence.prune_stale_workers(90)
-  Tep::Presence.disable_pg_mirror
-  # Same APP-setter-via-constant pattern as the broadcast_pg_conn
-  # seed: PG::Connection.new can't run inside App#initialize
-  # (Tep::APP is mid-construction; sched_current read segfaults).
-  APP.set_presence_pg_enabled(0)
-  APP.set_presence_pg_worker_id("")
-  APP.set_presence_pg_conn(PG::Connection.new(""))
+  # (Presence PG mirror seeds + presence_pg setter seeds relocated to
+  # lib/tep/pg.rb -- #216. The core mirror_insert/delete/status no-op
+  # stubs are already seeded by the track/set_status/untrack calls
+  # above.)
 
   # LiveView type-seeding (chunk 4.1). The render_page + dispatch_event
   # cmeths get pinned via top-level calls; the base-class mount /
@@ -387,72 +360,9 @@ module Tep
     _tep_seed_db.close
   end
 
-  # PG type-seeding. PG::Connection.new("") returns a connection-
-  # failed instance (@pgh=-1) rather than raising, so this is safe
-  # at module load regardless of whether libpq has a reachable
-  # server. The point is to pin parameter / return types on every
-  # public Connection / Result method so apps that don't exercise
-  # one method still compile cleanly.
-  _tep_seed_pg_conn = PG::Connection.new("")
-  _tep_seed_pg_conn.connected?
-  _tep_seed_pg_conn.status
-  _tep_seed_pg_conn.transaction_status
-  _tep_seed_pg_conn.server_version
-  _tep_seed_pg_conn.error_message
-  _tep_seed_pg_conn.escape_string("")
-  _tep_seed_pg_conn.escape_identifier("")
-  _tep_seed_pg_conn.escape_literal("")
-  _tep_seed_pg_conn.last_sqlstate = ""
-  _tep_seed_pg_conn.last_error_message = ""
-  _tep_seed_pg_conn.last_result_rh = -1
-  # Async surface seed -- calling these on a failed-conn instance
-  # is harmless (the C shim short-circuits on conn slot < 1).
-  _tep_seed_pg_conn.async_exec("")
-  _tep_seed_pg_seed_arr = [""]
-  _tep_seed_pg_seed_arr.delete_at(0)
-  _tep_seed_pg_conn.async_exec_params("", _tep_seed_pg_seed_arr)
-  # Async connect cmeth. Returns -1 for empty conninfo from a
-  # non-scheduled context (the shim's PQconnectStart-then-FAILED
-  # path), which is type-equivalent to the success path.
-  PG::Connection.async_connect("")
-  # LISTEN / NOTIFY surface (Tep::Broadcast PG backend lands here).
-  _tep_seed_pg_conn.listen("_seed")
-  _tep_seed_pg_conn.unlisten("_seed")
-  _tep_seed_pg_conn.notify("_seed", "")
-  _tep_seed_pg_conn.poll_notification(0)
-  _tep_seed_pg_conn.last_notify_channel
-  _tep_seed_pg_conn.last_notify_payload
-  _tep_seed_pg_res = PG::Result.new(-1)
-  _tep_seed_pg_res.ntuples
-  _tep_seed_pg_res.nfields
-  _tep_seed_pg_res.fname(0)
-  _tep_seed_pg_res.fnumber("")
-  _tep_seed_pg_res.ftype(0)
-  _tep_seed_pg_res.fformat(0)
-  _tep_seed_pg_res.fmod(0)
-  _tep_seed_pg_res.getvalue(0, 0)
-  _tep_seed_pg_res.getisnull(0, 0)
-  _tep_seed_pg_res.getlength(0, 0)
-  _tep_seed_pg_res.value(0, 0)
-  _tep_seed_pg_res.error_field(67)
-  _tep_seed_pg_res.cmd_status
-  _tep_seed_pg_res.cmd_tuples
-  _tep_seed_pg_res.error_message
-  _tep_seed_pg_res.sql_state
-  _tep_seed_pg_res.fields
-  _tep_seed_pg_res.values
-  _tep_seed_pg_res.column_values(0)
-  _tep_seed_pg_res.clear
-  _tep_seed_pg_conn.close
-  # Pool seed -- size 0 so we don't try to open real conns at load.
-  _tep_seed_pg_pool = PG::Pool.new("", 0)
-  _tep_seed_pg_pool.healthy?
-  _tep_seed_pg_pool.available
-  _tep_seed_pg_pool.size
-  _tep_seed_pg_pool.set_checkout_timeout_ms(0)
-  _tep_seed_pg_pool.close_all
-  # NB: don't checkout/checkin against the size-0 seed pool; it'd
-  # spin until timeout. The seed has @free.length=0 forever.
+  # (PG::Connection / Result / Pool type-seeding relocated to
+  # lib/tep/pg.rb -- #216. PG.Connection.new("") is a failed-conn
+  # instance, not a raise, so the seeds stay safe at module load.)
 
   # SpinelKit::Json type-seeding. Pin every public method's parameter
   # types so an app that uses one method but not another still
