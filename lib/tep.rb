@@ -449,10 +449,19 @@ module Tep
   Tep::Scheduler.clear
 
   # Tep::Shell seed -- pin :str args at the FFI boundary.
+  #
+  # These run at MODULE LOAD, so the paths must be readable in EVERY
+  # deploy environment, not just gx10. `/etc/hostname` is absent in a
+  # bare container (e.g. Upsun); under the engine's now-correct
+  # ENOENT-raising File.read it threw at boot and 502'd the native
+  # serve_bin (tep#199 boot-hazard report). `/dev/null` exists on every
+  # POSIX target (Linux containers, macOS) and reads as empty, so it
+  # pins the same :str param type without the missing-file crash. The
+  # full fix -- no boot-time seed I/O at all -- is tep#199 (--rbs sig).
   Tep::Shell.run(":")
   Tep::Shell.run_limited(":", 1)
-  Tep::Shell.read("/etc/hostname")
-  Tep::Shell.read_limited("/etc/hostname", 64)
+  Tep::Shell.read("/dev/null")
+  Tep::Shell.read_limited("/dev/null", 64)
 
   # SpinelKit::Url seed -- the new split_url has to land at compile time.
   SpinelKit::Url.split_url("http://x/")
