@@ -68,7 +68,16 @@ get '/error' do
     out = "rescued PG::UndefinedTable\n" +
           "sqlstate: " + c.last_sqlstate + "\n" +
           "is undefined-table? " + (c.last_sqlstate == "42P01" ? "yes" : "no") + "\n" +
-          "is PG::Error? " + (e.is_a?(PG::Error) ? "yes" : "no") + "\n" +
+          # WORKAROUND -- REMOVE WHEN UPSTREAM LANDS: `e.is_a?(PG::Error)`
+          # miscompiles at spinel master (whole-program is_a? on a deep
+          # exception subclass vs an ancestor -- e here is rescued as
+          # PG::UndefinedTable, a PG::Error subclass, so this is always
+          # "yes"). Minimal `rescue Sub => e; e.is_a?(Super)` repros
+          # compile fine; it only trips in the full program. Hardcoded
+          # to "yes" to keep the example building for the re-pin. See
+          # matz/spinel#1434, tep#196. Original:
+          #   (e.is_a?(PG::Error) ? "yes" : "no")
+          "is PG::Error? " + "yes" + "\n" +
           "message: " + e.message
   end
   c.close
