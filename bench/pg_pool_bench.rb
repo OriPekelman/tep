@@ -12,6 +12,7 @@
 #   PG_URL='...' POOL_SIZE=8 ./bench/pg_pool_bench -p 4567 -w 4
 #   wrk -t8 -c256 -d10s 'http://127.0.0.1:4567/users/42'
 require 'sinatra'
+require "tep/pg"          # opt-in PG backend (#216)
 
 # Scheduled + cooperative Tep::PG + pool-with-waiter-queue: the
 # shape where the pool's multiple conns become real concurrency.

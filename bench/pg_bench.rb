@@ -16,6 +16,7 @@
 #     ./bench/pg_bench -p 4567 -w 8
 #   wrk -t8 -c256 -d10s 'http://127.0.0.1:4567/users/42'
 require 'sinatra'
+require "tep/pg"          # opt-in PG backend (#216)
 
 PG_URL = ENV["PG_URL"] != nil && ENV["PG_URL"].length > 0 ? ENV["PG_URL"] : "postgresql:///postgres"
 
