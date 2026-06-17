@@ -1366,6 +1366,30 @@ def handle_top_call(node, routes, websockets, mcp_tools, mcp_resources, filters,
 
   case name
   when "require", "require_relative"
+    # tep/pg is OPT-IN (#216): it is NOT part of the wholesale-inlined
+    # core (lib/tep.rb no longer require_relative's it). An app, test, or
+    # example that needs PostgreSQL says `require "tep/pg"` (or, by path,
+    # `require_relative ".../lib/tep/pg"`); we splice lib/tep/pg.rb in
+    # once here. A non-PG app never names it, so the whole pg closure
+    # (the 74 tep_pg_* FFI symbols + libpq) DCEs away. This must run
+    # BEFORE the is_tep_lib no-op below, which would otherwise swallow
+    # any "tep/..." spelling as already-inlined.
+    pg_arg = node.arguments&.arguments&.first
+    if pg_arg.is_a?(Prism::StringNode) &&
+       (pg_arg.unescaped == "tep/pg" || pg_arg.unescaped.end_with?("/tep/pg"))
+      pgpath = File.join(LIB_DIR, "tep", "pg.rb")
+      if inlined_seen && File.file?(pgpath) && !inlined_seen[pgpath]
+        pgtext = inline_require_relative_tree(pgpath, inlined_seen, warnings)
+        # Resolve pg.rb's @TEP_PG_O@ / @TEP_PG_CFLAGS@ placeholders the
+        # same way inlined_tep_library does for the wholesale core -- the
+        # opt-in splice bypasses that pass, so without this the literal
+        # placeholders reach the linker ("ld: cannot find @TEP_PG_O@").
+        tep_ext_subs.each { |placeholder, value| pgtext = pgtext.gsub(placeholder, value) }
+        passthrough << "# --- inlined opt-in require #{pg_arg.unescaped.inspect} (pg.rb) ---"
+        passthrough << pgtext
+      end
+      return
+    end
     # tep's own library is inlined wholesale (see inlined_tep_library), so
     # `require_relative "tep"` / "tep/..." is a no-op. A plain `require
     # "gem"` (by name) is dropped -- spinel has no gem load path. But an

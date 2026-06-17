@@ -42,6 +42,7 @@ class TestPg < TepTest
   # in the compiled binary.
   app_source <<~RB
     require 'sinatra'
+    require "tep/pg"          # opt-in PG backend (#216)
 
     # The PG test app runs under the default prefork server. We
     # exercise the async surface explicitly via /async_exec and

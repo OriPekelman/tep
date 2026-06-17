@@ -29,6 +29,7 @@ class TestPresencePg < TepTest
 
   app_source <<~RB
     require 'sinatra'
+    require "tep/pg"          # opt-in PG backend (#216)
 
     PG_URL = "#{PG_URL}"
 
