@@ -5,6 +5,13 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  # Manual re-trigger. The aarch64 leg runs on the gx10 self-hosted
+  # runner; if a run was queued while that runner was offline (or the
+  # runner registers after the fact), GitHub won't always re-dispatch
+  # the stuck job -- workflow_dispatch lets us kick a fresh run that
+  # lands on the now-online runner without an empty commit. See
+  # OriPekelman/gx10#4.
+  workflow_dispatch:
 
 permissions:
   contents: read
