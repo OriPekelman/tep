@@ -62,7 +62,7 @@ module Tep
   # wins (whichever setter you called second).
   #
   # Default shape: max_attempts=1 (no retry, back-compat).
-  class Proxy
+  class Proxy < Tep::Handler
     class RetryPolicy
       attr_accessor :max_attempts, :base_backoff_ms, :backoff_multiplier
       attr_accessor :retry_on_status
@@ -125,7 +125,7 @@ module Tep
     end
   end
 
-  class Proxy < Tep::Handler
+  class Proxy
     attr_accessor :upstream, :timeout
     # Body size caps (chunk 6.6). max_request_body_bytes bounds the
     # inbound body the proxy will accept (over -> 413 Payload Too
