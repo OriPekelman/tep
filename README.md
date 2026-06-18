@@ -4,37 +4,41 @@
 
 # Tep
 
-A Sinatra-flavoured web framework that compiles to a native binary
-via [Spinel][spinel].
+A Sinatra-flavoured web framework that compiles to a **native binary**
+via [Spinel][spinel]. You write a Sinatra-style `app.rb`:
 
-> **Current release:** [v0.11.0](https://github.com/OriPekelman/tep/releases/tag/v0.11.0)
-> — now on [RubyGems](https://rubygems.org/gems/tep) (`gem install tep`):
-> TLS, HTTP caching, connection pooling, PG raise-on-error + embeddings,
-> on top of the agentic surface (Auth, Broadcast, Presence, LiveView, MCP).
+```ruby
+require 'sinatra'
+
+get '/hi/:name' do
+  "hi, " + params[:name] + "!"
+end
+```
+
+…and get `./app` — a single static executable, ~80 KB, **no Ruby
+runtime**, doing ~150k req/s. Beyond routing / sessions / templates, the
+[batteries ↓](#whats-in-the-box) cover auth (bearer / cookie / OAuth2),
+SQLite, opt-in PostgreSQL, WebSockets, Broadcast + Presence + LiveView,
+an MCP tool catalog, TLS, a pooled HTTP client, and an OpenAI-compatible
+LLM client + server.
+
+> **Current release:** [v0.11.5](https://github.com/OriPekelman/tep/releases/tag/v0.11.5)
+> on [RubyGems](https://rubygems.org/gems/tep) — `gem install tep`.
 > Pre-alpha; API still in motion.
 
-> **Why Tep exists.** Two complementary goals:
->
-> 1. **Exercise Spinel against real-world Ruby code.** Tep is the
->    largest pure-Ruby application Spinel compiles end-to-end. Every
->    Sinatra idiom, every battery, every demo doubles as a torture
->    test for the AOT compiler's codegen + analyzer. Bugs surface
->    here, get reduced to minimal repros, and land upstream as PRs
->    or issues against [matz/spinel](https://github.com/matz/spinel).
->    If something doesn't work in Tep, the bug is usually in Spinel,
->    and that's the point.
->
-> 2. **Be the harness for [toy][toy].** Toy is Tep's sibling
->    project: a machine-learning framework written in pure Ruby and
->    compiled by Spinel. Toy needs an HTTP/MCP layer for serving
->    models, exposing training tools to agents (Claude Code et al.),
->    streaming inference results, and wiring presence into
->    collaborative training sessions. Tep is that layer. Every
->    battery in Tep is shaped by what Toy actually needs to ship.
->
-> Tep happens to be useful as a general web framework too — fast,
-> single-binary, Sinatra-shaped — but the design choices are made
-> through these two lenses.
+<details>
+<summary><b>Why Tep exists</b> — it's a deliberate Spinel torture test + toy's serving layer</summary>
+
+Tep is the largest pure-Ruby application Spinel compiles end-to-end:
+every Sinatra idiom and battery doubles as a torture test for the AOT
+compiler's codegen + analyzer, and bugs found here get reduced to
+minimal repros and land upstream as
+[matz/spinel](https://github.com/matz/spinel) PRs. It's also the
+HTTP / MCP / serving layer for its sibling [toy][toy] — a pure-Ruby ML
+framework Spinel compiles — so every battery is shaped by what toy
+needs to ship. Tep is a genuinely useful general web framework too, but
+the design choices are made through those two lenses.
+</details>
 
 [toy]: https://github.com/OriPekelman/toy
 
@@ -107,7 +111,7 @@ gem install. Recommended Ruby manager:
 [`rv`](https://github.com/spinel-coop/rv) — fast version+gem
 manager from the Spinel Cooperative (separate project from the
 matz/spinel AOT compiler Tep compiles through; same Ruby
-neighbourhood). `.ruby-version` in this repo pins 3.4.0; `rv
+neighbourhood). `.ruby-version` in this repo pins 4.0.0; `rv
 shell` makes `rv run rake test` just work. Build deps on Linux:
 `build-essential`, `libsqlite3-dev`. macOS: Xcode CLI tools.
 
@@ -174,7 +178,7 @@ through Spinel.
 | `Tep::WebSocket` | RFC 6455 server-side WebSocket. `websocket '/chat' do \|ws\| ... end` DSL lowers to Frame + Handshake + Driver + Connection. Requires `set :scheduler, :scheduled`. |
 | `Tep::Parallel`  | grosser/parallel-shaped fork fan-out. |
 | `Tep::Job`       | sidekiq-shaped queue over SQLite. |
-| `PG`             | ruby-pg-shape libpq client: `PG::Connection`, `PG::Result`, `PG::Error`; surface mirrors the `pg` gem (`exec` / `exec_params` / `escape_*` / `fields` / `values` / `getvalue` / `sql_state`). Designed so an eventual ActiveRecord-on-spinel port reuses the existing AR adapter with minimal divergence — see `docs/PG-BATTERY.md`. |
+| `PG`             | **Opt-in** ruby-pg-shape libpq client — `require "tep/pg"` (so non-PG apps don't link libpq). `PG::Connection`, `PG::Result`, `PG::Error`; surface mirrors the `pg` gem (`exec` / `exec_params` / `escape_*` / `fields` / `values` / `getvalue` / `sql_state`). Designed so an eventual ActiveRecord-on-spinel port reuses the existing AR adapter with minimal divergence — see `docs/PG-BATTERY.md`. |
 | `Tep::Auth`      | Principal+delegate identity (`Tep::Identity` / `Tep::AgentDelegation`) + provider chain. Three providers shipped: `Tep::AuthBearerToken` (JWT-HS256), `Tep::AuthSessionCookie` (signed cookie), `Tep::AuthOAuth2` (authorization-code grant issuance for bots/agents). Same `req.identity` surface regardless of provider; agents are first-class (`identity.agent?`, `identity.acting_via.agent_id`, capability subsetting). |
 | `Tep::Broadcast` | In-process pub-sub + cross-worker via PG LISTEN/NOTIFY. Subscribe an fd to a topic (`subscribe` raw, `subscribe_ws` WS-frame-wrapped); publish writes to every matching subscriber. The seam Presence and LiveView build on. |
 | `Tep::Presence`  | Topic-keyed who's-here registry, agent-aware. `Tep::Presence.track(req, topic, fd)` records a (principal, session, topic) tuple with a 3-state structured status (`:available | :busy | :blocked` + free-text note + expiry). Diffs broadcast on join/leave/status; PG-mirror for cross-worker `list_global` snapshots. |
