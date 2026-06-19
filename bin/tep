@@ -1610,7 +1610,14 @@ def rewrite_block(src, force_string: true)
     # are handled separately so they can contain commas or spaces.
     pairs = $2.scan(/(\w+):\s*("[^"]*"|'[^']*'|[^,}]+?)\s*(?=,|\z)/)
     setters = pairs.map { |k, v| %{__l["#{k}"] = (#{v.strip}).to_s} }.join("; ")
-    "(__l = Tep.str_hash; #{setters}; tep_view_#{view}(__l, req.ivars))"
+    # Build the locals hash INSIDE the first argument (a sequence
+    # expression that returns __l), rather than `(__l = ...; render(__l))`
+    # with __l a bare arg. In the latter shape spinel (recent master)
+    # hoists the `render`'s arg temp -- `_t = __l` -- above the in-sequence
+    # `__l = str_hash()` assignment, so render receives the pre-assignment
+    # (empty) hash and every interpolated value blanks (matz/spinel#1478).
+    # Keeping the assignment inside the arg evaluation defeats the hoist.
+    "tep_view_#{view}((__l = Tep.str_hash; #{setters}; __l), req.ivars)"
   end
   s = s.gsub(/(?<![\w.])erb\s+:(\w+)/, 'tep_view_\1(Tep.str_hash, req.ivars)')
 
@@ -1619,7 +1626,8 @@ def rewrite_block(src, force_string: true)
     view = $1
     pairs = $2.scan(/(\w+):\s*("[^"]*"|'[^']*'|[^,}]+?)\s*(?=,|\z)/)
     setters = pairs.map { |k, v| %{__l["#{k}"] = (#{v.strip}).to_s} }.join("; ")
-    "(__l = Tep.str_hash; #{setters}; tep_mustache_#{view}(__l, req.ivars))"
+    # Same arg-hoist avoidance as the erb form above (matz/spinel#1478).
+    "tep_mustache_#{view}((__l = Tep.str_hash; #{setters}; __l), req.ivars)"
   end
   s = s.gsub(/(?<![\w.])mustache\s+:(\w+)/, 'tep_mustache_\1(Tep.str_hash, req.ivars)')
 
