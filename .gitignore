@@ -37,8 +37,9 @@ examples/gx10_dashboard/gx10dash
 .*.tep
 
 # tep scratch + built binaries under any example subdir (gem examples
-# build `<dir>/.app.tep.rb` next to app.rb).
+# build `<dir>/.app.tep.rb` next to app.rb, then `<dir>/app`).
 examples/*/.*.tep.rb
+examples/*/app
 
 # tep's own gem artefacts.
 *.gem

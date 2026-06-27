@@ -68,15 +68,16 @@ get '/error' do
     out = "rescued PG::UndefinedTable\n" +
           "sqlstate: " + c.last_sqlstate + "\n" +
           "is undefined-table? " + (c.last_sqlstate == "42P01" ? "yes" : "no") + "\n" +
-          # WORKAROUND -- REMOVE WHEN UPSTREAM LANDS: `e.is_a?(PG::Error)`
-          # miscompiles at spinel master (whole-program is_a? on a deep
-          # exception subclass vs an ancestor -- e here is rescued as
-          # PG::UndefinedTable, a PG::Error subclass, so this is always
-          # "yes"). Minimal `rescue Sub => e; e.is_a?(Super)` repros
-          # compile fine; it only trips in the full program. Hardcoded
-          # to "yes" to keep the example building for the re-pin. See
-          # matz/spinel#1434, tep#196. Original:
+          # WORKAROUND -- still open at SPINEL_PIN (re-checked at the
+          # ad2b71ad re-pin: `e.is_a?(PG::Error)` here is rejected as
+          # `unsupported call: is_a? recv=LocalVariableRead argc=1`).
+          # `e` is the rescued exception, typed PG::UndefinedTable -- a
+          # whole-program is_a? against the namespaced ancestor PG::Error
+          # isn't lowered yet. Minimal `rescue Sub => e; e.is_a?(Super)`
+          # compiles fine; only the full program trips it. Since `e` is
+          # always a PG::Error subclass here, hardcode "yes". Restore
           #   (e.is_a?(PG::Error) ? "yes" : "no")
+          # once is_a?-on-rescued-namespaced-ancestor lowers. See tep#196.
           "is PG::Error? " + "yes" + "\n" +
           "message: " + e.message
   end

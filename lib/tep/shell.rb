@@ -36,18 +36,29 @@ module Tep
 
     # Read a file's contents. Useful for /proc/loadavg, /proc/meminfo,
     # /sys/class/thermal/.../temp, and similar small-text endpoints.
-    # Returns "" on open failure (spinel's File.read swallows fopen
-    # errors and returns the empty string -- matches the prior
-    # sphttp_file_read behaviour).
+    # Returns "" on open failure. Spinel's File.read now raises a
+    # CRuby-correct Errno on a missing/unreadable path (it used to
+    # silently return ""); we rescue here to preserve this helper's
+    # never-raise contract -- a handler reading /proc should get "" for
+    # an absent file, not a 502'd worker.
     def self.read(path)
-      File.read(path)
+      begin
+        File.read(path)
+      rescue => e
+        ""
+      end
     end
 
     # Bounded read: slice after the fact. The cap is mostly a
     # defensive cue -- callers that need it should be reading
-    # bounded /proc files anyway.
+    # bounded /proc files anyway. Same never-raise contract as #read.
     def self.read_limited(path, max_bytes)
-      out = File.read(path)
+      out = ""
+      begin
+        out = File.read(path)
+      rescue => e
+        out = ""
+      end
       out.length > max_bytes ? out[0, max_bytes] : out
     end
 
