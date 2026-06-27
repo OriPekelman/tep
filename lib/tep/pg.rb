@@ -197,34 +197,19 @@ module PG
           h = Pg.tep_pg_connect(opts)
         end
       else
-        # ============ WORKAROUND -- REMOVE WHEN UPSTREAM LANDS ============
-        # Hash-conninfo form. The `opts.each` below miscompiles at spinel
-        # master: `opts` is a String|Hash param, but in this is_a?(String)
-        # ELSE branch spinel types it String (the is_a?-else narrowing
-        # gap, matz/spinel#1434) and rejects `opts.each` as String#each
-        # -- the lone blocker to re-pinning tep onto master (tep#196).
-        #
-        # The Hash form is currently UNUSED + untested in tep and toy:
-        # every PG::Connection.new / PG.connect caller passes a String
-        # conninfo (AR connects with the String form too). So we stub
-        # this dead branch to a failed connection to unblock the re-pin.
-        #
-        # RESTORE the original kv-pack loop (preserved below) once the
-        # upstream narrowing fix lands, and re-add Hash-form test
-        # coverage. Until then a Hash arg yields a failed Connection
-        # (connected? == false) rather than a miscompile.
-        #
-        #   keys = ""
-        #   vals = ""
-        #   n = 0
-        #   opts.each do |k, v|
-        #     keys = keys + k + "\0"
-        #     vals = vals + v + "\0"
-        #     n += 1
-        #   end
-        #   h = Pg.tep_pg_connect_kv(keys, vals, n)
-        h = -1
-        # =================================================================
+        # Hash-conninfo form: pack the key/value pairs into NUL-delimited
+        # buffers for the C shim. (`opts` narrows to Hash in this
+        # is_a?(String) ELSE branch -- the narrowing gap that blocked the
+        # re-pin, matz/spinel#1434, is fixed as of the SPINEL_PIN bump.)
+        keys = ""
+        vals = ""
+        n = 0
+        opts.each do |k, v|
+          keys = keys + k + "\0"
+          vals = vals + v + "\0"
+          n += 1
+        end
+        h = Pg.tep_pg_connect_kv(keys, vals, n)
       end
       if h < 0
         # Slot 0 holds the most recent connect-failure error message
