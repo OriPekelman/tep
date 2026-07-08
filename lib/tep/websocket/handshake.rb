@@ -26,13 +26,16 @@ module Tep
         end
 
         # Upgrade + Connection headers (downcased per Tep::Request).
+        # A missing header reads as nil; treat it as absent ("").
         upgrade = req.headers["upgrade"]
+        upgrade = "" if upgrade.nil?
         if Handshake.icontains(upgrade, "websocket") == false
           out.valid = false
           out.reason = "missing/invalid Upgrade"
           return out
         end
         conn = req.headers["connection"]
+        conn = "" if conn.nil?
         if Handshake.icontains(conn, "upgrade") == false
           out.valid = false
           out.reason = "missing/invalid Connection"
@@ -49,6 +52,7 @@ module Tep
 
         # Sec-WebSocket-Key: 24-char base64 (16-byte nonce).
         key = req.headers["sec-websocket-key"]
+        key = "" if key.nil?
         if key.length == 0
           out.valid = false
           out.reason = "missing Sec-WebSocket-Key"
@@ -60,7 +64,9 @@ module Tep
 
         # Parse Sec-WebSocket-Protocol (comma-separated). Handler
         # gets the offered list; can opt-in via Driver.accept_protocol.
-        out.protocols = Handshake.split_csv(req.headers["sec-websocket-protocol"])
+        proto_blob = req.headers["sec-websocket-protocol"]
+        proto_blob = "" if proto_blob.nil?
+        out.protocols = Handshake.split_csv(proto_blob)
         out
       end
 

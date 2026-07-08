@@ -55,8 +55,11 @@ module Tep
       end
 
       # Parse Cookie header into req.cookies. Format: "k=v; k2=v2; ...".
-      # Whitespace around `;` is allowed and stripped.
+      # Whitespace around `;` is allowed and stripped. A request with no
+      # Cookie header reads as nil (don't call methods on it: spinel's
+      # unresolved-call gate raises NoMethodError, same as CRuby).
       cookie_blob = req.req_headers["cookie"]
+      cookie_blob = "" if cookie_blob.nil?
       if cookie_blob.length > 0
         cookie_blob.split(";").each do |pair|
           eq = Tep.str_find(pair, "=", 0)

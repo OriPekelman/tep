@@ -187,6 +187,7 @@ module Tep
       secret = Tep.session_secret
       if secret.length > 0
         cv = req.cookies[Tep::COOKIE_NAME]
+        cv = "" if cv.nil?
         if cv.length > 0
           req.session.load_from(cv, secret)
         end
