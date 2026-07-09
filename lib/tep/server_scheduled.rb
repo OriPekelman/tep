@@ -327,11 +327,14 @@ module Tep
           res.file_path = ""
         end
 
-        # Default Content-Type for inline-body responses. Matches
-        # Tep::Server#send; without it, the Security::Headers nosniff
-        # default leaves the browser refusing to interpret an erb
-        # response as HTML.
-        if res.file_path.length == 0 && res.body.length > 0 && !res.headers.key?("Content-Type")
+        # Default Content-Type for inline-body responses -- including
+        # empty ones (redirects), for sinatra/Rack parity (differential
+        # oracle finding; matches Tep::Server). 204/304 excepted: Rack
+        # strips entity headers there. Without a Content-Type, the
+        # Security::Headers nosniff default leaves the browser refusing
+        # to interpret an erb response as HTML.
+        if res.file_path.length == 0 && !res.headers.key?("Content-Type") &&
+           res.status != 204 && res.status != 304
           res.headers["Content-Type"] = "text/html; charset=utf-8"
         end
         reason = Tep.reason(res.status)

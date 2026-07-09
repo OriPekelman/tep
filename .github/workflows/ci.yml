@@ -88,3 +88,37 @@ jobs:
         run: bundle exec rake rbs:validate
       - name: rake test
         run: bundle exec rake test
+
+  # Differential oracle: real sinatra vs tep (mirror condition 2,
+  # docs/mirrors/sinatra.md). Boots each fixture app under CRuby+sinatra
+  # and as a tep binary, replays the same requests, diffs the responses.
+  # Deliberately its own job with its own Gemfile so the sinatra gem
+  # never becomes a dependency of tep or of the main test job.
+  differential:
+    needs: build-spinel
+    runs-on: ubuntu-latest
+    env:
+      TEP_SKIP_SPINEL_FRESH: "1"
+      BUNDLE_GEMFILE: test/differential/Gemfile
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install build deps
+        run: sudo apt-get update && sudo apt-get install -y build-essential libsqlite3-dev
+      - name: Set up Ruby (+ sinatra oracle gems)
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "4.0"
+          bundler-cache: true   # installs test/differential/Gemfile
+      - uses: actions/download-artifact@v7
+        with:
+          name: spinel-dist
+          path: spinel-dist
+      - name: Restore exec bits and put spinel on PATH
+        run: |
+          chmod +x spinel-dist/spinel \
+                   spinel-dist/spinel_parse \
+                   spinel-dist/spinel_analyze \
+                   spinel-dist/spinel_codegen
+          echo "$GITHUB_WORKSPACE/spinel-dist" >> "$GITHUB_PATH"
+      - name: Run differential oracle
+        run: bundle exec ruby test/differential/runner.rb

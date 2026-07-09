@@ -1,0 +1,14 @@
+# Gems for the differential oracle ONLY (test/differential/runner.rb):
+# real sinatra as the behavioural reference. Deliberately a separate
+# Gemfile so sinatra never becomes a dependency of tep itself -- the
+# main Gemfile stays rake/minitest/base64/rbs.
+#
+#   BUNDLE_GEMFILE=test/differential/Gemfile bundle install
+#   ruby test/differential/runner.rb
+
+source "https://rubygems.org"
+
+gem "sinatra"
+gem "rackup"
+gem "puma"
+gem "minitest"
