@@ -1,0 +1,19 @@
+# spin manifest (matz/spinel's package manager) — tep#234 groundwork.
+#
+# INERT at the current SPINEL_PIN (f6d5eef predates spin): the Makefile /
+# spinel-ext.json build path is still the one that builds tep. This
+# manifest exists so the dependency graph and layout are already
+# spin-shaped when the re-pin (tep#196, gated on matz/spinel#1842) makes
+# `spin build`/`spin test` viable. See tep#234 for the migration plan
+# (carried-C mapping, mirror-audit of the C shims, serve revalidation).
+#
+# Publishing note: the package name is the require string ("tep"); the
+# repo keeps its name. Libraries do not commit spin.lock — version
+# selection belongs to consuming applications (docs/internals/spin.md R5).
+
+[package]
+name = "tep"
+version = "0.11.6"
+
+[dependencies]
+spinel_kit = { git = "https://github.com/OriPekelman/spinelkit" }
