@@ -89,10 +89,14 @@ Two regimes:
   invocations, `request.ip`) now raises NoMethodError / fails the gate.
   This half is already mirror-grade at spin-era pins.
 
-**Remediation:** promote translator warnings to hard errors by default
-(`tep build --lax` as the opt-out), mirroring spinel-redis's
-unknown-command-is-a-compile-error. Mechanically small: the nine
-`warnings <<` sites route through one strictness switch.
+**Remediation — SHIPPED:** the translator is strict by default: any
+would-be-dropped construct fails the build with an error naming this
+document, and `tep build --lax` (or `TEP_LAX=1`) restores
+warn-and-continue. All `warnings <<` sites route through one emission
+point in `translate`, so the switch covers every drop path, not just
+the nine cataloged ones. `test/test_unsupported.rb` asserts the
+refusals (`use`, `helpers`, unknown `set`, `on_stop`) and the `--lax`
+downgrade.
 
 ## Non-claims, for completeness
 
@@ -111,8 +115,8 @@ unknown-command-is-a-compile-error. Mechanically small: the nine
 |---|---|---|
 | 1 — exclusion ledger | PARTIAL (positive matrix exists; this file is the inverted ledger) | keep this file normative, sync with SINATRA_COMPAT.md |
 | 2 — real-gem oracle | GAP (hand-derived; only Jwt is differential) | differential CI job spawning real sinatra on the checklist suite |
-| 3 — loud failure | FAIL at translator (9 warn-and-ignore paths); PASS at compile gate post-1356cb14 | strict-by-default translator, `--lax` opt-out |
+| 3 — loud failure | **PASS** — translator strict by default (`--lax` opt-out); compile gate loud post-1356cb14 | shipped |
 
 Publishing a `sinatra` claim to spin-index is **not justified yet**;
-conditions 2 and 3 are the blockers. Both remediations are independent
-of the re-pin and can land now.
+condition 2 (the differential oracle) is the remaining blocker, and it
+is independent of the re-pin.
