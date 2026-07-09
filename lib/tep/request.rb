@@ -51,11 +51,16 @@ module Tep
     def headers; @req_headers; end
     def body;    @raw_body;    end
 
-    # Spinel's Hash[k] returns "" for missing string keys, not nil --
-    # so an empty Connection header looks the same as no header at all.
-    # We treat both as "use HTTP/1.1 default behaviour".
+    # A missing header reads as nil (CRuby Hash semantics; spinel's
+    # unresolved-call gate raises NoMethodError on nil receivers, same
+    # as CRuby would). Guard before calling String methods; an empty
+    # header and no header both mean "use HTTP/1.1 default behaviour".
+    # NOTE: guard with `x = "" if x.nil?`, not `x || ""` -- the ||-form
+    # mis-compiles at spinel pin f6d5eef (blanks the hit value).
     def keep_alive?
-      lc = @req_headers["connection"].downcase
+      lc = @req_headers["connection"]
+      lc = "" if lc.nil?
+      lc = lc.downcase
       if lc == "close"
         return false
       end
@@ -70,7 +75,9 @@ module Tep
     end
 
     def form?
-      @req_headers["content-type"].downcase.start_with?("application/x-www-form-urlencoded")
+      ct = @req_headers["content-type"]
+      ct = "" if ct.nil?
+      ct.downcase.start_with?("application/x-www-form-urlencoded")
     end
 
     # True when the request body is a multipart/form-data submission
@@ -78,7 +85,9 @@ module Tep
     # or carrying file inputs). Tep::Multipart.parse handles the
     # text fields; file-upload parts are skipped in v1.
     def multipart?
-      @req_headers["content-type"].downcase.start_with?("multipart/form-data")
+      ct = @req_headers["content-type"]
+      ct = "" if ct.nil?
+      ct.downcase.start_with?("multipart/form-data")
     end
 
     # ---- Rack::Request-style accessors (reads only, no .ip yet) ----
@@ -99,6 +108,7 @@ module Tep
     # proxy sets.
     def scheme
       proto = @req_headers["x-forwarded-proto"]
+      proto = "" if proto.nil?
       if proto.length > 0
         return proto.downcase
       end

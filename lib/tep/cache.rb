@@ -18,8 +18,10 @@ module Tep
       # tag is matched as a substring so a comma-separated list of tags
       # in If-None-Match works.
       etag = res.headers["ETag"]
+      etag = "" if etag.nil?
       if etag.length > 0
         inm = req.headers["if-none-match"]
+        inm = "" if inm.nil?
         if inm.length > 0
           if inm == "*"
             return true
@@ -35,6 +37,7 @@ module Tep
       lm = res.lastmod_epoch
       if lm > 0
         ims = req.headers["if-modified-since"]
+        ims = "" if ims.nil?
         if ims.length > 0
           ims_epoch = Sock.sphttp_parse_http_date(ims)
           if ims_epoch >= 0 && lm <= ims_epoch

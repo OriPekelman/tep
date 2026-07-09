@@ -47,6 +47,7 @@ module Tep
     # signature / expired / malformed payload.
     def self.try(req)
       header = req.req_headers["authorization"]
+      header = "" if header.nil?
       if header.length < 8 || header[0, 7] != "Bearer "
         return nil
       end
