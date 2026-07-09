@@ -66,3 +66,10 @@ CLAUDE.md
 
 # Optional spinel --emit-rbs output (rake rbs:emit, dev-only)
 sig/.emitted/
+
+# spin (tep#234): libraries don't commit spin.lock (version selection
+# belongs to consuming applications); vendor/ and build/ are spin's
+# fetch/output trees.
+spin.lock
+vendor/packages/
+build/
