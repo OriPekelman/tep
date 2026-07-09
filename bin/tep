@@ -86,7 +86,14 @@ def fatal(msg)
 end
 
 # Build the translated Ruby source from a Sinatra-style file.
-def translate(input_path)
+#
+# Strict by default (mirror condition 3, docs/mirrors/sinatra.md):
+# any construct the translator would drop -- Rack `use`, `helpers`,
+# unknown `set` keys, on_stop, malformed DSL blocks, missing views --
+# is a fatal error, because building anyway produces a binary that
+# silently diverges from what the same source does under real
+# sinatra. `--lax` (or TEP_LAX=1) restores warn-and-continue.
+def translate(input_path, lax: ENV["TEP_LAX"] == "1")
   raw_source = File.read(input_path)
 
   # Split off `__END__` inline templates. Sinatra's convention is
@@ -909,7 +916,19 @@ def translate(input_path)
   RB
   out << ""
 
-  warnings.each { |w| warn "tep: #{w}" }
+  if warnings.any?
+    if lax
+      warnings.each { |w| warn "tep: #{w}" }
+      warn "tep: --lax: built with #{warnings.length} dropped construct(s); " \
+           "behaviour diverges from real sinatra where they applied"
+    else
+      warnings.each { |w| warn "tep: error: #{w}" }
+      fatal "#{warnings.length} unsupported construct(s) -- refusing to build " \
+            "a binary that silently diverges (docs/mirrors/sinatra.md, " \
+            "condition 3). Re-run with --lax (or TEP_LAX=1) to drop them " \
+            "with a warning instead."
+    end
+  end
 
   out.join("\n")
 end
@@ -2176,23 +2195,25 @@ def cmd_build(args)
   input    = nil
   out_path = nil
   c_only   = false
+  lax      = ENV["TEP_LAX"] == "1"
   i = 0
   while i < args.length
     a = args[i]
     case a
     when "-o" then out_path = args[i + 1]; i += 2
     when "-c" then c_only = true; i += 1
+    when "--lax" then lax = true; i += 1
     when /^-/ then fatal "unknown option: #{a}"
     else
       input ||= a
       i += 1
     end
   end
-  fatal "usage: tep build app.rb [-o out] [-c]" unless input
+  fatal "usage: tep build app.rb [-o out] [-c] [--lax]" unless input
 
   base = File.basename(input, ".rb")
   out_path ||= File.join(File.dirname(input), base)
-  translated = translate(input)
+  translated = translate(input, lax: lax)
 
   # Spinel's require_relative resolves against the source file's
   # directory and chokes on absolute paths. Drop the generated file
@@ -2230,8 +2251,10 @@ def cmd_run(args)
 end
 
 def cmd_translate(args)
-  input = args.first or fatal "usage: tep translate app.rb"
-  puts translate(input)
+  lax = ENV["TEP_LAX"] == "1"
+  lax = true if args.delete("--lax")
+  input = args.first or fatal "usage: tep translate app.rb [--lax]"
+  puts translate(input, lax: lax)
 end
 
 case ARGV.shift
@@ -2243,9 +2266,14 @@ when nil, "-h", "--help"
     tep -- Sinatra-flavoured framework that compiles to a native binary.
 
     Usage:
-      tep build app.rb [-o out] [-c]    translate + spinel-compile
-      tep run   app.rb [-p PORT] [-w N] build then exec
-      tep translate app.rb               print the translated Ruby
+      tep build app.rb [-o out] [-c] [--lax]  translate + spinel-compile
+      tep run   app.rb [-p PORT] [-w N]       build then exec
+      tep translate app.rb [--lax]            print the translated Ruby
+
+    Strict by default: source constructs tep would have to drop
+    (Rack `use`, `helpers do`, unknown `set` keys, ...) fail the
+    build rather than silently diverging from real sinatra.
+    `--lax` (or TEP_LAX=1) downgrades them to warnings.
 
     Source compatibility: top-level `get '/path' do ... end`,
     `post`, `put`, `patch`, `delete`, `before`, `after`, `not_found`,

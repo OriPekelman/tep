@@ -30,10 +30,14 @@ class TestRealWorld < TepTest
     PORT_BASE + 100 + @@port_counter
   end
 
-  def with_app(example_filename)
+  # lax: true builds with --lax for fidelity copies of upstream apps
+  # that use out-of-contract DSL on purpose (02_lifecycle's `on_stop`)
+  # -- the strict default (mirror condition 3) would rightly refuse.
+  def with_app(example_filename, lax: false)
     src = File.join(EXAMPLES_DIR, example_filename)
     bin = Dir.mktmpdir + "/app"
-    out = `#{Shellwords.escape(File.expand_path("../bin/tep", __dir__))} build #{Shellwords.escape(src)} -o #{Shellwords.escape(bin)} 2>&1`
+    lax_flag = lax ? " --lax" : ""
+    out = `#{Shellwords.escape(File.expand_path("../bin/tep", __dir__))} build#{lax_flag} #{Shellwords.escape(src)} -o #{Shellwords.escape(bin)} 2>&1`
     raise "build failed:\n#{out}" unless $?.success?
     port = TestRealWorld.next_port
     pid = Process.spawn(bin, "-p", port.to_s, "-q",
@@ -73,7 +77,8 @@ class TestRealWorld < TepTest
   # ---- 02: lifecycle ----
 
   def test_02_lifecycle_root_renders
-    with_app("02_lifecycle.rb") do
+    # upstream example uses `on_stop` (no tep shutdown path) -> --lax
+    with_app("02_lifecycle.rb", lax: true) do
       res = get("/")
       assert_equal "200", res.code
       assert_match(/lifecycle events/, res.body)
