@@ -9,10 +9,12 @@
 # plumbing (sphttp_connect, sphttp_set_nonblock, sphttp_recv_*); the
 # missing piece is the HTTP/1.0 client on top.
 #
-# Scope (v1)
-# ----------
-# * **HTTP only** -- no TLS. Talk to internal services, the local
-#   Ollama API, vLLM, your own tep-backed sidecars.
+# Scope
+# -----
+# * **http + https** -- outbound TLS landed in #150
+#   (Sock.sphttp_connect_tls; non-blocking handshake under the
+#   scheduled server). Talk to internal services, the local Ollama
+#   API, vLLM, your own tep-backed sidecars, or external https APIs.
 # * **HTTP/1.0 + Connection: close** -- one socket per request,
 #   read until EOF. No keep-alive, no pipelining.
 # * **No chunked-transfer reading** -- assumes Content-Length or
@@ -24,7 +26,7 @@
 #
 # These limits cover the dashboard's needs (talking to local
 # inference backends) and the bulk of "hit an internal API"
-# workloads. HTTPS + keep-alive + chunked land as a v2 surface.
+# workloads. Keep-alive + chunked reading land as a v2 surface.
 #
 # API shape
 # ---------
