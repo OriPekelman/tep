@@ -55,7 +55,7 @@ translator's warn-inventory + code:
 file), kept in sync with SINATRA_COMPAT.md's matrix; the matrix cites
 tests, the ledger cites narrowings.
 
-## Condition 2 — real gem as oracle: GAP (one bright spot)
+## Condition 2 — real gem as oracle: PARTIAL (harness live, coverage growing)
 
 Current verification is **hand-derived, not differential**: the ~170
 checklist expectations were written from sinatra's documented behavior,
@@ -69,11 +69,30 @@ Bright spot: `Tep::Jwt` already does exactly what matz asks — an interop
 test verifying tokens against the canonical `jwt` gem. That's the
 pattern to replicate.
 
-**Remediation:** a `spawn_real_sinatra(source)` helper (CRuby + sinatra
-gem on the host, same source file both sides — the translator input IS
-valid sinatra by construction), then a differential pass over the
-checklist requests diffing status/headers-subset/body. Runs as a
-separate CI job so the sinatra gem never becomes a tep dependency.
+**Remediation — SHIPPED (harness + CI job), coverage growing:**
+`test/differential/runner.rb` boots each fixture app twice — CRuby +
+the real sinatra gem vs the tep-compiled binary — replays the same
+requests and diffs status / body / content-type / redirect Location /
+declared headers. Unledgered divergences fail; accepted ones are
+normalized away with a lettered reason recorded in the runner (L1
+sinatra's `;charset=utf-8` suffix, L2 rack-protection default headers,
+L3 transport furniture, L4 Location absolutization) that must also
+live here. Its own Gemfile keeps sinatra out of tep's dependency
+graph; CI runs it as the `differential` job. Coverage today:
+real_world 01/04/05 + a purpose-built core-semantics fixture
+(`test/differential/10_semantics.rb`: params, query, form, redirect
+×2, halt, custom status, custom header, content_type, url-decode,
+not_found) — extend toward the full checklist over time.
+
+**First fruits of the oracle:**
+- tep omitted the default `Content-Type` on empty-body responses
+  (redirects!) where sinatra/Rack emit `text/html` — **fixed** in both
+  servers, with 204/304 excepted (Rack strips entity headers there).
+- real_world/06 uses `request.headers["x-token"]`, which is **not
+  valid sinatra** — `request.headers` is a tep extension (sinatra
+  spells it `request.env["HTTP_..."]`). 06 is excluded from the oracle
+  set; the extension joins the ledger: code written against it is
+  tep-only, not sinatra-portable.
 
 ## Condition 3 — loud failure outside the contract: FAIL today
 
@@ -114,9 +133,12 @@ downgrade.
 | condition | state | remediation |
 |---|---|---|
 | 1 — exclusion ledger | PARTIAL (positive matrix exists; this file is the inverted ledger) | keep this file normative, sync with SINATRA_COMPAT.md |
-| 2 — real-gem oracle | GAP (hand-derived; only Jwt is differential) | differential CI job spawning real sinatra on the checklist suite |
+| 2 — real-gem oracle | PARTIAL — differential harness + CI job live (4 fixture apps, 75 assertions); checklist coverage still growing | extend fixtures toward the full Phase A matrix |
 | 3 — loud failure | **PASS** — translator strict by default (`--lax` opt-out); compile gate loud post-1356cb14 | shipped |
 
-Publishing a `sinatra` claim to spin-index is **not justified yet**;
-condition 2 (the differential oracle) is the remaining blocker, and it
-is independent of the re-pin.
+Publishing a `sinatra` claim to spin-index: conditions 1 and 2 are both
+PARTIAL — the machinery exists and is normative, the remaining work is
+coverage (more checklist surface through the oracle, ledger kept in
+lockstep). Judgment call for when coverage is "enough" to publish; the
+oracle already caught one real parity bug and one invalid fixture on
+its first run, which is the mechanism working as designed.

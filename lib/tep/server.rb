@@ -231,7 +231,11 @@ module Tep
         res.set_body("")
       end
 
-      if res.body.length > 0 && !res.headers.key?("Content-Type")
+      # Default Content-Type even on empty bodies (redirects!) --
+      # sinatra/Rack parity, caught by the differential oracle
+      # (test/differential/runner.rb). 204/304 are the exception:
+      # Rack strips entity headers there, so we don't default one in.
+      if !res.headers.key?("Content-Type") && res.status != 204 && res.status != 304
         res.headers["Content-Type"] = "text/html; charset=utf-8"
       end
       res.headers["Content-Length"] = res.body.length.to_s
