@@ -42,8 +42,8 @@ translator's warn-inventory + code:
 | `request.ip` / `remote_ip` | not implemented (needs peer-addr C helper) | unresolved at compile |
 | multipart file-upload parts | text fields only, files skipped | silent narrowing (documented) |
 | unknown `set :key` | recognized keys only | ⚠️ warn + ignored |
-| splat `*` | last-segment only | narrowing, no diagnostic |
-| regex routes | ≤9 captures → `params["1".."9"]` | narrowing, documented |
+| splat `*` | last-segment only (sinatra spans segments: `/files/a/b` matches `/files/*` there, 404s here); splat *value* not exposed (sinatra: `params['splat']` array) | **oracle-pinned** (runner L5 `diverge:` assertion) |
+| regex routes | ≤9 captures → `params["1".."9"]` (sinatra: `params['captures']` / block args); tep also accepts `^`/`$`-anchored regexes that sinatra's mustermann *rejects at boot* — anchor-free is the portable form | narrowing + anchor asymmetry, documented (runner L6) |
 | sessions | signed-cookie store only | narrowing, documented |
 | `error do ... end` blocks, route conditions (`provides:`, `agent:`), `register`/extensions | not claimed | mostly unresolved at compile; not individually diagnosed |
 | unrecognized top-level calls | — | ⚠️ warn + **ignored** |
@@ -78,11 +78,17 @@ normalized away with a lettered reason recorded in the runner (L1
 sinatra's `;charset=utf-8` suffix, L2 rack-protection default headers,
 L3 transport furniture, L4 Location absolutization) that must also
 live here. Its own Gemfile keeps sinatra out of tep's dependency
-graph; CI runs it as the `differential` job. Coverage today:
-real_world 01/04/05 + a purpose-built core-semantics fixture
-(`test/differential/10_semantics.rb`: params, query, form, redirect
-×2, halt, custom status, custom header, content_type, url-decode,
-not_found) — extend toward the full checklist over time.
+graph; CI runs it as the `differential` job. Coverage today (5 apps,
+107 assertions): real_world 01/04/05 + two purpose-built fixtures —
+`10_semantics.rb` (params, query, form, redirect ×2, halt, custom
+status, custom header, content_type, url-decode, not_found) and
+`11_matrix.rb` (PUT/PATCH, splat, regex route, after-filter header
+mutation, `%xx`/`+` query decoding, multipart text fields, bare
+halt). The harness also supports **executable ledger pins**: a
+request marked `diverge:` asserts the two servers *disagree* as
+documented (splat multi-segment, L5) — if the divergence ever heals,
+the assertion flips and the ledger entry gets cleaned up. Extend
+toward the full checklist over time.
 
 **First fruits of the oracle:**
 - tep omitted the default `Content-Type` on empty-body responses

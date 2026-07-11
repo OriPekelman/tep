@@ -54,6 +54,16 @@ module Differential
   # L4 redirect Location absolutization: sinatra expands "/path" to an
   #    absolute http://host:port/path; tep echoes the path as given.
   #    Compare path component only.
+  # L5 splat scope: sinatra's `*` spans path segments; tep's matches a
+  #    single trailing segment. Pinned per-request via `diverge:`.
+  # L6 divergent read APIs, not exercised by fixtures: regex captures
+  #    (sinatra params['captures'] / block args vs tep params["1".."9"]),
+  #    splat value (params['splat'] array vs none), request.headers
+  #    (tep extension), bare set_cookie/cookies[] (tep mirrors
+  #    contrib-style helpers), and ^/$-anchored regex routes (tep
+  #    accepts; sinatra's mustermann raises at boot -- anchor-free
+  #    regexes are the portable form). Fixtures avoid these; the
+  #    ledger in docs/mirrors/sinatra.md records them.
   IGNORED_HEADERS = %w[
     server date connection content-length x-xss-protection
     x-content-type-options x-frame-options keep-alive
@@ -119,7 +129,8 @@ module Differential
     http.open_timeout = 5
     http.read_timeout = 5
     klass = { "GET" => Net::HTTP::Get, "POST" => Net::HTTP::Post,
-              "PUT" => Net::HTTP::Put, "DELETE" => Net::HTTP::Delete }.fetch(verb)
+              "PUT" => Net::HTTP::Put, "PATCH" => Net::HTTP::Patch,
+              "DELETE" => Net::HTTP::Delete }.fetch(verb)
     req = klass.new(path)
     headers.each { |k, v| req[k] = v }
     if body
@@ -152,6 +163,24 @@ class DifferentialCase < Minitest::Test
       ["DELETE", "/todos/9999"],
       ["GET", "/todos"],
     ],
+    File.expand_path("11_matrix.rb", __dir__) => [
+      ["PUT", "/verb"],
+      ["PATCH", "/verb"],
+      ["GET", "/files/one"],
+      # L5: sinatra's splat spans segments (/files/a/b matches); tep's
+      # splat is last-segment-only (404s). Pinned divergence.
+      ["GET", "/files/a/b", { diverge: { "status" => "L5 splat last-segment-only" } }],
+      ["GET", "/rx/123"],
+      ["GET", "/rx/abc"],               # regex miss -> not_found on both
+      ["GET", "/afterhdr", { expect_headers: ["x-after"] }],
+      ["GET", "/dec?v=a%20b+c"],        # %xx and + decoding
+      ["POST", "/mp", {
+        body: "--XDIFFB\r\nContent-Disposition: form-data; name=\"field\"\r\n\r\nzap-mp\r\n--XDIFFB--\r\n",
+        headers: { "Content-Type" => "multipart/form-data; boundary=XDIFFB" },
+      }],
+      ["GET", "/gone"],                 # bare halt 410
+      ["GET", "/nowhere"],
+    ],
     File.expand_path("10_semantics.rb", __dir__) => [
       ["GET", "/hi/tep"],
       ["GET", "/two/a/b"],
@@ -174,6 +203,19 @@ class DifferentialCase < Minitest::Test
     r_sin = Differential.request(sin.port, verb, path, body: body, headers: headers)
     r_tep = Differential.request(tep.port, verb, path, body: body, headers: headers)
     ctx = "#{File.basename(app)} #{verb} #{path}"
+
+    # Ledgered per-request divergences (opts[:diverge] = {facet =>
+    # "Ln reason"}): the divergence is EXPECTED and pinned -- if the
+    # two servers ever agree again, the assertion flips, telling us to
+    # clean the ledger entry (and docs/mirrors/sinatra.md). A status
+    # divergence short-circuits the body/content-type diff: different
+    # routes answered, comparing their bodies is meaningless.
+    diverge = opts[:diverge] || {}
+    if diverge.key?("status")
+      refute_equal r_sin.code, r_tep.code,
+                   "#{ctx}: ledgered status divergence (#{diverge["status"]}) healed -- remove from ledger"
+      return
+    end
 
     assert_equal r_sin.code, r_tep.code, "#{ctx}: status diverged"
     assert_equal r_sin.body, r_tep.body, "#{ctx}: body diverged"
