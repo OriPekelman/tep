@@ -1,4 +1,4 @@
-require_relative "lib/tep/version"
+require_relative "tep/version"
 
 Gem::Specification.new do |s|
   s.name        = "tep"
@@ -62,7 +62,7 @@ Gem::Specification.new do |s|
     # must ship at the gem root so it survives `gem unpack`. See #98.
     "spinel-ext.json",
     "bin/tep",
-    "lib/**/*",
+    "tep.rb", "tep/**/*", "native/**/*", "spin.toml",
     "examples/**/*",
     "public/**/*",
     "test/**/*"
@@ -71,7 +71,12 @@ Gem::Specification.new do |s|
 
   s.bindir              = "bin"
   s.executables         = ["tep"]
-  s.require_paths       = ["lib"]
+  s.require_paths       = ["."]
+
+  # SpinelKit surfaces tep still consumes (log/url/hex) after absorbing the
+  # retired Json codec as Tep::Json (tep#217): the real dependency replaces
+  # the hand-copy on the gem path; the spin path declares it in spin.toml.
+  s.add_dependency "spinel_kit", ">= 0.3.0"
 
   # `bin/tep` uses Prism (bundled with Ruby >= 3.4) at build-time to
   # parse the user's Sinatra-style source. It is NOT a runtime

@@ -1,5 +1,5 @@
 TEP_ROOT  := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
-LIB_DIR   := $(TEP_ROOT)/lib/tep
+LIB_DIR   := $(TEP_ROOT)/tep
 SPINEL    ?= spinel
 TEP       := $(TEP_ROOT)/bin/tep
 
@@ -44,15 +44,11 @@ TEP_SPHTTP_CFLAGS ?= $(shell pkg-config --cflags openssl 2>/dev/null)
 TEP_SPHTTP_LIBS   ?= $(shell pkg-config --libs openssl 2>/dev/null || echo "-lssl -lcrypto")
 export TEP_SPHTTP_CFLAGS TEP_SPHTTP_LIBS
 
-.PHONY: all clean helper hello sinatra_style bench bench-tep bench-sinatra demo test test-parallel spinel-fresh test-pg vendor-examples vendor-spinelkit doctor
+.PHONY: all clean helper hello sinatra_style bench bench-tep bench-sinatra demo test test-parallel spinel-fresh test-pg vendor-examples doctor
 
-# Re-sync the vendored SpinelKit lib (lib/spinel_kit/, sig/spinel_kit/) from the
-# upstream checkout. spinel_kit is a published gem; tep depends on its JSON codec
-# + logger. INTERIM vendoring (committed under lib/ so it travels with tep) until
-# spinel-compat gains transitive gem->gem vendoring -- OriPekelman/spinelgems#19.
-# Override the source with SPINELKIT_DIR. See tools/vendor-spinelkit.sh.
-vendor-spinelkit:
-	@$(TEP_ROOT)/tools/vendor-spinelkit.sh
+# RETIRED (tep#217): the hand-copy is gone. The Json codec
+# is absorbed as Tep::Json (tep/json*.rb); log/url/hex come from the real
+# spinel_kit dependency (gemspec on the gem path, spin.toml on the spin path).
 
 # Vendor each gem example's Gemfile-declared dependencies via
 # bundler-spinel (spinel-compat vendor, from $(SPINELGEMS)) into
@@ -112,7 +108,7 @@ demo: hello
 
 test: helper
 	@pkill -f tep-test 2>/dev/null; true
-	ruby test/run_all.rb
+	ruby test/cruby/run_all.rb
 
 # `make doctor` -- OPTIONAL, DEV-ONLY inference health check via
 # spinel-dev's `doctor` (compile-probe + emit-rbs untyped scan +
@@ -144,7 +140,7 @@ doctor:
 # clean output ordering. Cap with TEP_TEST_PROCS=N.
 test-parallel: helper
 	@pkill -f tep-test 2>/dev/null; true
-	ruby test/run_parallel.rb
+	ruby test/cruby/run_parallel.rb
 
 # `make test-pg` -- runs test/test_pg.rb against a real PostgreSQL.
 # Reads PG_TEST_URL from the environment if set; otherwise expects
@@ -161,7 +157,7 @@ test-parallel: helper
 #   docker stop tep_test_pg
 test-pg: helper
 	@pkill -f tep-test 2>/dev/null; true
-	ruby test/test_pg.rb
+	ruby test/cruby/test_pg.rb
 
 clean:
 	rm -f $(LIB_DIR)/*.o

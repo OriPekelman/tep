@@ -1,21 +1,25 @@
 [
   {
     "name": "sphttp",
-    "placeholder": "@TEP_SPHTTP_O@",
-    "source": "lib/tep/sphttp.c",
-    "cflags": ["-O2"]
+    "placeholder": "-DTEP_SPHTTP_O_UNSET",
+    "source": "tep/sphttp.c",
+    "cflags": [
+      "-O2"
+    ]
   },
   {
     "name": "sphttp",
-    "placeholder": "@TEP_SPHTTP_CFLAGS@",
+    "placeholder": "-DTEP_SPHTTP_CFLAGS_UNSET",
     "pkg_config": "openssl",
     "pkg_config_fallback": "-lssl -lcrypto"
   },
   {
     "name": "sqlite",
-    "placeholder": "@TEP_SQLITE_O@",
-    "source": "lib/tep/tep_sqlite.c",
-    "cflags": ["-O2"],
+    "placeholder": "-DTEP_SQLITE_O_UNSET",
+    "source": "native/sqlite/tep_sqlite.c",
+    "cflags": [
+      "-O2"
+    ],
     "pkg_config": "sqlite3",
     "pkg_config_fallback": "-lsqlite3",
     "optional": true,
@@ -23,15 +27,17 @@
   },
   {
     "name": "pg",
-    "placeholder": "@TEP_PG_O@",
-    "source": "lib/tep/tep_pg.c",
-    "cflags": ["-O2"],
+    "placeholder": "-DTEP_PG_O_UNSET",
+    "source": "native/pg/tep_pg.c",
+    "cflags": [
+      "-O2"
+    ],
     "optional": true,
     "disabled_cflags": "-DNO_PG"
   },
   {
     "name": "pg",
-    "placeholder": "@TEP_PG_CFLAGS@",
+    "placeholder": "-DTEP_PG_CFLAGS_UNSET",
     "pkg_config": "libpq",
     "optional": true,
     "disabled_cflags": "-lc"

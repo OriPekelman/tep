@@ -43,8 +43,10 @@ require "fileutils"
 require "tmpdir"
 require "pathname"
 
-LIB_DIR   = File.expand_path("../lib", __dir__)
-REPO_ROOT = File.dirname(LIB_DIR)
+# Package root IS the require root post spin-port (tep#234): the library
+# tree lives at the repo root (tep.rb + tep/), not under lib/.
+REPO_ROOT = File.expand_path("..", __dir__)
+LIB_DIR   = REPO_ROOT
 
 # The @TEP_*@ placeholder shape lives in spinel-ext.json at the gem
 # root -- the single source of truth shared with `spinel-compat
@@ -704,7 +706,7 @@ def translate(input_path, lax: ENV["TEP_LAX"] == "1")
 
     server_name    = (config[:mcp_server_name] || "tep-mcp-server").to_s
     server_version = config[:mcp_server_version] || begin
-      vfile = File.read(File.expand_path("../lib/tep/version.rb", __dir__))
+      vfile = File.read(File.expand_path("../tep/version.rb", __dir__))
       vfile[/VERSION\s*=\s*"([^"]+)"/, 1] || "0.0.0"
     rescue
       "0.0.0"

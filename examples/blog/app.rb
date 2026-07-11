@@ -5,7 +5,7 @@
 #   - Tep::Password      PBKDF2 password hashing
 #   - Tep::Jwt           JSON API token issue / verify
 #   - Sessions           web-side login (signed cookie)
-#   - SpinelKit::Json          JSON encode + flat-key decode
+#   - Tep::Json          JSON encode + flat-key decode
 #   - SpinelKit::Log        request log + auth events
 #   - Tep::Security      CORS + secure-headers
 #   - ERB + @ivar locals public-facing views
@@ -270,9 +270,9 @@ get '/api/posts' do
     end
     first = false
     out = out + "{" +
-      SpinelKit::Json.encode_pair_int("id", db.col_int(0)) + "," +
-      SpinelKit::Json.encode_pair_str("title",  db.col_str(1)) + "," +
-      SpinelKit::Json.encode_pair_str("author", db.col_str(2)) + "}"
+      Tep::Json.encode_pair_int("id", db.col_int(0)) + "," +
+      Tep::Json.encode_pair_str("title",  db.col_str(1)) + "," +
+      Tep::Json.encode_pair_str("author", db.col_str(2)) + "}"
   end
   db.finalize
   db.close
@@ -293,16 +293,16 @@ get '/api/posts/:id' do
     return "{}"
   end
   "{" +
-    SpinelKit::Json.encode_pair_str("title",  title) + "," +
-    SpinelKit::Json.encode_pair_str("body",   body)  + "," +
-    SpinelKit::Json.encode_pair_str("author", author) + "}"
+    Tep::Json.encode_pair_str("title",  title) + "," +
+    Tep::Json.encode_pair_str("body",   body)  + "," +
+    Tep::Json.encode_pair_str("author", author) + "}"
 end
 
 # Issue a JWT for API access. Same credentials as web login.
 post '/api/token' do
   res.headers["Content-Type"] = "application/json"
-  user = SpinelKit::Json.get_str(req.raw_body, "user")
-  pwd  = SpinelKit::Json.get_str(req.raw_body, "password")
+  user = Tep::Json.get_str(req.raw_body, "user")
+  pwd  = Tep::Json.get_str(req.raw_body, "password")
 
   db = Tep::SQLite.new
   db.open(DB_PATH)
@@ -322,8 +322,8 @@ post '/api/token' do
   end
 
   payload = "{" +
-    SpinelKit::Json.encode_pair_str("sub", user) + "," +
-    SpinelKit::Json.encode_pair_int("exp", Time.now.to_i + 3600) + "}"
+    Tep::Json.encode_pair_str("sub", user) + "," +
+    Tep::Json.encode_pair_int("exp", Time.now.to_i + 3600) + "}"
   token = Tep::Jwt.encode_hs256(payload, JWT_SECRET)
   LOGGER.info("api token issued: " + user)
   "{\"token\":\"" + token + "\"}"
@@ -345,10 +345,10 @@ post '/api/posts' do
     res.set_status(401)
     return "{\"error\":\"unauthorized\"}"
   end
-  user = SpinelKit::Json.get_str(payload, "sub")
+  user = Tep::Json.get_str(payload, "sub")
 
-  title = SpinelKit::Json.get_str(req.raw_body, "title")
-  body  = SpinelKit::Json.get_str(req.raw_body, "body")
+  title = Tep::Json.get_str(req.raw_body, "title")
+  body  = Tep::Json.get_str(req.raw_body, "body")
 
   db = Tep::SQLite.new
   db.open(DB_PATH)
@@ -364,5 +364,5 @@ post '/api/posts' do
 
   LOGGER.info("api post created id=" + id.to_s + " by " + user)
   res.set_status(201)
-  "{" + SpinelKit::Json.encode_pair_int("id", id) + "}"
+  "{" + Tep::Json.encode_pair_int("id", id) + "}"
 end
