@@ -37,6 +37,7 @@ end
 
 require_relative "tep/version"
 require "spinel_kit/url"
+require "spinel_kit/hex"
 require_relative "tep/multipart"
 require_relative "tep/net"
 require_relative "tep/agent_delegation"

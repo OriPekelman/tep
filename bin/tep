@@ -65,15 +65,22 @@ require "json"
 def self.locate_spinel
   e = ENV["SPINEL"]
   return e if e && !e.empty? && e != "spinel"
-  sibling = File.expand_path("../../spinel/spinel", __dir__)
-  return sibling if File.executable?(sibling)
-  # Engine provisioned by `spinel-compat install-engine`. Honor
-  # SPINEL_CACHE like bundler-spinel does so a relocated cache resolves
-  # for both tools (default ~/.cache/spinel; `current` -> the pinned rev).
+  # PINNED engine first (spinel-compat install-engine): a dev's sibling
+  # ../spinel checkout is a MOVING, often mid-rebuild tree -- compiling
+  # through it produced a stale-binary miscompile (SpinelKit constants
+  # silently typed int, "emitting 0") that cost a debugging day and
+  # looked exactly like an engine bug. Preferring the provisioned pin
+  # inverts the old order; the sibling remains a LAST resort before
+  # bare PATH, for checkouts that never installed an engine.
   cache_root = ENV["SPINEL_CACHE"]
   cache_root = "~/.cache/spinel" if cache_root.nil? || cache_root.empty?
   provisioned = File.expand_path(cache_root + "/current/spinel")
   return provisioned if File.executable?(provisioned)
+  sibling = File.expand_path("../../spinel/spinel", __dir__)
+  if File.executable?(sibling)
+    warn "tep: using SIBLING spinel checkout #{sibling} (no pinned engine found; "          "if this tree is mid-rebuild the binary may miscompile silently -- "          "prefer `spinel-compat install-engine` or SPINEL=)"
+    return sibling
+  end
   "spinel"
 end
 SPINEL = locate_spinel
@@ -1411,6 +1418,25 @@ def handle_top_call(node, routes, websockets, mcp_tools, mcp_resources, filters,
       end
       return
     end
+    # spinel_kit is tep's one REAL dependency (tep#217: the hand-copy is
+    # gone). Splice the required file from the dependency's checkout/gem
+    # (spinel_kit_roots) exactly like the pg opt-in above -- the historical
+    # "plain require is dropped" rule below predates spinel having a load
+    # path, and silently dropping this one cost a debugging day (session
+    # cookies came back empty because SpinelKit::Url never existed in the
+    # compiled app).
+    sk_arg = node.arguments&.arguments&.first
+    if sk_arg.is_a?(Prism::StringNode) &&
+       (sk_arg.unescaped == "spinel_kit" || sk_arg.unescaped.start_with?("spinel_kit/"))
+      rel = sk_arg.unescaped
+      skpath = spinel_kit_roots.map { |r| File.join(r, rel + ".rb") }.find { |p| File.file?(p) }
+      fatal "require #{rel.inspect}: not found under spinel_kit roots (#{spinel_kit_roots.join(', ')})" unless skpath
+      if inlined_seen && !inlined_seen[skpath]
+        passthrough << "# --- inlined dependency require #{rel.inspect} (spinel_kit) ---"
+        passthrough << inline_require_relative_tree(skpath, inlined_seen, warnings)
+      end
+      return
+    end
     # tep's own library is inlined wholesale (see inlined_tep_library), so
     # `require_relative "tep"` / "tep/..." is a no-op. A plain `require
     # "gem"` (by name) is dropped -- spinel has no gem load path. But an
@@ -1960,21 +1986,36 @@ end
 # separate placeholder is needed.
 def inlined_tep_library
   loaded = []
+  dep_requires = []
   visit  = lambda do |abs_path|
     return if loaded.any? { |l| l[:path] == abs_path }
     text = File.read(abs_path)
     deps = []
     body = text.lines.reject do |line|
       m = line.match(/^\s*require_relative\s+"([^"]+)"/)
-      next false unless m
-      deps << File.expand_path(m[1] + ".rb", File.dirname(abs_path))
-      true
+      if m
+        deps << File.expand_path(m[1] + ".rb", File.dirname(abs_path))
+        next true
+      end
+      # HOIST plain dependency requires (spinel_kit, tep#217): spinel's
+      # require splice is not order-independent -- a call site compiled
+      # BEFORE the spliced definition silently yields wrong values (0 /
+      # empty), which broke session cookies. Collect them here and emit
+      # once at the very top of the combined source.
+      pm = line.match(/^\s*require\s+"(spinel_kit(?:\/[^"]+)?)"/)
+      if pm
+        dep_requires << pm[1]
+        next true
+      end
+      false
     end.join
     deps.each { |d| visit.call(d) }
     loaded << { path: abs_path, body: body }
   end
   visit.call(File.join(LIB_DIR, "tep.rb"))
-  combined = loaded.map { |l| "# --- inlined: " + relative_to_lib(l[:path]) + " ---\n" + l[:body] }.join("\n")
+  header = dep_requires.uniq.map { |r| "require \"#{r}\"" }.join("\n")
+  header += "\n" unless header.empty?
+  combined = header + loaded.map { |l| "# --- inlined: " + relative_to_lib(l[:path]) + " ---\n" + l[:body] }.join("\n")
   # Resolve the @TEP_*@ placeholders from spinel-ext.json (the single
   # source of truth) rather than a hardcoded list. Same env-first
   # behavior as before -- the Makefile exports TEP_SPHTTP_O /
@@ -1984,6 +2025,28 @@ def inlined_tep_library
     combined = combined.gsub(placeholder, value)
   end
   combined
+end
+
+# spinel_kit is a REAL dependency post tep#217 (the hand-copy is gone):
+# tep source says `require "spinel_kit/url"` etc., which the inliner does
+# NOT splice (it only follows require_relative within tep). The compiled
+# app therefore needs spinel_kit's source on spinel's -I path. Resolution
+# order: SPINELKIT_DIR (dev checkout; spin-shaped root or gem lib/), the
+# installed gem (honoring its require_paths), else FAIL LOUD -- a missing
+# root would otherwise compile with the module silently absent (spinel
+# without the require gate warns and continues; that silence cost a day).
+def spinel_kit_roots
+  if (dir = ENV["SPINELKIT_DIR"]) && !dir.empty?
+    root = File.exist?(File.join(dir, "spinel_kit.rb")) ? dir : File.join(dir, "lib")
+    return [root] if File.exist?(File.join(root, "spinel_kit.rb")) || Dir.exist?(File.join(root, "spinel_kit"))
+    fatal "SPINELKIT_DIR=#{dir} has no spinel_kit require root"
+  end
+  begin
+    spec = Gem::Specification.find_by_name("spinel_kit")
+    return spec.require_paths.map { |rp| File.join(spec.gem_dir, rp) }
+  rescue Gem::LoadError
+    fatal "spinel_kit not found: set SPINELKIT_DIR to a checkout or `gem install spinel_kit` (>= 0.3.0 preferred; tep#217)"
+  end
 end
 
 # Build the {@TEP_*@ => value} substitution dict from spinel-ext.json
@@ -2235,8 +2298,10 @@ def cmd_build(args)
   File.write(rb_path, translated)
 
   spinel_args = [SPINEL, rb_path, "-o", out_path]
+  spinel_kit_roots.each { |r| spinel_args << "-I" << r }
   spinel_args << "-c" if c_only
   warn "tep: building -> #{out_path}" unless ENV["TEP_QUIET"]
+  warn "tep: spinel argv: #{spinel_args.inspect}" if ENV["TEP_DEBUG"]
   unless system(*spinel_args)
     fatal "spinel failed; translated source kept at #{rb_path}"
   end
