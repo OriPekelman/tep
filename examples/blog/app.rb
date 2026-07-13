@@ -332,6 +332,7 @@ end
 post '/api/posts' do
   res.headers["Content-Type"] = "application/json"
   auth = req.req_headers["authorization"]
+  auth = "" if auth.nil?     # missing header reads as nil (tep#235)
   bearer = ""
   if auth.length > 7 && auth[0, 7] == "Bearer "
     bearer = auth[7, auth.length - 7]

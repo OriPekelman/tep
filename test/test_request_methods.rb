@@ -24,7 +24,13 @@ class TestRequestMethods < TepTest
     end
 
     get '/accept-and-ct' do
-      "accept=" + request.accept + " ct=" + request.content_type
+      # Absent headers read as nil through the Rack-parity accessors
+      # (sinatra too) -- guard before concatenation.
+      a = request.accept
+      a = "" if a.nil?
+      ct = request.content_type
+      ct = "" if ct.nil?
+      "accept=" + a + " ct=" + ct
     end
   RB
 

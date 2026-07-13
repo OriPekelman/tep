@@ -12,7 +12,9 @@ class TestMCP < TepTest
     # paths -- we just override req.identity with a synthetic one
     # so req.identity.may?(:admin) returns true on demand.
     before do
-      if req.req_headers["x-test-cap-admin"].length > 0
+      cap = req.req_headers["x-test-cap-admin"]
+      cap = "" if cap.nil?
+      if cap.length > 0
         req.identity = Tep::Identity.new(
           "user:42", nil, [:admin])
       end

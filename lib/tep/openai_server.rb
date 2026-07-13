@@ -141,7 +141,10 @@ module Tep
         def self.serve!(events_jsonl = "")
           events = Tep::Events.new(events_jsonl)
           Tep::APP.set_openai_events(events)
+          # ENV[] reads nil for an unset variable (CRuby semantics) --
+          # guard before String calls (same class as tep#235).
           host = ENV["HOSTNAME"]
+          host = "" if host.nil?
           if host.length == 0
             host = "tep"
           end

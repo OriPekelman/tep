@@ -190,6 +190,16 @@ module PG
       @last_sqlstate = ""
       @last_error_message = ""
       @last_result_rh = -1
+      # Never-connected sentinel: PG::Connection.new("") is the
+      # type-seeding shape (see the _tep_seed_pg_* block). Exec on a
+      # seed conn returns the empty-Result sentinel instead of
+      # raising -- a REAL failed connect (non-empty conninfo) still
+      # raises PG::UnableToSend on first exec, per the documented
+      # non-raising-connect / raising-exec contract.
+      @seed_conn = false
+      if opts.is_a?(String) && opts.length == 0
+        @seed_conn = true
+      end
       if opts.is_a?(String)
         if Tep::Scheduler.scheduled_context?
           h = Connection.async_connect(opts)
@@ -382,6 +392,9 @@ module PG
       Pg.tep_pg_set_nonblocking(@pgh, 1)
       ok = Pg.tep_pg_send_query(@pgh, sql)
       if ok != 1
+        if @seed_conn
+          return PG::Result.new(-1)
+        end
         Connection.raise_send_failure(self)
       end
       Connection.drain_send(@pgh)
@@ -421,6 +434,9 @@ module PG
       Pg.tep_pg_set_nonblocking(@pgh, 1)
       ok = Pg.tep_pg_send_query_params(@pgh, sql)
       if ok != 1
+        if @seed_conn
+          return PG::Result.new(-1)
+        end
         Connection.raise_send_failure(self)
       end
       Connection.drain_send(@pgh)

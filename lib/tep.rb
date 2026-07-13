@@ -129,6 +129,28 @@ module Tep
     h
   end
 
+  # Read a request cookie. A missing cookie reads as "" -- that is the
+  # documented `cookies["k"]` DSL contract (test_cookies pins it) --
+  # while the underlying hash reads nil for a missing key. bin/tep
+  # rewrites `cookies[k]` reads to this call.
+  def self.cookie(req, k)
+    v = req.cookies[k]
+    v = "" if v.nil?
+    v
+  end
+
+  # Read a request param. A missing param reads as "" -- tep's
+  # documented `params[k]` DSL contract (test_params pins it; a
+  # deliberate divergence from sinatra's nil, ledgered in
+  # docs/mirrors/sinatra.md). bin/tep rewrites `params[k]` reads to
+  # this call; direct `req.params[...]` access keeps raw Hash
+  # semantics (nil on miss).
+  def self.param(req, k)
+    v = req.params[k]
+    v = "" if v.nil?
+    v
+  end
+
   # str_find -- naive substring search returning the int position of
   # `needle` in `s` starting from `start`, or -1 if not found.
   #

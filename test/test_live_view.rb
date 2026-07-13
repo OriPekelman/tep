@@ -18,8 +18,10 @@ class TestLiveView < TepTest
       end
       def mount(req)
         # Pull a seed value from the request's params if present;
-        # otherwise leave at 0.
+        # otherwise leave at 0. A missing param reads as nil
+        # (sinatra-parity) -- guard before String calls.
         seed = req.params["seed"]
+        seed = "" if seed.nil?
         if seed.length > 0
           @count = seed.to_i
         end

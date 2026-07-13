@@ -19,8 +19,8 @@ jobs:
   # non-blocking "spinel master canary" job can restore the early-warning
   # without gating the suite.)
   #
-  # The `spinel` shell wrapper resolves spinel_parse / spinel_analyze /
-  # spinel_codegen / lib/ relative to its own directory, so the tree
+  # The unified bin/spinel resolves its runtime (lib/) and the bundled
+  # stdlib packages/ relative to its own directory, so the staged tree
   # ships as a unit.
   build-spinel:
     runs-on: ubuntu-latest
@@ -37,15 +37,16 @@ jobs:
       - name: make all
         run: make -C spinel-src all
       - name: Stage artifact tree
+        # Unified layout (post spinelc->spinel refactor): one binary at
+        # bin/spinel resolving its runtime at bin/../lib, plus the
+        # bundled stdlib packages/ beside it. No root wrapper is staged
+        # (artifacts don't preserve symlinks); consumers put
+        # spinel-dist/bin on PATH.
         run: |
-          mkdir spinel-dist
-          cp spinel-src/spinel             spinel-dist/
-          cp spinel-src/spinel_parse       spinel-dist/
-          cp spinel-src/spinel_analyze     spinel-dist/
-          cp spinel-src/spinel_codegen     spinel-dist/
-          cp spinel-src/spinel_analyze.rb  spinel-dist/
-          cp spinel-src/spinel_codegen.rb  spinel-dist/
-          cp -R spinel-src/lib             spinel-dist/lib
+          mkdir -p spinel-dist/bin
+          cp spinel-src/bin/spinel spinel-dist/bin/
+          cp -R spinel-src/lib      spinel-dist/lib
+          cp -R spinel-src/packages spinel-dist/packages
       - name: Upload spinel toolchain
         uses: actions/upload-artifact@v7
         with:
@@ -77,11 +78,8 @@ jobs:
           path: spinel-dist
       - name: Restore exec bits and put spinel on PATH
         run: |
-          chmod +x spinel-dist/spinel \
-                   spinel-dist/spinel_parse \
-                   spinel-dist/spinel_analyze \
-                   spinel-dist/spinel_codegen
-          echo "$GITHUB_WORKSPACE/spinel-dist" >> "$GITHUB_PATH"
+          chmod +x spinel-dist/bin/spinel
+          echo "$GITHUB_WORKSPACE/spinel-dist/bin" >> "$GITHUB_PATH"
       - name: make all
         run: make all
       - name: rake rbs:validate
@@ -115,10 +113,7 @@ jobs:
           path: spinel-dist
       - name: Restore exec bits and put spinel on PATH
         run: |
-          chmod +x spinel-dist/spinel \
-                   spinel-dist/spinel_parse \
-                   spinel-dist/spinel_analyze \
-                   spinel-dist/spinel_codegen
-          echo "$GITHUB_WORKSPACE/spinel-dist" >> "$GITHUB_PATH"
+          chmod +x spinel-dist/bin/spinel
+          echo "$GITHUB_WORKSPACE/spinel-dist/bin" >> "$GITHUB_PATH"
       - name: Run differential oracle
         run: bundle exec ruby test/differential/runner.rb

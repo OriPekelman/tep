@@ -1615,8 +1615,12 @@ def rewrite_block(src, force_string: true)
   # `headers["X"] = "y"` -> `res.headers[...]` when not already qualified
   s = s.gsub(/(?<![\w.])headers\[/, "res.headers[")
 
-  # `cookies["k"]` -> `req.cookies["k"]` when not already qualified
-  s = s.gsub(/(?<![\w.])cookies\[/, "req.cookies[")
+  # `cookies["k"] = v` (write) -> direct hash write; `cookies["k"]`
+  # (read) -> Tep.cookie(req, "k"), which nil-guards the miss: the
+  # documented cookies[] contract is ""-on-miss (test_cookies pins
+  # it), but the underlying hash reads nil for a missing key.
+  s = s.gsub(/(?<![\w.])cookies\[([^\]]*)\]\s*=(?![=~])/, 'req.cookies[\1] =')
+  s = s.gsub(/(?<![\w.])cookies\[([^\]]*)\]/, 'Tep.cookie(req, \1)')
 
   # `erb :name`              -> `tep_view_name(Tep.str_hash, req.ivars)`
   # `erb :name, locals: {a: "b", c: "d"}` -> build a String=>String
@@ -1715,6 +1719,12 @@ def rewrite_block(src, force_string: true)
   # Spinel doesn't poly-convert symbols to strings inside Hash[]; rewrite
   # to string keys.
   s = s.gsub(/(req\.params)\[:(\w+)\]/, '\1["\2"]')
+
+  # Read form -> Tep.param(req, k), which nil-guards the miss: tep's
+  # documented params[] contract is ""-on-miss (test_params pins it;
+  # ledgered as a sinatra divergence -- sinatra reads nil). Writes
+  # (assignment) stay direct hash writes.
+  s = s.gsub(/req\.params\[([^\]]*)\](?!\s*=[^=~])/, 'Tep.param(req, \1)')
 
   # `"#{params['x']}"` interpolation works fine after the params rewrite.
 

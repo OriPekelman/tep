@@ -84,12 +84,16 @@ module Tep
     # if the session has no identity (no prior #set call, or after
     # #clear) or the stored identity is expired.
     def self.try(req)
+      # Session#get on a missing key reads as nil (sinatra-parity Hash
+      # semantics; same class as tep#235) -- guard before String calls.
       sub = req.session.get("identity_sub")
+      sub = "" if sub.nil?
       if sub.length == 0
         return nil
       end
 
       exp_str = req.session.get("identity_exp")
+      exp_str = "" if exp_str.nil?
       if exp_str.length > 0
         exp = exp_str.to_i
         if exp > 0 && Time.now.to_i >= exp
@@ -98,9 +102,11 @@ module Tep
       end
 
       caps_str = req.session.get("identity_caps")
+      caps_str = "" if caps_str.nil?
       caps = Tep::AuthBearerToken.parse_caps(caps_str)
 
       delegate_str = req.session.get("identity_delegate")
+      delegate_str = "" if delegate_str.nil?
       delegation = Tep::AuthBearerToken.parse_delegate(delegate_str)
 
       Tep::Identity.new(sub, delegation, caps)

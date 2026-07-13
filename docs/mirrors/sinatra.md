@@ -45,6 +45,9 @@ translator's warn-inventory + code:
 | splat `*` | last-segment only (sinatra spans segments: `/files/a/b` matches `/files/*` there, 404s here); splat *value* not exposed (sinatra: `params['splat']` array) | **oracle-pinned** (runner L5 `diverge:` assertion) |
 | regex routes | ≤9 captures → `params["1".."9"]` (sinatra: `params['captures']` / block args); tep also accepts `^`/`$`-anchored regexes that sinatra's mustermann *rejects at boot* — anchor-free is the portable form | narrowing + anchor asymmetry, documented (runner L6) |
 | sessions | signed-cookie store only | narrowing, documented |
+| `params[k]` on a missing key | `""` (test_params pins it; the translator routes DSL reads through `Tep.param`) — sinatra reads nil | deliberate divergence, documented |
+| `session[k]` on a missing key | `""` (test_sessions pins it; `Session#get` guards the miss) — sinatra reads nil | deliberate divergence, documented |
+| `cookies[k]` on a missing cookie | `""` (test_cookies pins it; DSL reads route through `Tep.cookie`) — sinatra-contrib reads nil | deliberate divergence, documented |
 | `error do ... end` blocks, route conditions (`provides:`, `agent:`), `register`/extensions | not claimed | mostly unresolved at compile; not individually diagnosed |
 | unrecognized top-level calls | — | ⚠️ warn + **ignored** |
 
