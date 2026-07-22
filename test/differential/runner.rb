@@ -145,16 +145,16 @@ end
 # the same request script against each.
 class DifferentialCase < Minitest::Test
   FIXTURES = {
-    File.expand_path("../real_world/01_simple.rb", __dir__) => [
+    File.expand_path("../cruby/real_world/01_simple.rb", __dir__) => [
       ["GET", "/"],
     ],
-    File.expand_path("../real_world/04_health_api.rb", __dir__) => [
+    File.expand_path("../cruby/real_world/04_health_api.rb", __dir__) => [
       ["GET", "/healthz"],
       ["GET", "/version"],
       ["GET", "/"],
       ["GET", "/missing"],          # custom not_found on both
     ],
-    File.expand_path("../real_world/05_todo_api.rb", __dir__) => [
+    File.expand_path("../cruby/real_world/05_todo_api.rb", __dir__) => [
       ["GET", "/todos"],
       ["POST", "/todos", { body: "text=buy-milk" }],
       ["POST", "/todos", { body: "text=ship-tep" }],
