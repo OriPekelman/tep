@@ -17,3 +17,33 @@ version = "0.11.6"
 
 [dependencies]
 spinel_kit = { git = "https://github.com/OriPekelman/spinelkit" }
+
+[features]
+# sqlite / pg are OPT-IN: their FFI decls live in tep/sqlite.rb + tep/pg.rb,
+# which a consumer must `require` — the require gate keeps unrequired
+# surfaces out of the compile, so features only gate the NATIVE objects.
+default = []
+sqlite = []
+pg = []
+
+# --- sphttp: core HTTP shim — carried-C (tep/sphttp.c), no entry needed. ----
+# openssl resolves from system headers; link flags ride tep/net.rb ffi_lib.
+
+# --- sqlite: optional, feature-gated ----------------------------------------
+[[build]]
+features  = ["sqlite"]
+workdir   = "native/sqlite"
+command   = "cc -O2 -fPIC $(pkg-config --cflags sqlite3 2>/dev/null) -c tep_sqlite.c -o tep_sqlite.o"
+artifacts = ["tep_sqlite.o"]
+
+# --- pg: optional, feature-gated ---------------------------------------------
+[[build]]
+features  = ["pg"]
+workdir   = "native/pg"
+command   = "cc -O2 -fPIC $(pkg-config --cflags libpq) -c tep_pg.c -o tep_pg.o"
+artifacts = ["tep_pg.o"]
+
+# Feature-skipped artifacts drop out of the link silently (by design):
+# exactly the entries whose feature is on contribute their object.
+[native]
+libs = ["${build.out}/tep_sqlite.o", "${build.out}/tep_pg.o"]

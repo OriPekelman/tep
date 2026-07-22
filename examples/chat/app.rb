@@ -13,7 +13,7 @@
 #   - Presence             heartbeat table refreshed via POST every
 #                          few seconds; `who` query lists rows touched
 #                          in the last 30 s
-#   - SpinelKit::Json            wire format for the SSE event payloads
+#   - Tep::Json            wire format for the SSE event payloads
 #                          and the /who endpoint
 #   - SpinelKit::Log          per-connection trace
 #   - Tep::Security        CORS + secure-headers
@@ -138,7 +138,7 @@ post '/chat/send' do
   db.close
 
   LOGGER.info("send id=" + id.to_s + " by " + author + ": " + body)
-  "{" + SpinelKit::Json.encode_pair_int("id", id) + "}"
+  "{" + Tep::Json.encode_pair_int("id", id) + "}"
 end
 
 post '/chat/heartbeat' do
@@ -175,8 +175,8 @@ get '/chat/who' do
     end
     first = false
     out = out + "{" +
-      SpinelKit::Json.encode_pair_str("user", db.col_str(0)) + "," +
-      SpinelKit::Json.encode_pair_int("last_seen", db.col_int(1)) + "}"
+      Tep::Json.encode_pair_str("user", db.col_str(0)) + "," +
+      Tep::Json.encode_pair_int("last_seen", db.col_int(1)) + "}"
   end
   db.finalize
   db.close
@@ -200,9 +200,9 @@ get '/chat/recent' do
     end
     first = false
     out = out + "{" +
-      SpinelKit::Json.encode_pair_int("id", db.col_int(0)) + "," +
-      SpinelKit::Json.encode_pair_str("author", db.col_str(1)) + "," +
-      SpinelKit::Json.encode_pair_str("body",   db.col_str(2)) + "}"
+      Tep::Json.encode_pair_int("id", db.col_int(0)) + "," +
+      Tep::Json.encode_pair_str("author", db.col_str(1)) + "," +
+      Tep::Json.encode_pair_str("body",   db.col_str(2)) + "}"
   end
   db.finalize
   db.close
@@ -245,9 +245,9 @@ class ChatStreamer < Tep::Streamer
         author = db.col_str(1)
         body   = db.col_str(2)
         line = "data: {" +
-          SpinelKit::Json.encode_pair_int("id", id) + "," +
-          SpinelKit::Json.encode_pair_str("author", author) + "," +
-          SpinelKit::Json.encode_pair_str("body",   body) + "}\n\n"
+          Tep::Json.encode_pair_int("id", id) + "," +
+          Tep::Json.encode_pair_str("author", author) + "," +
+          Tep::Json.encode_pair_str("body",   body) + "}\n\n"
         out.write(line)
         if id > last_id
           last_id = id

@@ -72,6 +72,10 @@ jobs:
         with:
           ruby-version: "4.0"
           bundler-cache: true   # installs Gemfile (rake / minitest / rbs)
+      # `make all` runs bin/tep OUTSIDE bundler, where only the plain gem
+      # env is visible -- the Gemfile copy covers `bundle exec` contexts.
+      - name: Install spinel_kit (tep#217 runtime dep)
+        run: gem install spinel_kit
       - uses: actions/download-artifact@v7
         with:
           name: spinel-dist

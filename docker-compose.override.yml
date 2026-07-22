@@ -1,0 +1,19 @@
+# gx10-LOCAL override (gitignored, auto-loaded by `docker compose`).
+#
+# Point the dev container's /spinel at a PINNED, ISOLATED spinel toolchain
+# instead of the live ../spinel dev checkout. On this box a lot of spinel
+# development happens in ~/sites/spinel (it floats on master / feature
+# branches), so building tep against it means the two keep stepping on each
+# other -- and master currently regresses tep's compile (spawn_fiber -> poly,
+# matz/spinel #196). This pins tep's build to SPINEL_PIN (f6d5eef), built
+# once into /srv/data/scratch/tep-spinel, fully decoupled from dev work.
+#
+# Maintenance: the dir is a normal spinel clone (origin = matz/spinel) parked
+# at the pin. After a SPINEL_PIN bump, refresh it with:
+#   TEP_SPINEL_DIR=/srv/data/scratch/tep-spinel \
+#     TEP_SKIP_SPINEL_FRESH= bash tools/spinel-fresh.sh
+# (checks out the new pin + rebuilds analyze/codegen if stale).
+services:
+  dev:
+    volumes:
+      - /srv/data/scratch/tep-spinel:/spinel

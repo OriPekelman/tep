@@ -1,7 +1,7 @@
 # Build artefacts -- the C helper, compiled examples, and translator
 # scratch files all live alongside the sources but never want to be
 # checked in.
-lib/tep/*.o
+tep/*.o
 examples/hello
 examples/sinatra_style
 examples/websocket_echo
@@ -13,9 +13,9 @@ bench/pg_bench
 bench/pg_pool_bench
 bench/.*.tep.rb
 bench/Gemfile.lock
-test/real_world/0[0-9]_*
-test/real_world/.*.tep.rb
-!test/real_world/0[0-9]_*.rb
+test/cruby/real_world/0[0-9]_*
+test/cruby/real_world/.*.tep.rb
+!test/cruby/real_world/0[0-9]_*.rb
 
 # `bin/tep run app.rb` drops a binary at the repo root.
 tep-run-bin

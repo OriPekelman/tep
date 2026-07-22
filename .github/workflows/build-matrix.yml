@@ -96,6 +96,13 @@ jobs:
           echo "$rbin"            >> "$GITHUB_PATH"
           "$rbin/ruby" --version
 
+      # All legs: bin/tep build runs outside bundler and resolves its
+      # spinel_kit runtime dep (tep#217) from the plain gem env. On the
+      # gx10 leg this lands in the rv user-space Ruby (no sudo needed);
+      # idempotent everywhere.
+      - name: Install spinel_kit (tep#217 runtime dep)
+        run: gem install spinel_kit
+
       - name: Build Spinel at SPINEL_PIN
         run: |
           pin="$(head -1 SPINEL_PIN | tr -d '[:space:]')"
