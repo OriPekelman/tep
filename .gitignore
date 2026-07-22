@@ -1,7 +1,7 @@
 # Build artefacts -- the C helper, compiled examples, and translator
 # scratch files all live alongside the sources but never want to be
 # checked in.
-lib/tep/*.o
+tep/*.o
 examples/hello
 examples/sinatra_style
 examples/websocket_echo
