@@ -81,10 +81,10 @@ helper: spinel-fresh $(LIB_DIR)/sphttp.o $(LIB_DIR)/tep_sqlite.o $(LIB_DIR)/tep_
 $(LIB_DIR)/sphttp.o: $(LIB_DIR)/sphttp.c
 	cc -O2 -c $(TEP_SPHTTP_CFLAGS) $< -o $@
 
-$(LIB_DIR)/tep_sqlite.o: $(LIB_DIR)/tep_sqlite.c
+$(LIB_DIR)/tep_sqlite.o: $(TEP_ROOT)/native/sqlite/tep_sqlite.c
 	cc -O2 -c $< -o $@
 
-$(LIB_DIR)/tep_pg.o: $(LIB_DIR)/tep_pg.c
+$(LIB_DIR)/tep_pg.o: $(TEP_ROOT)/native/pg/tep_pg.c
 	cc -O2 -c $(TEP_PG_CFLAGS) $< -o $@
 
 hello: helper
