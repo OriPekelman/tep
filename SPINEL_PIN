@@ -1,4 +1,27 @@
-f6d5eef
+fd87f45b
+
+# fd87f45b (2026-07-12). Bumped from f6d5eef (+~2100) onto current master
+# after the last two blockers landed upstream (tep#196):
+#   - matz/spinel#1842 (fe955423): analyzer infer_call/infer_type blowup
+#     from the explicit-receiver Kernel-conversion arm -- tep whole-
+#     programs compile again (hello: 8s at tip vs non-terminating).
+#   - matz/spinel#1866 (b4f4da70): SIGSEGV in sp_bigint_cmp -- an early
+#     `return 0` literal emitted through a bigint-promoted return slot
+#     (NULL pointer); killed Tep::Proxy's retry-after-503 path. Proxy
+#     repro verified green at this pin (200/200, worker alive).
+# BUILD-LAYOUT NOTE: this pin has the unified `bin/spinel` (no more
+# spinel_parse/spinel_analyze/spinel_codegen or .rb drivers; the root
+# `spinel` is a make-created symlink to bin/spinel). tools/
+# spinel-fresh.sh + ci.yml staging updated to match in the same PR.
+# Workaround status at this pin (probed 2026-07-12):
+#   - `x || ""` hit-value blanking: FIXED (probe green); the explicit
+#     nil-guard idiom in lib/ stays -- it is equally correct and the
+#     ||-form gains nothing.
+#   - pg_hello `e.is_a?(PG::Error)` namespaced-exception rescue: STILL
+#     unsupported (`is_a?` on rescued local, probe fails identically);
+#     the hardcoded stub stays. Tracked in tep#196 notes.
+#   - PG::Pool#with typed yield (tep#189): deferral kept, pending its
+#     own verification pass.
 
 # f6d5eef (2026-06-03). Bumped from a782696 (+32) onto current master to
 # absorb the spinel-dev tooling surfaces + codegen fixes:

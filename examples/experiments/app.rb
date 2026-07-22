@@ -218,7 +218,9 @@ end
 # baked in. Here, accept an X-Demo-Cap-Run header as the
 # capability source so humans can drive the demo with curl.
 before do
-  if req.req_headers["x-demo-cap-run"].length > 0
+  cap = req.req_headers["x-demo-cap-run"]
+  cap = "" if cap.nil?     # missing header reads as nil (tep#235)
+  if cap.length > 0
     req.identity = Tep::Identity.new(
       "user:demo", nil, [:run_experiments])
   end

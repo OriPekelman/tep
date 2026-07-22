@@ -24,7 +24,15 @@ module Tep
     # exposes only named methods; the translator rewrites
     # `session[k] = v` to `session.set(k, v)` and `session[k]` to
     # `session.get(k)` for source compatibility with Sinatra.
-    def get(k);    @data[k];                          end
+    # A missing key reads as "" -- the documented `session[k]` DSL
+    # contract (test_sessions pins it; a deliberate divergence from
+    # sinatra's nil-on-miss, ledgered in docs/mirrors/sinatra.md).
+    # The raw @data hash reads nil for a miss.
+    def get(k)
+      v = @data[k]
+      v = "" if v.nil?
+      v
+    end
     def set(k, v); @data[k] = v; @dirty = true;       end
     def has?(k);   @data.key?(k);                     end
     def length;    @data.length;                      end

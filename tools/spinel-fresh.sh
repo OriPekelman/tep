@@ -88,27 +88,21 @@ else
     fi
 fi
 
-# Rebuild the analyze + codegen binaries if either source is newer
-# than its built artifact, OR an artifact is missing. Skip when
-# up-to-date so this script stays cheap on the fast path (`make test`
-# after a no-op fetch).
-#
-# BOTH stages must track the checked-out commit. The `spinel` wrapper
-# prefers the compiled spinel_analyze / spinel_codegen over the .rb
-# fallbacks, so refreshing only codegen silently pairs a new codegen
-# with a stale analyzer -- old type inference + new emission. That
-# mismatch produces subtly broken code (e.g. a stale analyzer that
-# predates a method's return-type support types the result as mrb_int,
-# and the new codegen then emits pointer accessors against an int
-# slot). Rebuild them together so the pair always matches.
-need_rebuild=0
-for stage in spinel_analyze spinel_codegen; do
-    if [ ! -x "$stage" ] || [ "$stage.rb" -nt "$stage" ]; then
-        need_rebuild=1
-    fi
+# Rebuild spinel if the checked-out tree is newer than the built
+# binary. Since the unified-build refactor there is one artifact --
+# bin/spinel (the root `spinel` is a make-created symlink to it) --
+# so a plain incremental `make` keeps the binary tracking the
+# checkout; a no-op make is cheap on the fast path. Cross-era
+# checkouts (old wrapper layout <-> unified) can leave stale
+# generated files behind, so clear the known old-layout artifacts
+# before building.
+for stale in spinel_parse spinel_analyze spinel_codegen; do
+    [ -f "$stale" ] && rm -f "$stale"
 done
-
-if [ "$need_rebuild" = "1" ]; then
-    echo "tep: rebuilding spinel_analyze + spinel_codegen (slow -- CRuby bootstrap, ~5min)..." >&2
-    make -j8 spinel_analyze spinel_codegen >&2
+if [ -f spinel ] && [ ! -L spinel ]; then
+    rm -f spinel     # old-layout root wrapper; make recreates the symlink
 fi
+if [ ! -x bin/spinel ]; then
+    echo "tep: building spinel (bin/spinel missing -- full build, ~5min)..." >&2
+fi
+make -j"$(nproc)" >&2

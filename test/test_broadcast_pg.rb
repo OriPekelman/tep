@@ -111,8 +111,12 @@ class TestBroadcastPg < TepTest
   end
 
   def test_poll_returns_zero_on_timeout
-    # With no preceding publish + no other publisher on the channel,
-    # poll should time out cleanly.
+    # Test order is randomized and the LISTEN channel is shared:
+    # another test's publish can leave an unconsumed NOTIFY queued.
+    # Drain first, then assert a clean timeout.
+    5.times do
+      break if get("/poll?timeout=50").body == "0"
+    end
     res = get("/poll?timeout=100")
     assert_equal "0", res.body
   end
