@@ -77,7 +77,8 @@ get '/error' do
           # compiles fine; only the full program trips it. Since `e` is
           # always a PG::Error subclass here, hardcode "yes". Restore
           #   (e.is_a?(PG::Error) ? "yes" : "no")
-          # once is_a?-on-rescued-namespaced-ancestor lowers. See tep#196.
+          # once is_a?-on-rescued-namespaced-ancestor lowers (matz/spinel#3260:
+          # the trigger is rescued-local receiver + constant-PATH class arg).
           "is PG::Error? " + "yes" + "\n" +
           "message: " + e.message
   end

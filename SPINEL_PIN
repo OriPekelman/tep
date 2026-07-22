@@ -19,7 +19,7 @@ fd87f45b
 #     ||-form gains nothing.
 #   - pg_hello `e.is_a?(PG::Error)` namespaced-exception rescue: STILL
 #     unsupported (`is_a?` on rescued local, probe fails identically);
-#     the hardcoded stub stays. Tracked in tep#196 notes.
+#     the hardcoded stub stays. FILED upstream: matz/spinel#3260
 #   - PG::Pool#with typed yield (tep#189): deferral kept, pending its
 #     own verification pass.
 
