@@ -164,7 +164,7 @@ clean:
 	rm -f examples/hello examples/sinatra_style examples/diag
 	rm -f examples/.*.tep.rb
 	rm -f bench/hello_bench bench/api_bench bench/.*.tep.rb
-	rm -f test/real_world/.*.tep.rb
-	# Compiled binaries in test/real_world/ have no extension; sources
-	# are .rb. Find executables and remove only those.
-	@find test/real_world -maxdepth 1 -type f -perm -u+x ! -name '*.rb' -delete 2>/dev/null || true
+	rm -f test/cruby/real_world/.*.tep.rb
+	# Compiled binaries in test/cruby/real_world/ have no extension;
+	# sources are .rb. Find executables and remove only those.
+	@find test/cruby/real_world -maxdepth 1 -type f -perm -u+x ! -name '*.rb' -delete 2>/dev/null || true
