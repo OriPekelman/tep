@@ -12,3 +12,7 @@ gem "sinatra"
 gem "rackup"
 gem "puma"
 gem "minitest"
+
+# The runner spawns bin/tep under this bundle; bin/tep needs its
+# spinel_kit runtime dep (tep#217) visible inside the bundler env.
+gem "spinel_kit", ">= 0.3.0"
