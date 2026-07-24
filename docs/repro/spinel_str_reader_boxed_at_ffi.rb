@@ -1,9 +1,10 @@
-# spinel repro: String reader result arrives BOXED (sp_RbVal) at an FFI :str
-# arg / const char* slot. Regression fd87f45b (clean) -> 2026-07 masters
-# (invalid C); residual of the matz/spinel#3256 family — the ddmin'd hash-set
-# repro there was fixed by ecac633c, but full tep apps (maidenhead, geohash)
-# still fail with this shape at other sites. Reduced by spinel-reduce from
-# the 10.4k-line maidenhead example translation; 303 lines all load-bearing.
+# spinel repro: String reader result arrives BOXED (sp_RbVal) at FFI :str /
+# const char* slots. NOT a regression: reproduces identically at fd87f45b
+# (2026-07-12) AND 2026-07 masters (76cfd099) — a LATENT miscompile that
+# tep's examples/maidenhead + examples/geohash builds hit; their suite
+# tests skip in CI (spinelgems absent), which previously masked it.
+# Reduced from the 10.4k-line maidenhead translation; two-sided-verified,
+# ruby -c clean, all names defined (no analysis-stop artifacts).
 module Tep
   module Multipart
     def self.parse(body, content_type)
@@ -106,6 +107,8 @@ end
         sfd = Sock.sphttp_listen(port, workers > 1 ? 1 : 0)
         if sfd < 0
         end
+        timeout_seconds = 5
+        buf = ""
         deadline = Time.now.to_i + timeout_seconds
         while buf.length < MAX_REQUEST_BYTES
         end
@@ -190,11 +193,9 @@ end
         while i < attempt
         end
       end
-      while attempt < policy.max_attempts
-        if attempt < policy.max_attempts
-        end
-      end
-      def initialize
+      def initialize(blob = "")
+        line = ""
+        rest = ""
         eol = Tep.str_find(blob, "\r\n", 0)
         sp1 = Tep.str_find(line, " ", 0)
         if sp1 >= 0
@@ -204,6 +205,7 @@ end
         end
         pos = eol + 2
         while pos < blob.length
+          neol = ""
           stop = neol
           if stop < 0
           end
@@ -306,4 +308,8 @@ end
 __i = 0
 while __i < ARGV.length
 end
+__port = 4567
+__workers = 1
+__quiet = true
+__scheduled = false
 Tep.run!(__port, __workers, __quiet, __scheduled)
