@@ -1,4 +1,33 @@
-fd87f45b
+85abddd2
+
+# 85abddd2 (2026-07-25). Bumped from fd87f45b (+~800) onto current master
+# to absorb five fixes for issues we filed 2026-07-22..25 (every one
+# closed same-day upstream; all verified with our repros at this commit):
+#   - matz/spinel#3260 (8cb8161d): is_a? on a RESCUED local with a
+#     constant-PATH class argument. REVERTED here: pg_hello's
+#     hardcoded-"yes" stub and test_pg's two nested-rescue hierarchy
+#     proofs are real `e.is_a?(PG::Error)` checks again.
+#   - matz/spinel#3256 (ecac633c): boxed sp_RbVal into a str/str
+#     hash-set slot ([]=-in-value-position with untyped rhs).
+#   - matz/spinel#3328 (2b387bec): Integer#chr hex-digit emit went
+#     wrong at 12a385ab (%3D -> %56) — blanked every session/cookie
+#     value; blocked the first bump attempt (76cfd099, parked).
+#   - matz/spinel#3330 (a2074cba): String-reader result boxed at FFI
+#     :str / const char* slots (docs/repro/ file compiles again).
+#   - matz/spinel#3370 (85abddd2): locale_t needs <xlocale.h> on macOS
+#     (d79dea88 regression) — spinel wouldn't build on the macos CI leg
+#     at the first b96280b3 attempt of this very bump.
+# KNOWN LATENT (present at fd87f45b too — NOT a bump regression):
+#   examples/maidenhead + examples/geohash builds still hit one
+#   residual const-char*-from-sp_RbVal site (route-handler string
+#   concat of a vendored-gem call); reported on #3330 (closed-fixed
+#   for the reduced shape); their suite tests skip in CI and skip
+#   locally unless `make vendor-examples` ran.
+# Ecosystem note: toy pins ecac633caa; tep 0.11.7 is the maintenance
+# release cut from the fd87f45b-era tree (tep#245).
+# Workaround status at this pin:
+#   - PG::Pool#with typed yield (tep#189): deferral kept, pending its
+#     own verification pass.
 
 # fd87f45b (2026-07-12). Bumped from f6d5eef (+~2100) onto current master
 # after the last two blockers landed upstream (tep#196):

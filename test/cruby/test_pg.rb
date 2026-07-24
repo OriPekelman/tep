@@ -268,18 +268,7 @@ class TestPg < TepTest
         r.clear
         out = "raised=no"
       rescue PG::UndefinedTable => e
-        # Hierarchy proof via a nested rescue arm instead of
-        # `e.is_a?(PG::Error)`: is_a? on a rescued local is
-        # unsupported at the current spinel pin (typed-rescue local
-        # widens; tracked in the SPINEL_PIN notes). Re-raising e and
-        # catching it with the PARENT class proves the subclass
-        # relation just as strictly.
-        hier = "no"
-        begin
-          raise e
-        rescue PG::Error
-          hier = "yes"
-        end
+        hier = e.is_a?(PG::Error) ? "yes" : "no"
         out = "raised=UndefinedTable" +
               " sqlstate=" + c.last_sqlstate +
               " match42P01=" + (c.last_sqlstate == "42P01" ? "yes" : "no") +
@@ -307,13 +296,7 @@ class TestPg < TepTest
         r2.clear
         out = "first_ok=yes second_raised=no"
       rescue PG::UniqueViolation => e
-        # Same nested-rescue hierarchy proof as /missing_table.
-        hier = "no"
-        begin
-          raise e
-        rescue PG::Error
-          hier = "yes"
-        end
+        hier = e.is_a?(PG::Error) ? "yes" : "no"
         out = "first_ok=yes second_raised=UniqueViolation" +
               " sqlstate=" + c.last_sqlstate +
               " is_pg_error=" + hier
