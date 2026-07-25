@@ -1,11 +1,9 @@
 # spin manifest (matz/spinel's package manager) — tep#234 groundwork.
 #
-# INERT at the current SPINEL_PIN (f6d5eef predates spin): the Makefile /
-# spinel-ext.json build path is still the one that builds tep. This
-# manifest exists so the dependency graph and layout are already
-# spin-shaped when the re-pin (tep#196, gated on matz/spinel#1842) makes
-# `spin build`/`spin test` viable. See tep#234 for the migration plan
-# (carried-C mapping, mirror-audit of the C shims, serve revalidation).
+# LIVE since the fd87f45b re-pin (tep#196/#243): `spin test` and the
+# feature-gated `[[build]]` units below are exercised for real (tep#234
+# serve re-validation, 2026-07-22). The Makefile path remains the CRuby
+# test-suite / CI driver; both build shapes are supported.
 #
 # Publishing note: the package name is the require string ("tep"); the
 # repo keeps its name. Libraries do not commit spin.lock — version
