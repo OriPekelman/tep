@@ -218,7 +218,9 @@ module Tep
         res.headers["Content-Length"] = sz.to_s
         head = build_head(req, res)
         Sock.sphttp_write_str(client, head)
-        Sock.sphttp_sendfile(client, res.file_path)
+        if !res.head_only
+          Sock.sphttp_sendfile(client, res.file_path)
+        end
         return
       end
 
@@ -247,7 +249,7 @@ module Tep
 
       head = build_head(req, res)
       Sock.sphttp_write_str(client, head)
-      if res.body.length > 0
+      if res.body.length > 0 && !res.head_only
         Sock.sphttp_write_str(client, res.body)
       end
     end

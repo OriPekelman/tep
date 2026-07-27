@@ -857,6 +857,12 @@ module Tep
   def self.put(pattern, handler);     APP.add_route("PUT",     pattern, handler); end
   def self.patch(pattern, handler);   APP.add_route("PATCH",   pattern, handler); end
   def self.delete(pattern, handler);  APP.add_route("DELETE",  pattern, handler); end
+  def self.options(pattern, handler); APP.add_route("OPTIONS", pattern, handler); end
+  # head routes match explicitly; a HEAD with no head route serves the
+  # GET route body-less (App#dispatch fallback, tep#246). This method
+  # was MISSING although DSL_VERBS advertised it -- an explicit `head`
+  # route in an app could never compile before the #246 work.
+  def self.head(pattern, handler);    APP.add_route("HEAD",    pattern, handler); end
 
 
   def self.public_dir(root)

@@ -18,6 +18,10 @@ module Tep
       @set_cookies.delete_at(0)
       @streamer    = Streamer.new   # default no-op; only used when @streaming
       @streaming   = false
+      # HEAD request marker: the writers emit status + headers
+      # (including the Content-Length the body WOULD have) but no
+      # body bytes. Set by App#dispatch for every HEAD request.
+      @head_only   = false
       # WebSocket upgrade slots. The Tep::Server::Scheduled write
       # path sees @upgrading_ws and, instead of writing the normal
       # status-line response body, emits the 101 handshake response
@@ -33,6 +37,7 @@ module Tep
     end
 
     attr_accessor :streamer, :streaming
+    attr_accessor :head_only
     attr_accessor :upgrading_ws, :ws_accept_key, :ws_driver
     attr_reader :lastmod_epoch
 

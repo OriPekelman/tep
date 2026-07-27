@@ -130,7 +130,8 @@ module Differential
     http.read_timeout = 5
     klass = { "GET" => Net::HTTP::Get, "POST" => Net::HTTP::Post,
               "PUT" => Net::HTTP::Put, "PATCH" => Net::HTTP::Patch,
-              "DELETE" => Net::HTTP::Delete }.fetch(verb)
+              "DELETE" => Net::HTTP::Delete,
+              "HEAD" => Net::HTTP::Head }.fetch(verb)
     req = klass.new(path)
     headers.each { |k, v| req[k] = v }
     if body
@@ -147,12 +148,15 @@ class DifferentialCase < Minitest::Test
   FIXTURES = {
     File.expand_path("../cruby/real_world/01_simple.rb", __dir__) => [
       ["GET", "/"],
+      ["HEAD", "/"],            # HEAD auto-serves from GET (tep#246)
     ],
     File.expand_path("../cruby/real_world/04_health_api.rb", __dir__) => [
       ["GET", "/healthz"],
       ["GET", "/version"],
       ["GET", "/"],
       ["GET", "/missing"],          # custom not_found on both
+      ["HEAD", "/healthz"],         # HEAD auto-serves from GET (tep#246)
+      ["HEAD", "/missing"],         # HEAD 404 parity (custom not_found)
     ],
     File.expand_path("../cruby/real_world/05_todo_api.rb", __dir__) => [
       ["GET", "/todos"],
@@ -218,7 +222,15 @@ class DifferentialCase < Minitest::Test
     end
 
     assert_equal r_sin.code, r_tep.code, "#{ctx}: status diverged"
-    assert_equal r_sin.body, r_tep.body, "#{ctx}: body diverged"
+    if verb == "HEAD"
+      # Net::HTTP surfaces a nil body for HEAD on both sides; the
+      # HEAD semantic under test is header parity -- above all the
+      # Content-Length the suppressed body WOULD have had (tep#246).
+      assert_equal r_sin["content-length"], r_tep["content-length"],
+                   "#{ctx}: HEAD Content-Length diverged"
+    else
+      assert_equal r_sin.body, r_tep.body, "#{ctx}: body diverged"
+    end
     assert_equal Differential.normalize_content_type(r_sin["content-type"]),
                  Differential.normalize_content_type(r_tep["content-type"]),
                  "#{ctx}: content-type diverged (post-normalization)"
