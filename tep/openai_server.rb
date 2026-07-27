@@ -45,6 +45,24 @@ module Tep
           Tep::Llm::OpenAI::Completion.new
         end
 
+        # Pre-flight request validation for /v1/completions, BOTH
+        # streaming and non-streaming (tep#249). Return "" for a valid
+        # request; a non-empty message makes the handler answer 400
+        # with the standard invalid_request_error envelope before any
+        # backend work -- and, on the SSE path, before any headers,
+        # mirroring the real OpenAI API (streaming requests fail with
+        # a plain JSON 400, no SSE bytes). Default accepts everything
+        # so existing backends stay byte-identical.
+        def validate_request(model, token_ids, sampling)
+          ""
+        end
+
+        # Same, for /v1/embeddings -- shape checks beyond the
+        # handler's built-in empty-input 400 (tep#249).
+        def validate_embeddings_request(model, token_ids)
+          ""
+        end
+
         # STREAMING shape (7.2): the per-token variant for SSE
         # /v1/completions when the request carries "stream": true.
         # The backend writes each token to `sink` via
@@ -285,6 +303,7 @@ module Tep
         attr_accessor :text, :prompt_tokens, :completion_tokens
         attr_accessor :token_ids, :finish_reason
         attr_accessor :id
+        attr_accessor :error_status, :error_json
 
         def initialize
           @text              = ""
@@ -296,6 +315,15 @@ module Tep
           @token_ids.delete_at(0)
           @finish_reason     = "stop"
           @id                = "cmpl-tep"
+          # Result-carried error channel (tep#249): a backend signals
+          # failure by setting error_status (HTTP status, 0 = success)
+          # plus error_json -- the response body emitted VERBATIM, so
+          # the backend owns the exact wire bytes (byte-exact serve
+          # gates downstream). Defaults keep existing backends
+          # byte-identical. Non-streaming completions + chat only; the
+          # SSE path fails pre-flight via Backend#validate_request.
+          @error_status      = 0
+          @error_json        = ""
         end
       end
 
@@ -550,6 +578,21 @@ module Tep
             sampling.top_p = Tep::Json.get_float(body, "top_p")
           end
 
+          # Pre-flight validation (tep#249): a non-empty message 400s
+          # before any generation -- and before SSE headers on the
+          # streaming path below.
+          verr = Tep::APP.openai_backend.validate_request(model, token_ids, sampling)
+          if verr.length > 0
+            res.set_status(400)
+            res.headers["Content-Type"] = "application/json"
+            return "{" +
+              "\"error\":{" +
+                Tep::Json.encode_pair_str("message", verr) + "," +
+                Tep::Json.encode_pair_str("type", "invalid_request_error") +
+              "}" +
+            "}"
+          end
+
           # OpenAI signals streaming with "stream": true in the JSON
           # body; Tep::Json has no bool getter, so we sniff the literal
           # (same shape as examples/llm_gateway/app.rb). When set, the
@@ -584,6 +627,13 @@ module Tep
           t0 = Time.now.to_i
 
           comp = Tep::APP.openai_backend.generate_from_tokens(model, token_ids, sampling)
+
+          # Result-carried error (tep#249): error_json goes out
+          # verbatim. No inference event for a failed request.
+          if comp.error_status > 0
+            res.set_status(comp.error_status)
+            return comp.error_json
+          end
           total = comp.prompt_tokens + comp.completion_tokens
 
           # Emit one inference event per request. Skipped when events
@@ -676,6 +726,13 @@ module Tep
           end
 
           comp  = Tep::APP.openai_backend.chat_completion(req)
+
+          # Result-carried error (tep#249), same contract as the
+          # completions path: verbatim body, no event.
+          if comp.error_status > 0
+            res.set_status(comp.error_status)
+            return comp.error_json
+          end
           total = comp.prompt_tokens + comp.completion_tokens
           "{" +
             Tep::Json.encode_pair_str("id", "chatcmpl-tep") + "," +
@@ -733,7 +790,33 @@ module Tep
             "}"
           end
 
+          verr = Tep::APP.openai_backend.validate_embeddings_request(model, ids)
+          if verr.length > 0
+            res.set_status(400)
+            return "{" +
+              "\"error\":{" +
+                Tep::Json.encode_pair_str("message", verr) + "," +
+                Tep::Json.encode_pair_str("type", "invalid_request_error") +
+              "}" +
+            "}"
+          end
+
           vec = Tep::APP.openai_backend.generate_embeddings(model, ids)
+
+          # An empty vector is not a valid embedding: lookup/pooling
+          # failed backend-side. 500 restores the retired hand-rolled
+          # handler's contract (tep#249) -- the one deliberate
+          # behavior change here (previously flattened to 200 + []).
+          if vec.length == 0
+            res.set_status(500)
+            return "{" +
+              "\"error\":{" +
+                Tep::Json.encode_pair_str("message",
+                  "embedding generation failed (backend returned an empty vector)") + "," +
+                Tep::Json.encode_pair_str("type", "server_error") +
+              "}" +
+            "}"
+          end
 
           # Build the embedding float array by hand: Tep::Json has no
           # float-array encoder, and Float#to_s yields a JSON number.

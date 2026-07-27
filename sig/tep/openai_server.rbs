@@ -16,6 +16,10 @@ module Tep
         def list_models: () -> Array[String]
         # PRIMARY: token-level generation (non-streaming /v1/completions).
         def generate_from_tokens: (String model, Array[Integer] token_ids, Tep::Llm::OpenAI::Sampling sampling) -> Tep::Llm::OpenAI::Completion
+        # Pre-flight validation (tep#249): "" = valid, non-empty = the
+        # 400 invalid_request_error message.
+        def validate_request: (String model, Array[Integer] token_ids, Tep::Llm::OpenAI::Sampling sampling) -> String
+        def validate_embeddings_request: (String model, Array[Integer] token_ids) -> String
         # Streaming /v1/completions: write each token via sink.emit_token.
         def generate_stream_from_tokens: (String model, Array[Integer] token_ids, Tep::Llm::OpenAI::Sampling sampling, Tep::Llm::OpenAI::StreamSink sink) -> Integer
         # When false, /v1/chat/completions returns 501.
@@ -78,6 +82,11 @@ module Tep
         # Response/event completion id (default "cmpl-tep"); a backend may
         # mint per-request ids for byte-exact downstream ingest.
         attr_accessor id: String
+        # Result-carried error channel (tep#249): error_status is the
+        # HTTP status (0 = success); error_json is the response body,
+        # emitted verbatim. Non-streaming completions + chat.
+        attr_accessor error_status: Integer
+        attr_accessor error_json: String
         def initialize: () -> void
       end
 
