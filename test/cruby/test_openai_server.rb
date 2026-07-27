@@ -667,3 +667,113 @@ class TestOpenAIServerIdsBackend < TepTest
     assert_kind_of Integer, m["created"]
   end
 end
+
+# Error/validation channel (tep#249): a backend that rejects requests
+# pre-flight and fails generation mid-flight, proving both channels
+# and the embeddings empty-vector 500.
+class TestOpenAIServerErrors < TepTest
+  app_source <<~RB
+    require 'sinatra'
+
+    class PickyBackend < Tep::Llm::OpenAI::Backend
+      def list_models
+        ["picky-1"]
+      end
+      def validate_request(model, token_ids, sampling)
+        if token_ids.length == 0
+          return "prompt must be a non-empty integer array"
+        end
+        ""
+      end
+      def generate_from_tokens(model, token_ids, sampling)
+        c = Tep::Llm::OpenAI::Completion.new
+        if model == "boom"
+          c.error_status = 500
+          c.error_json = "{\\"error\\":{\\"message\\":\\"kaboom\\",\\"type\\":\\"server_error\\"}}"
+          return c
+        end
+        c.text              = "ok"
+        c.prompt_tokens     = token_ids.length
+        c.completion_tokens = 1
+        c
+      end
+      def supports_embeddings?
+        true
+      end
+      def validate_embeddings_request(model, token_ids)
+        if model == "reject-me"
+          return "model reject-me does not serve embeddings"
+        end
+        ""
+      end
+      def generate_embeddings(model, token_ids)
+        empty = [0.0]
+        empty.delete_at(0)
+        if model == "lookup-fail"
+          return empty
+        end
+        [0.5, 0.25]
+      end
+    end
+
+    Tep::Llm::OpenAI::Server.use(PickyBackend.new)
+    Tep::Llm::OpenAI::Server.serve!
+  RB
+
+  def post_json(path, json)
+    post(path, json, "Content-Type" => "application/json")
+  end
+
+  def test_completions_preflight_400_nonstreaming
+    res = post_json("/v1/completions", '{"model":"picky-1","prompt":[]}')
+    assert_equal "400", res.code
+    body = JSON.parse(res.body)
+    assert_equal "invalid_request_error", body["error"]["type"]
+    assert_match(/non-empty integer array/, body["error"]["message"])
+  end
+
+  def test_completions_preflight_400_streaming_no_sse
+    # The SSE path must fail with a plain JSON 400 BEFORE any stream
+    # headers -- mirroring the real OpenAI API.
+    res = post_json("/v1/completions", '{"model":"picky-1","prompt":[],"stream":true}')
+    assert_equal "400", res.code
+    assert_match(%r{application/json}, res["content-type"])
+    refute_match(%r{text/event-stream}, res["content-type"].to_s)
+    assert_equal "invalid_request_error", JSON.parse(res.body)["error"]["type"]
+  end
+
+  def test_completions_result_error_verbatim
+    res = post_json("/v1/completions", '{"model":"boom","prompt":[1,2]}')
+    assert_equal "500", res.code
+    assert_equal '{"error":{"message":"kaboom","type":"server_error"}}', res.body
+  end
+
+  def test_completions_valid_still_200
+    res = post_json("/v1/completions", '{"model":"picky-1","prompt":[1,2,3]}')
+    assert_equal "200", res.code
+    body = JSON.parse(res.body)
+    assert_equal "ok", body["choices"][0]["text"]
+  end
+
+  def test_embeddings_validate_400
+    res = post_json("/v1/embeddings", '{"model":"reject-me","input":[1]}')
+    assert_equal "400", res.code
+    body = JSON.parse(res.body)
+    assert_equal "invalid_request_error", body["error"]["type"]
+    assert_match(/reject-me/, body["error"]["message"])
+  end
+
+  def test_embeddings_empty_vector_500
+    res = post_json("/v1/embeddings", '{"model":"lookup-fail","input":[1,2]}')
+    assert_equal "500", res.code
+    body = JSON.parse(res.body)
+    assert_equal "server_error", body["error"]["type"]
+  end
+
+  def test_embeddings_valid_still_200
+    res = post_json("/v1/embeddings", '{"model":"picky-1","input":[1,2]}')
+    assert_equal "200", res.code
+    body = JSON.parse(res.body)
+    assert_equal [0.5, 0.25], body["data"][0]["embedding"]
+  end
+end
