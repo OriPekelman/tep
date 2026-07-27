@@ -978,10 +978,11 @@ module PG
   #       name
   #     end
   #
-  # The block-form `with { |c| ... }` is deferred until spinel
-  # lights up instance-method typed yields (matz/spinel#628 covers
-  # the top-level def case but not instance methods); manual
-  # checkout/checkin is the v1 shape.
+  # The block-form `with { |c| ... }` wraps exactly that pattern
+  # (checkout, yield, ensure-checkin). It was deferred while spinel
+  # lost the yielded local's type at instance-method yields
+  # (matz/spinel#628); verified lowered at pin 85abddd2 (tep#189).
+  # Manual checkout/checkin stays supported.
   #
   # Concurrency model:
   #
@@ -1105,6 +1106,18 @@ module PG
         Tep::APP.sched_wake_at[widx] = -1
       end
       0
+    end
+
+    # Block form: checkout, yield the connection, ALWAYS checkin --
+    # including when the block raises. Returns the block's value,
+    # mirroring connection_pool's Pool#with contract (tep#189).
+    def with
+      c = checkout
+      begin
+        yield c
+      ensure
+        checkin(c)
+      end
     end
 
     # Pause-and-retry fallback for non-scheduled callers. Used by

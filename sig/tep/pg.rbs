@@ -225,8 +225,8 @@ module PG
   # Fixed-size connection pool. Holds N pre-opened connections, hands
   # them out via #checkout / takes them back via #checkin, parks
   # cooperatively under Tep::Server::Scheduled when the free list is
-  # empty. The block-form `with { |c| ... }` is deferred until spinel
-  # lights up instance-method typed yields (matz/spinel#628).
+  # empty. The block-form `with { |c| ... }` yields a typed connection
+  # and always checks it back in (tep#189).
   class Pool
     attr_accessor url: String
     attr_accessor size: Integer
@@ -243,6 +243,8 @@ module PG
     # (non-scheduled callers); the scheduled path parks until a checkin.
     def checkout: () -> PG::Connection
     def checkin: (PG::Connection c) -> Integer
+    # Checkout, yield, ensure-checkin; returns the block's value.
+    def with: [T] () { (PG::Connection) -> T } -> T
     # Diagnostic: how many connections are currently available.
     def available: () -> Integer
     def close_all: () -> Integer

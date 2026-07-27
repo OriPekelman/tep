@@ -416,6 +416,35 @@ class TestPg < TepTest
         " refilled=" + refilled_avail.to_s
     end
 
+    # GET /pool_with -- block form: returns the block's value, and
+    # the connection is back in the pool afterwards.
+    get '/pool_with' do
+      before = POOL.available
+      v = POOL.with do |c|
+        r = c.exec("SELECT 'via-with' AS src")
+        out = r.getvalue(0, 0)
+        r.clear
+        out
+      end
+      "val=" + v + " before=" + before.to_s + " after=" + POOL.available.to_s
+    end
+
+    # GET /pool_with_raise -- the ensure leg: a raising block must
+    # still check the connection back in.
+    get '/pool_with_raise' do
+      before = POOL.available
+      caught = "no"
+      begin
+        POOL.with do |c|
+          r = c.exec("SELECT * FROM tep_no_such_table_anywhere")
+          r.clear
+        end
+      rescue PG::UndefinedTable => e
+        caught = "yes"
+      end
+      "caught=" + caught + " before=" + before.to_s + " after=" + POOL.available.to_s
+    end
+
     # GET /async_exec -- explicit async path. Under Scheduled
     # this exercises PQsendQuery + io_wait; under prefork it's
     # still correct (io_wait falls back to a single-shot poll).
@@ -652,6 +681,16 @@ class TestPg < TepTest
   def test_pool_returned_connection_is_reusable
     res = get("/pool_reusable")
     assert_equal "first=1 second=2", res.body
+  end
+
+  def test_pool_with_returns_block_value_and_restores_pool
+    res = get("/pool_with")
+    assert_equal "val=via-with before=4 after=4", res.body
+  end
+
+  def test_pool_with_checks_in_on_raise
+    res = get("/pool_with_raise")
+    assert_equal "caught=yes before=4 after=4", res.body
   end
 
   def test_pool_exhaustion_raises_pool_exhausted
