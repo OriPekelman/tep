@@ -214,6 +214,19 @@ module Tep
         end
       end
       if !res.halted && !asset_served
+        # HEAD serves the matching GET route when no explicit `head`
+        # route exists (sinatra semantics, tep#246): same status +
+        # headers including the Content-Length the body would have;
+        # the writers suppress the body via res.head_only. Filters
+        # above saw the verb as HEAD; the fallback handler runs with
+        # req.verb rewritten to GET (ledgered divergence: sinatra's
+        # handler would still read request_method == "HEAD").
+        if req.verb == "HEAD"
+          res.head_only = true
+          if @router.match(req).nil?
+            req.verb = "GET"
+          end
+        end
         route = @router.match(req)
         # `pass` loop: a handler can signal skip-to-next-route by
         # setting req.passed. Iterate until a handler doesn't pass,
