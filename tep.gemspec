@@ -63,6 +63,11 @@ Gem::Specification.new do |s|
     "spinel-ext.json",
     "bin/tep",
     "tep.rb", "tep/**/*", "native/**/*", "spin.toml",
+    # Library type roots: consumers aggregate gem sig/ under
+    # vendor/spinel/sig (spinelgems#13) so uncalled public methods
+    # keep their declared types. Omitting these defeated tep#199's
+    # direction for every gem consumer (tep#248).
+    "sig/**/*",
     "examples/**/*",
     "public/**/*",
     "test/**/*"
