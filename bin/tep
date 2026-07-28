@@ -2299,6 +2299,33 @@ def cmd_build(args)
 
   spinel_args = [SPINEL, rb_path, "-o", out_path]
   spinel_kit_roots.each { |r| spinel_args << "-I" << r }
+
+  # spinelgems convention (tep#217): `spinel-compat vendor` writes the
+  # compile flags a vendored project needs -- e.g. `--rbs
+  # vendor/spinel/sig` for the aggregated gem type roots
+  # (spinelgems#13) -- to vendor/spinel/spinel-flags next to the app.
+  # Apply them automatically so a vendored project builds with the
+  # right flags without hand-passing (the spinelgems scaffold's
+  # bin/build sources the same file). Relative paths in the file are
+  # project-root-relative: resolve against the input's directory so
+  # `tep build path/to/app.rb` works from anywhere; flag tokens and
+  # opaque values pass through untouched. TEP_NO_SPINEL_FLAGS=1 opts
+  # out (e.g. when chasing an analyzer issue without seeds).
+  flags_root = File.expand_path(File.dirname(input))
+  flags_path = File.join(flags_root, "vendor", "spinel", "spinel-flags")
+  if File.file?(flags_path) && ENV["TEP_NO_SPINEL_FLAGS"] != "1"
+    require "shellwords"
+    toks = Shellwords.split(File.read(flags_path)).map do |t|
+      if !t.start_with?("-") && File.exist?(File.expand_path(t, flags_root))
+        File.expand_path(t, flags_root)
+      else
+        t
+      end
+    end
+    spinel_args.concat(toks)
+    warn "tep: applying #{flags_path}" unless ENV["TEP_QUIET"]
+  end
+
   spinel_args << "-c" if c_only
   warn "tep: building -> #{out_path}" unless ENV["TEP_QUIET"]
   warn "tep: spinel argv: #{spinel_args.inspect}" if ENV["TEP_DEBUG"]
