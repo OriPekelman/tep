@@ -129,6 +129,12 @@ module Tep
         end
         handle_connection(client)
       end
+      # Explicit Integer return: the `loop` falls through as nil (boxed),
+      # which conflicts with the declared `-> Integer` once sig/*.rbs
+      # seeds the analyzer (tep#199). The return value is unused; 0
+      # matches the contract. (Was masked while the module-load seed
+      # block pinned types instead of --rbs sig.)
+      0
     end
 
     # Keep-alive loop on a single accepted connection.

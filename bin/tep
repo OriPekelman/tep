@@ -2300,6 +2300,20 @@ def cmd_build(args)
   spinel_args = [SPINEL, rb_path, "-o", out_path]
   spinel_kit_roots.each { |r| spinel_args << "-I" << r }
 
+  # Seed the analyzer with tep's own hand-authored type roots (tep#199):
+  # `--rbs sig` re-pins the param/return/ivar types of methods a given
+  # user app never calls, which otherwise widen to int/poly and mismatch
+  # their typed ivars. This is the type-contract the module-load seed
+  # block used to force by calling every setter -- `--rbs` supersedes it
+  # (advisory at this engine: RBS-vs-inferred conflicts are seeds, not
+  # hard errors). Ships at the gem root next to bin/ (tep#248). Opt out
+  # with TEP_NO_RBS=1 (e.g. bisecting an analyzer issue). Skipped for
+  # --emit-rbs (seeding then re-emitting is circular).
+  tep_sig = File.expand_path("../sig", __dir__)
+  if Dir.exist?(tep_sig) && ENV["TEP_NO_RBS"] != "1"
+    spinel_args << "--rbs" << tep_sig
+  end
+
   # spinelgems convention (tep#217): `spinel-compat vendor` writes the
   # compile flags a vendored project needs -- e.g. `--rbs
   # vendor/spinel/sig` for the aggregated gem type roots
