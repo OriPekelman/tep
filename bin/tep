@@ -1466,7 +1466,7 @@ def handle_top_call(node, routes, websockets, mcp_tools, mcp_resources, filters,
         # spellings that land inside tep's own lib are skipped.
         is_tep_lib = path == "tep" || path.start_with?("tep/") ||
                      cand == File.join(LIB_DIR, "tep.rb") ||
-                     cand.start_with?(LIB_DIR + File::SEPARATOR)
+                     cand.start_with?(File.join(LIB_DIR, "tep") + File::SEPARATOR)
         if !is_tep_lib
           if File.file?(cand)
             passthrough << "# --- inlined require_relative #{path.inspect} (#{File.basename(cand)}) ---"

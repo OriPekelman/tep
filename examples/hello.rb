@@ -1,5 +1,5 @@
 # Tep "hello" demo -- exercises the full v0.1 surface.
-require_relative "../lib/tep"
+require_relative "../tep"
 
 class Root < Tep::Handler
   def handle(req, res)

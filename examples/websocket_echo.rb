@@ -12,7 +12,7 @@
 #   websocat ws://127.0.0.1:4567/echo
 #   > hello
 #   < echo: hello
-require_relative "../lib/tep"
+require_relative "../tep"
 
 set :scheduler, :scheduled
 

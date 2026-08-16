@@ -7,14 +7,13 @@ abf54280
 #   - matz/spinel#3504 (bfa17733): the boxed-value-into-typed-slot FAMILY
 #     (generalized emit_unbox_text coercion). Clears the maidenhead/geohash
 #     const-char BUILD residual — both examples compile now.
-# KNOWN LATENT (NEW, orthogonal to #199 — affects seeded main too, skips in
-# CI): the maidenhead/geohash example binaries now BUILD but crash at the
-# first vendored-gem call with `uninitialized constant Maidenhead`
-# (NameError) — a runtime constant-init issue for require_relative'd
-# vendored gems at this engine, exposed only now that #3504 lets them
-# compile. Their suite tests skip in CI (spinelgems absent) and error only
-# in a local run with a spinelgems checkout. Filed separately; NOT a #199
-# blocker.
+# maidenhead/geohash examples: BUILD (#3504) and now SERVE correctly too.
+# The `uninitialized constant` crash they hit turned out to be a TEP bug,
+# not spinel: bin/tep's inliner guard (LIB_DIR = REPO_ROOT) swallowed the
+# in-repo example apps' `require_relative "vendor/spinel/deps"` as if it
+# were tep's own library. Fixed here (tep#257): the guard is narrowed to
+# tep.rb + tep/, and the examples' stale `../lib/tep` requires (masked by
+# the old broad guard) are corrected to `../tep`.
 #   - matz/spinel#3518 (b0b15fe6): --rbs Integer return widens to a bignum
 #     body (the #199 loop-grown-int blocker; RetryPolicy#backoff_for).
 #   - matz/spinel#3520 (abf54280): a class method sharing a String-method
