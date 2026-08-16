@@ -45,6 +45,12 @@ jobs:
         run: |
           mkdir -p spinel-dist/bin
           cp spinel-src/bin/spinel spinel-dist/bin/
+          # spinel_rbs_extract must ship BESIDE the compiler: bin/tep passes
+          # `--rbs sig` (tep#199) and spinel looks for the extractor as a
+          # sibling at runtime. `make all` builds it under build/ (deps
+          # fetched vendor/rbs) but doesn't stage it here. Without it, --rbs
+          # is silently ignored and the seedless build has no type seeds.
+          cp spinel-src/build/spinel_rbs_extract spinel-dist/bin/
           cp -R spinel-src/lib      spinel-dist/lib
           cp -R spinel-src/packages spinel-dist/packages
       - name: Upload spinel toolchain
