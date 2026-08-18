@@ -15,8 +15,8 @@
 # rescue dispatch can't match module-namespaced exception classes
 # today (matz/spinel#627). Once that lands, this example collapses
 # to the AR-shape `rescue PG::Error => e`.
-require_relative "../lib/tep"
-require_relative "../lib/tep/pg"   # opt-in PG backend (#216)
+require_relative "../tep"
+require_relative "../tep/pg"   # opt-in PG backend (#216)
 
 PG_URL = ENV["PG_URL"] != nil && ENV["PG_URL"].length > 0 ? ENV["PG_URL"] : "postgresql:///postgres"
 

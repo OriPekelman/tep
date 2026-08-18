@@ -34,7 +34,11 @@ class TestSpinelFlags < Minitest::Test
 
   def build(dir, stub, env = {})
     out = ""
-    IO.popen(env.merge("SPINEL" => stub, "TEP_QUIET" => "1"),
+    # TEP_NO_RBS: these tests assert on the VENDOR spinel-flags path
+    # (tep#217); tep's own `--rbs sig` (tep#199) is always appended
+    # otherwise and is orthogonal to what's under test here. The
+    # vendor flags file's own `--rbs vendor/spinel/sig` still applies.
+    IO.popen(env.merge("SPINEL" => stub, "TEP_QUIET" => "1", "TEP_NO_RBS" => "1"),
              [RbConfig.ruby, TEP_BIN, "build", File.join(dir, "app.rb"),
               "-o", File.join(dir, "app_bin")],
              err: [:child, :out]) { |io| out = io.read }

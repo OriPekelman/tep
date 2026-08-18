@@ -1,5 +1,27 @@
-85abddd2
+abf54280
 
+# abf54280 (2026-08-12). Bumped from 85abddd2 (+~370) to land the type-seed
+# soup retirement (tep#199, --rbs sig replaces the module-load seed block).
+# Three more of our filed issues closed upstream to get here (all verified
+# with our repros at this commit):
+#   - matz/spinel#3504 (bfa17733): the boxed-value-into-typed-slot FAMILY
+#     (generalized emit_unbox_text coercion). Clears the maidenhead/geohash
+#     const-char BUILD residual — both examples compile now.
+# maidenhead/geohash examples: BUILD (#3504) and now SERVE correctly too.
+# The `uninitialized constant` crash they hit turned out to be a TEP bug,
+# not spinel: bin/tep's inliner guard (LIB_DIR = REPO_ROOT) swallowed the
+# in-repo example apps' `require_relative "vendor/spinel/deps"` as if it
+# were tep's own library. Fixed here (tep#257): the guard is narrowed to
+# tep.rb + tep/, and the examples' stale `../lib/tep` requires (masked by
+# the old broad guard) are corrected to `../tep`.
+#   - matz/spinel#3518 (b0b15fe6): --rbs Integer return widens to a bignum
+#     body (the #199 loop-grown-int blocker; RetryPolicy#backoff_for).
+#   - matz/spinel#3520 (abf54280): a class method sharing a String-method
+#     name no longer captures a poly String receiver's instance call
+#     (5a2127b6 regression; crashed Proxy#handle's k.downcase). BISECTED.
+# Note: the KNOWN-LATENT maidenhead/geohash block that used to sit here is
+# GONE — #3504 fixed it.
+#
 # 85abddd2 (2026-07-25). Bumped from fd87f45b (+~800) onto current master
 # to absorb five fixes for issues we filed 2026-07-22..25 (every one
 # closed same-day upstream; all verified with our repros at this commit):
@@ -17,12 +39,6 @@
 #   - matz/spinel#3370 (85abddd2): locale_t needs <xlocale.h> on macOS
 #     (d79dea88 regression) — spinel wouldn't build on the macos CI leg
 #     at the first b96280b3 attempt of this very bump.
-# KNOWN LATENT (present at fd87f45b too — NOT a bump regression):
-#   examples/maidenhead + examples/geohash builds still hit one
-#   residual const-char*-from-sp_RbVal site (route-handler string
-#   concat of a vendored-gem call); reported on #3330 (closed-fixed
-#   for the reduced shape); their suite tests skip in CI and skip
-#   locally unless `make vendor-examples` ran.
 # Ecosystem note: toy pins ecac633caa; tep 0.11.7 is the maintenance
 # release cut from the fd87f45b-era tree (tep#245).
 # Workaround status at this pin:

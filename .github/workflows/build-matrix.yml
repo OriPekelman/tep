@@ -111,6 +111,11 @@ jobs:
           git -C spinel-src checkout "$pin"
           make -C spinel-src deps
           make -C spinel-src all
+          # Stage spinel_rbs_extract beside the compiler so `--rbs sig`
+          # (tep#199) resolves the extractor at runtime; `make all` leaves
+          # it under build/. Without it, --rbs no-ops and the seedless
+          # build has no type seeds.
+          cp spinel-src/build/spinel_rbs_extract spinel-src/bin/spinel_rbs_extract
           echo "TEP_SPINEL_DIR=$PWD/spinel-src" >> "$GITHUB_ENV"
           echo "SPINEL=$PWD/spinel-src/spinel"  >> "$GITHUB_ENV"
 

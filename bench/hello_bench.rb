@@ -1,7 +1,7 @@
 # Minimal handler for benching tep itself -- no filters, no static,
 # just a single fixed-string response. We let CLI args drive port and
 # worker count so the same binary can run single-worker and prefork.
-require_relative "../lib/tep"
+require_relative "../tep"
 
 class Hello < Tep::Handler
   def handle(req, res)

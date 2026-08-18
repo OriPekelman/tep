@@ -119,13 +119,25 @@ module Tep
     end
 
     class Handshake
-      attr_accessor valid: bool
-      attr_accessor accept_key: String
-
-      def initialize: () -> void
-
-      def self.check: (Tep::Request req) -> Handshake
+      # All class methods; check returns a Result (below), NOT a
+      # Handshake. The valid/accept_key accessors live on Result --
+      # the prior sig put them here and typed check -> Handshake,
+      # which rake rbs:validate accepts (syntax only) but corrupts
+      # --rbs seeding (tep#199).
+      def self.check: (Tep::Request req) -> Tep::WebSocket::Handshake::Result
       def self.build_response: (String accept_key, String subprotocol) -> String
+      def self.icontains: (String hay, String needle) -> bool
+      def self.downcase: (String s) -> String
+      def self.split_csv: (String s) -> Array[String]
+      def self.trim: (String s) -> String
+
+      class Result
+        attr_accessor valid: bool
+        attr_accessor reason: String
+        attr_accessor accept_key: String
+        attr_accessor protocols: Array[String]
+        def initialize: () -> void
+      end
     end
   end
 end
