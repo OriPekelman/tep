@@ -30,7 +30,7 @@ module Tep
 
   # Session-secret accessors (`Tep::APP` underneath).
   def self.session_secret: () -> String
-  def self.session_secret=: (String v) -> bool
+  def self.session_secret=: (String v) -> String
 
   # Wrapper for the active Fiber slot in the scheduler array. `f`
   # is the actual Fiber; the parallel `sched_wake_at` / `sched_io_*`
