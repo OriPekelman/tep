@@ -6,6 +6,7 @@ module Tep
     if status == 200; return "OK"; end
     if status == 201; return "Created"; end
     if status == 204; return "No Content"; end
+    if status == 206; return "Partial Content"; end
     if status == 301; return "Moved Permanently"; end
     if status == 302; return "Found"; end
     if status == 304; return "Not Modified"; end
@@ -213,19 +214,29 @@ module Tep
         else
           res.headers["Connection"] = "close"
         end
+        res.headers["Accept-Ranges"] = "bytes"
+        Tep::ByteRange.apply(req, res, sz)
         # Conditional GET: 304 + no body (no sendfile) when the client's
-        # cached copy is still fresh.
-        if Tep::Cache.not_modified?(req, res)
+        # cached copy is still fresh. Not for a 206 slice.
+        if res.file_offset < 0 && Tep::Cache.not_modified?(req, res)
           res.set_status(304)
           res.headers["Content-Length"] = "0"
           Sock.sphttp_write_str(client, build_head(req, res))
           return
         end
-        res.headers["Content-Length"] = sz.to_s
+        if res.file_offset >= 0
+          res.headers["Content-Length"] = res.file_length.to_s
+        else
+          res.headers["Content-Length"] = sz.to_s
+        end
         head = build_head(req, res)
         Sock.sphttp_write_str(client, head)
         if !res.head_only
-          Sock.sphttp_sendfile(client, res.file_path)
+          if res.file_offset >= 0
+            Sock.sphttp_sendfile_range(client, res.file_path, res.file_offset, res.file_length)
+          else
+            Sock.sphttp_sendfile(client, res.file_path)
+          end
         end
         return
       end

@@ -330,6 +330,8 @@ module Tep
             res.etag(fsz.to_s + "-" + fmt.to_s)
             res.last_modified(fmt)
           end
+          res.headers["Accept-Ranges"] = "bytes"
+          Tep::ByteRange.apply(req, res, fsz)
         end
 
         # Conditional GET (issue #152): 304 + no body when the request's
@@ -337,7 +339,7 @@ module Tep
         # Last-Modified, whether set by the handler or for a file above).
         # For a file we also clear file_path so the sendfile branch below
         # is skipped and the empty 304 goes out the inline-body path.
-        if Tep::Cache.not_modified?(req, res)
+        if res.file_offset < 0 && Tep::Cache.not_modified?(req, res)
           res.set_status(304)
           res.set_body("")
           res.file_path = ""
@@ -366,7 +368,13 @@ module Tep
         else
           head = head + "Connection: close\r\n"
         end
-        if res.file_path.length > 0
+        if res.file_path.length > 0 && res.file_offset >= 0
+          head = head + "Content-Length: " + res.file_length.to_s + "\r\n\r\n"
+          Sock.sphttp_write_str(client, head)
+          if !res.head_only
+            Sock.sphttp_sendfile_range(client, res.file_path, res.file_offset, res.file_length)
+          end
+        elsif res.file_path.length > 0
           fs = Sock.sphttp_filesize(res.file_path)
           head = head + "Content-Length: " + fs.to_s + "\r\n\r\n"
           Sock.sphttp_write_str(client, head)

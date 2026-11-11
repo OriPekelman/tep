@@ -93,6 +93,7 @@ module Sock
   ffi_func :sphttp_parse_http_date, [:str],         :int
 
   ffi_func :sphttp_sendfile,      [:int, :str],     :int
+  ffi_func :sphttp_sendfile_range, [:int, :str, :int, :int], :int
   ffi_func :sphttp_filesize,      [:str],           :int
   ffi_func :sphttp_file_mtime,    [:str],           :int
   ffi_func :sphttp_close,         [:int],           :int

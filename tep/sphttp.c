@@ -315,6 +315,33 @@ int sphttp_sendfile(int fd, const char *path) {
     return 0;
 }
 
+/* Send `len` bytes of `path` starting at byte `start` (HTTP 206). Same
+ * contract as sphttp_sendfile: 0 on success, -1 on open/seek/send failure. */
+int sphttp_sendfile_range(int fd, const char *path, int start, int len) {
+    int src = open(path, O_RDONLY);
+    if (src < 0) return -1;
+    if (lseek(src, (off_t)start, SEEK_SET) < 0) { close(src); return -1; }
+    char buf[16384];
+    long left = len;
+    while (left > 0) {
+        ssize_t r = read(src, buf, left < (long)sizeof(buf) ? (size_t)left : sizeof(buf));
+        if (r <= 0) break;
+        ssize_t off = 0;
+        while (off < r) {
+            ssize_t w = send(fd, buf + off, r - off, 0);
+            if (w <= 0) {
+                if (errno == EINTR) continue;
+                close(src);
+                return -1;
+            }
+            off += w;
+        }
+        left -= r;
+    }
+    close(src);
+    return 0;
+}
+
 /* Returns the file size at `path`, or -1 if missing / not a regular file.
  * Used by static serving to compute Content-Length. */
 int sphttp_filesize(const char *path) {

@@ -3,7 +3,8 @@
 # automatically when serializing.
 module Tep
   class Response
-    attr_accessor :status, :headers, :body, :halted, :file_path, :set_cookies
+    attr_accessor :status, :headers, :body, :halted, :file_path, :set_cookies,
+                  :file_offset, :file_length
 
     def initialize
       @status      = 200
@@ -11,6 +12,10 @@ module Tep
       @body        = ""
       @halted      = false
       @file_path   = ""
+      # Range (206) slice of the send_file body; file_offset -1 = whole file.
+      # Filled by Tep::ByteRange.apply (or set by a handler to force a slice).
+      @file_offset = -1
+      @file_length = 0
       # `Set-Cookie` is a header that can repeat; can't shove multiple
       # values into a Hash slot. Each entry here is one fully-formatted
       # Set-Cookie line, emitted verbatim by the writer.
