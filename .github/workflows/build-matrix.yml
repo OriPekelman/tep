@@ -58,8 +58,17 @@ jobs:
             # libssl3/openssl, which on the ubuntu-24.04-arm runner
             # SIGTERMs the job mid-apt (exit 143). libpq-dev is the only
             # genuinely-missing header.
-            sudo apt-get update
-            sudo apt-get install -y build-essential libsqlite3-dev libpq-dev
+            # Install only what the image lacks. The hosted Ubuntu image
+            # ships cc/make and (today) both -dev packages; going to the
+            # archive for an already-satisfied list made the job depend
+            # on mirror DNS, which failed the whole leg (2026-11).
+            need=""
+            for p in libsqlite3-dev libpq-dev; do
+              dpkg -s "$p" >/dev/null 2>&1 || need="$need $p"
+            done
+            if [ -n "$need" ]; then
+              sudo apt-get update && sudo apt-get install -y $need
+            fi
           elif [ "$RUNNER_OS" = "macOS" ]; then
             # macOS ships libsqlite3 in the SDK; OpenSSL + libpq live
             # under Homebrew off the default include/lib path. cc/clang
