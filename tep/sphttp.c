@@ -32,6 +32,13 @@
 #define SPHTTP_BUFSIZE   65536
 #define SPHTTP_RESP_MAX  (4 * 1024 * 1024)
 
+/* Binary-safe FFI return contract (tep#261). A function declared with
+ * the `:binstr` return mode must publish the exact byte count here;
+ * Spinel's call site then builds the Ruby String from sp_ffi_bin_len
+ * bytes instead of strlen, so payloads containing 0x00 survive.
+ * Defined in Spinel's libsp_alloc.c; the symbol is in every binary. */
+extern int sp_ffi_bin_len;
+
 /* ---------- TLS (libssl) binding -- outbound client; see tep#148 ----------
  *
  * The socket layer stays fd-based: sphttp_connect_tls returns a normal
@@ -158,6 +165,7 @@ int sphttp_read_request(int fd) {
 }
 
 const char *sphttp_request_buf(void) {
+    sp_ffi_bin_len = sphttp_req_len;
     return sphttp_req_buf;
 }
 
@@ -187,6 +195,7 @@ const char *sphttp_drain_body(int fd, int total_len) {
         got += (int)r;
     }
     sphttp_body_buf[got] = '\0';
+    sp_ffi_bin_len = got;
     return sphttp_body_buf;
 }
 
@@ -273,6 +282,7 @@ int sphttp_recv_into_frame(int fd) {
 }
 
 const char *sphttp_recv_frame_buf(void) {
+    sp_ffi_bin_len = sphttp_frame_len;
     return sphttp_frame_buf;
 }
 
@@ -595,10 +605,12 @@ const char *sphttp_recv_some(int fd, int maxlen) {
             sphttp_io_last = (n == 0) ? 3 : -1;    /* EOF vs error */
         }
         sphttp_recv_buf[0] = '\0';
+        sp_ffi_bin_len = 0;
         return sphttp_recv_buf;
     }
     sphttp_io_last = 0;
     sphttp_recv_buf[n] = '\0';
+    sp_ffi_bin_len = (int)n;
     return sphttp_recv_buf;
 }
 
@@ -621,6 +633,7 @@ const char *sphttp_recv_all(int fd, int max_bytes) {
         total += (int)n;
     }
     sphttp_recv_all_buf[total] = '\0';
+    sp_ffi_bin_len = total;
     return sphttp_recv_all_buf;
 }
 

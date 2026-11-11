@@ -30,9 +30,14 @@ module Sock
   # Returns -1 with errno EAGAIN/EWOULDBLOCK if no pending connection.
   ffi_func :sphttp_accept_nb,     [:int],           :int
   ffi_func :sphttp_read_request,  [:int],           :int
-  ffi_func :sphttp_request_buf,   [],               :str
+  # The request buffer, body drain and binary recv all return bytes
+  # that may contain 0x00, so they declare the `:binstr` return mode:
+  # the callee publishes the exact byte count in `sp_ffi_bin_len` and
+  # Spinel builds the String from it, instead of the `:str` path which
+  # copies with strlen and truncates at the first NUL (tep#261).
+  ffi_func :sphttp_request_buf,   [],               :binstr
   ffi_func :sphttp_request_len,   [],               :int
-  ffi_func :sphttp_drain_body,    [:int, :int],     :str
+  ffi_func :sphttp_drain_body,    [:int, :int],     :binstr
   ffi_func :sphttp_write_str,     [:int, :str],     :int
 
   # Binary-safe write + recv pair, used by Tep::WebSocket (and any
@@ -41,7 +46,7 @@ module Sock
   # See sphttp.c for the binary-safety contract.
   ffi_func :sphttp_write_bytes,   [:int, :str, :int], :int
   ffi_func :sphttp_recv_into_frame, [:int],         :int
-  ffi_func :sphttp_recv_frame_buf, [],              :str
+  ffi_func :sphttp_recv_frame_buf, [],              :binstr
   ffi_func :sphttp_recv_frame_len, [],              :int
 
   # Shutdown-on-signal plumbing. Install once at server start;
@@ -132,8 +137,8 @@ module Sock
   ffi_func :sphttp_tls_accept_start,   [:int],       :int
   ffi_func :sphttp_tls_handshake_step, [:int],       :int
   ffi_func :sphttp_io_status,          [],           :int
-  ffi_func :sphttp_recv_some,     [:int, :int],     :str
-  ffi_func :sphttp_recv_all,      [:int, :int],     :str
+  ffi_func :sphttp_recv_some,     [:int, :int],     :binstr
+  ffi_func :sphttp_recv_all,      [:int, :int],     :binstr
 
   # popen-shaped shell capture used by Tep::Shell.run. File I/O goes
   # through spinel's built-in File.read / File.write since master

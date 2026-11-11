@@ -137,7 +137,7 @@ module Tep
     # want to consume it directly.
     def consume_body(client_fd)
       cl = content_length
-      already = @raw_body.length
+      already = @raw_body.bytesize
       if cl > already
         rest = Sock.sphttp_drain_body(client_fd, cl - already)
         @raw_body = @raw_body + rest
@@ -153,18 +153,18 @@ module Tep
     # request but never sent the body gets dropped instead of
     # hanging the fiber forever.
     #
-    # Returns @raw_body.length after the drain. Body parsing
+    # Returns @raw_body.bytesize after the drain. Body parsing
     # (form / multipart -> @params) happens at the end via
     # parse_form_body, same shape as consume_body.
     def consume_body_via_scheduler(client_fd)
       cl = content_length
-      while @raw_body.length < cl
+      while @raw_body.bytesize < cl
         ready = Tep::Scheduler.io_wait(client_fd, Tep::Scheduler::READ, 5)
         if ready == 0
           break   # timeout -- client never finished sending
         end
-        chunk = Sock.sphttp_recv_some(client_fd, cl - @raw_body.length)
-        if chunk.length == 0
+        chunk = Sock.sphttp_recv_some(client_fd, cl - @raw_body.bytesize)
+        if chunk.bytesize == 0
           # Over TLS an empty read can be a partial record (SSL_read
           # WANT_READ/WANT_WRITE) rather than a peer close -- re-park on
           # the indicated direction and retry instead of truncating the
