@@ -80,12 +80,12 @@ module Tep
   # length via early-exit timing. spinel doesn't have a stdlib
   # crypto-safe compare, so we roll our own.
   def self.timing_safe_eq(a, b)
-    if a.length != b.length
+    if a.bytesize != b.bytesize
       return false
     end
     diff = 0
     i = 0
-    n = a.length
+    n = a.bytesize
     while i < n
       # getbyte(i), NOT bytes[i]: `String#bytes` allocates a fresh
       # array on EVERY iteration (O(n^2) garbage). Besides being slow,
