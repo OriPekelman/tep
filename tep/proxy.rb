@@ -450,7 +450,7 @@ module Tep
         head = head + k + ": " + v + "\r\n"
       end
       if ureq.body.length > 0
-        head = head + "Content-Length: " + ureq.body.length.to_s + "\r\n"
+        head = head + "Content-Length: " + ureq.body.bytesize.to_s + "\r\n"
       end
       head = head + "\r\n"
       if Sock.sphttp_write_str(fd, head) < 0

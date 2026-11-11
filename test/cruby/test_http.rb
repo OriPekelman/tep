@@ -68,6 +68,14 @@ class TestHttp < TepTest
       "status=" + r.status.to_s + " body=" + r.body
     end
 
+    # POST with a multibyte body: Content-Length must count bytes or the
+    # target reads a truncated body.
+    get '/post_echo_utf8/:port' do
+      c = Tep::Http.new("http://127.0.0.1:" + params[:port])
+      r = c.do_post("/echo_body", "héllo wörld — ü")
+      "status=" + r.status.to_s + " body=" + r.body
+    end
+
     # Non-2xx round trip.
     get '/teapot_from/:port' do
       r = Tep::Http.get("http://127.0.0.1:" + params[:port] + "/teapot")
@@ -111,6 +119,12 @@ class TestHttp < TepTest
     res = get("/post_echo/#{@port}")
     assert_equal "200", res.code
     assert_equal "status=200 body=round trip body", res.body
+  end
+
+  def test_multibyte_post_body_round_trips
+    res = get("/post_echo_utf8/#{@port}")
+    assert_equal "200", res.code
+    assert_equal "status=200 body=héllo wörld — ü", res.body.force_encoding("UTF-8")
   end
 
   def test_non_2xx_status_propagates

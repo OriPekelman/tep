@@ -246,7 +246,9 @@ module Tep
       if !res.headers.key?("Content-Type") && res.status != 204 && res.status != 304
         res.headers["Content-Type"] = "text/html; charset=utf-8"
       end
-      res.headers["Content-Length"] = res.body.length.to_s
+      # bytesize, not length: a multibyte body would otherwise announce
+      # fewer bytes than it sends and desync keep-alive clients.
+      res.headers["Content-Length"] = res.body.bytesize.to_s
       if keep_alive
         res.headers["Connection"] = "keep-alive"
       else
@@ -255,7 +257,7 @@ module Tep
 
       head = build_head(req, res)
       Sock.sphttp_write_str(client, head)
-      if res.body.length > 0 && !res.head_only
+      if res.body.bytesize > 0 && !res.head_only
         Sock.sphttp_write_str(client, res.body)
       end
     end
@@ -280,7 +282,7 @@ module Tep
       body = "<h1>" + status.to_s + " " + reason + "</h1><p>" + msg + "</p>\n"
       head = "HTTP/1.0 " + status.to_s + " " + reason + "\r\n" +
              "Content-Type: text/html; charset=utf-8\r\n" +
-             "Content-Length: " + body.length.to_s + "\r\n" +
+             "Content-Length: " + body.bytesize.to_s + "\r\n" +
              "Connection: close\r\n\r\n"
       Sock.sphttp_write_str(client, head + body)
     end

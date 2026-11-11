@@ -183,7 +183,7 @@ module Tep
           head = head + k + ": " + v + "\r\n"
         end
         if body.length > 0
-          head = head + "Content-Length: " + body.length.to_s + "\r\n"
+          head = head + "Content-Length: " + body.bytesize.to_s + "\r\n"
         end
         head = head + "\r\n"
         if Sock.sphttp_write_str(fd, head) < 0
@@ -229,7 +229,7 @@ module Tep
           head = head + k + ": " + v + "\r\n"
         end
         if body.length > 0
-          head = head + "Content-Length: " + body.length.to_s + "\r\n"
+          head = head + "Content-Length: " + body.bytesize.to_s + "\r\n"
         end
         head = head + "\r\n"
 
@@ -335,7 +335,7 @@ module Tep
         head = head + k + ": " + v + "\r\n"
       end
       if body.length > 0
-        head = head + "Content-Length: " + body.length.to_s + "\r\n"
+        head = head + "Content-Length: " + body.bytesize.to_s + "\r\n"
       end
       head = head + "\r\n"
 
