@@ -41,12 +41,21 @@ module Tep
     # silently return ""); we rescue here to preserve this helper's
     # never-raise contract -- a handler reading /proc should get "" for
     # an absent file, not a 502'd worker.
+    #
+    # The result goes through a local rather than being the begin/rescue
+    # expression's own value: at spinel 2026.10.25 a method whose value is
+    # `begin File.read(path) rescue "" end` hands back its ARGUMENT when
+    # the caller pushes the result onto a String array (broke
+    # Tep::Parallel#map_processes). Already fixed on spinel master
+    # (verified at e64fb6a0b) -- fold back at the next release pin.
     def self.read(path)
+      out = ""
       begin
-        File.read(path)
+        out = File.read(path)
       rescue => e
-        ""
+        out = ""
       end
+      out
     end
 
     # Bounded read: slice after the fact. The cap is mostly a
