@@ -5,7 +5,7 @@
 module Tep
   class Assets
     # Builder-emitted: register one asset by absolute path.
-    def self._add: (String path, String body, String mime) -> Integer
+    def self._add: (String path, String body, String mime) -> String
 
     def self.has?: (String path) -> bool
 

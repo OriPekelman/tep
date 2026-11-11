@@ -53,6 +53,10 @@ jobs:
           cp spinel-src/build/spinel_rbs_extract spinel-dist/bin/
           cp -R spinel-src/lib      spinel-dist/lib
           cp -R spinel-src/packages spinel-dist/packages
+          # builtins/ (Ruby-source Enumerable/Comparable/...) is resolved
+          # beside the compiler or its parent since 2026.10.25; without it
+          # every compile dies with "the toolchain is incomplete".
+          cp -R spinel-src/builtins spinel-dist/builtins
       - name: Upload spinel toolchain
         uses: actions/upload-artifact@v7
         with:
@@ -72,7 +76,10 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - name: Install build deps
-        run: sudo apt-get update && sudo apt-get install -y build-essential libsqlite3-dev
+        # Only reach for the archive when the header package is missing:
+        # the hosted image ships cc/make + libsqlite3-dev, and an apt
+        # round-trip made the job depend on mirror DNS (failed 2026-11).
+        run: dpkg -s libsqlite3-dev >/dev/null 2>&1 || (sudo apt-get update && sudo apt-get install -y libsqlite3-dev)
       - name: Set up Ruby
         uses: ruby/setup-ruby@v1
         with:
@@ -111,7 +118,10 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - name: Install build deps
-        run: sudo apt-get update && sudo apt-get install -y build-essential libsqlite3-dev
+        # Only reach for the archive when the header package is missing:
+        # the hosted image ships cc/make + libsqlite3-dev, and an apt
+        # round-trip made the job depend on mirror DNS (failed 2026-11).
+        run: dpkg -s libsqlite3-dev >/dev/null 2>&1 || (sudo apt-get update && sudo apt-get install -y libsqlite3-dev)
       - name: Set up Ruby (+ sinatra oracle gems)
         uses: ruby/setup-ruby@v1
         with:

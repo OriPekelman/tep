@@ -1,4 +1,31 @@
-abf54280
+2026.10.25
+
+# 2026.10.25 (2814693f6, spinel's second dated release). Bumped from
+# abf54280 (2026-08-12) -- two releases, ~14K commits. First pin by release
+# NAME rather than bare SHA (tep#258 item 5): `spinel --version` prints it,
+# and CI / tools/spinel-fresh.sh resolve the tag like any other ref.
+# What unblocked it:
+#   - matz/spinel#4501 (ours; fixed by #4468, d292c0be): the whole-program
+#     compile blowup that made tep non-terminating at 2026.09.12 (per-use
+#     recomputation of a node's type). hello.rb builds in ~6s here.
+# What the bump needed in tep (all in the same PR):
+#   - tep.rb stock-Ruby guard: spinel now DEFINES RUBY_ENGINE ("spinel"),
+#     so the old `defined?(RUBY_ENGINE)` guard fired inside every compiled
+#     binary. Now `defined?(RUBY_ENGINE) && RUBY_ENGINE != "spinel"`.
+#   - sig/tep/assets.rbs: Assets._add returns String, not Integer. `--rbs`
+#     seeds are now CHECKED against the body ("seed contradicted"), which
+#     surfaced the stale signature (examples/chat failed to build).
+#   - spin.toml: `[package] sources = ["tep/sphttp.c"]` -- carried C must
+#     be declared since 2026.09.12 (matz/spinel#4362, tep#258 item 1).
+#   - Tep::Shell.read: result goes through a local. REGRESSION at this
+#     release: a method whose value is `begin File.read(path) rescue ""
+#     end` returns its ARGUMENT when the caller pushes the result onto a
+#     String array (the callee's argument read publishes the arg as the
+#     returned string's identity). Broke Tep::Parallel#map_processes.
+#     15-line repro; ALREADY FIXED on master (verified at e64fb6a0b), so
+#     not filed -- fold the workaround back at the next release pin.
+# Verified: full parallel suite (65 files) + the live-PG trio (test_pg /
+# test_presence_pg / test_broadcast_pg, 47 runs) + `spin test`, gx10 arm64.
 
 # abf54280 (2026-08-12). Bumped from 85abddd2 (+~370) to land the type-seed
 # soup retirement (tep#199, --rbs sig replaces the module-load seed block).

@@ -21,10 +21,10 @@
 # (or inlined by `tep build`), not run under CRuby. A plain
 # `require "tep"` on MRI/JRuby/TruffleRuby has no FFI runtime and would
 # otherwise die with a cryptic `undefined method 'ffi_cflags'` deep in a
-# sub-file. RUBY_ENGINE is defined on every stock Ruby but NOT in a
-# Spinel binary, so this fires only under a real `require` and stays a
-# dead no-op once compiled (it inlines harmlessly into every app).
-if defined?(RUBY_ENGINE)
+# sub-file. Spinel answers RUBY_ENGINE == "spinel" (since 2026.10.25;
+# older engines left it undefined), so this fires only under a real
+# `require` on a stock Ruby and is dropped at compile time.
+if defined?(RUBY_ENGINE) && RUBY_ENGINE != "spinel"
   raise "tep is a Spinel-AOT framework, not a CRuby library -- " \
         "`require \"tep\"` has no runtime here. tep compiles your " \
         "Sinatra-style app to a native binary; build it with the " \

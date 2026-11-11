@@ -12,6 +12,10 @@
 [package]
 name = "tep"
 version = "0.11.6"
+# Carried C must be DECLARED since spinel 2026.09.12 (matz/spinel#4362,
+# tep#258): an unlisted .c is reported and skipped. sphttp is the core
+# shim; the sqlite/pg shims stay feature-gated [[build]] units below.
+sources = ["tep/sphttp.c"]
 
 [dependencies]
 spinel_kit = { git = "https://github.com/OriPekelman/spinelkit" }
@@ -24,7 +28,7 @@ default = []
 sqlite = []
 pg = []
 
-# --- sphttp: core HTTP shim — carried-C (tep/sphttp.c), no entry needed. ----
+# --- sphttp: core HTTP shim — carried-C, declared in [package] sources. ------
 # openssl resolves from system headers; link flags ride tep/net.rb ffi_lib.
 
 # --- sqlite: optional, feature-gated ----------------------------------------
