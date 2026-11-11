@@ -8,10 +8,20 @@ module Tep
     READ: Integer
     WRITE: Integer
 
+    # Register a fiber, recycling the first finished slot if any.
     def self.spawn_fiber: (Fiber f) -> Fiber
+
+    # Index of the first finished slot, or -1.
+    def self.free_slot: () -> Integer
 
     # One scheduler pass. Returns true if it resumed a fiber.
     def self.tick: (Integer poll_timeout_ms) -> bool
+
+    # Drop finished slots from the tail of the parallel arrays.
+    def self.reclaim_tail: () -> Integer
+
+    # Resume every due fiber once, in slot order. Returns the count.
+    def self.resume_ready: () -> Integer
 
     # Build the poll set from any I/O-parked fibers and run poll(2).
     def self.poll_round: (Integer timeout_ms) -> Integer

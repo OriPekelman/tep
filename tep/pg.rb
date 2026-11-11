@@ -1100,9 +1100,8 @@ module PG
       @free.push(c)
       if @waiter_idxs.length > 0
         widx = @waiter_idxs.delete_at(0)
-        # wake_at = -1 makes the fiber the "earliest due" in the
-        # next tick's pick (the tick comparator chooses the lowest
-        # wake_at among the time-due set, so -1 always wins).
+        # wake_at = -1 marks the fiber due: the next tick's
+        # resume_ready pass picks it up with the other due fibers.
         Tep::APP.sched_wake_at[widx] = -1
       end
       0

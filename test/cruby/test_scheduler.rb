@@ -151,3 +151,67 @@ class TestScheduler < TepTest
     assert_match(/elapsed=[12]/, res.body)
   end
 end
+
+# Scheduler fairness, exercised under Tep::Server::Scheduled (the
+# prefork-handler variant above SIGSEGVs; here the handler already runs
+# inside a scheduler fiber, and spawning more from it is the shape the
+# accept loop uses).
+class TestSchedulerFairness < TepTest
+  app_source <<~RB
+    require 'sinatra'
+    set :scheduler, :scheduled
+
+    class Trail
+      attr_accessor :s
+      def initialize
+        @s = ""
+      end
+    end
+
+    # Appends its name to the shared trail once per resume, `count`
+    # times, yielding plainly (wake_at stays -1 = due again next pass).
+    class Hopper
+      attr_accessor :fiber, :name, :trail, :remaining
+      def initialize(name, trail, count)
+        @name = name
+        @trail = trail
+        @remaining = count
+        @fiber = Fiber.new { run }
+      end
+      def run
+        while @remaining > 0
+          @trail.s = @trail.s + @name
+          @remaining -= 1
+          Fiber.yield
+        end
+      end
+    end
+
+    get '/round_robin' do
+      t = Trail.new
+      a = Hopper.new("A", t, 2)
+      b = Hopper.new("B", t, 2)
+      c = Hopper.new("C", t, 2)
+      Tep::Scheduler.spawn_fiber(a.fiber)
+      Tep::Scheduler.spawn_fiber(b.fiber)
+      Tep::Scheduler.spawn_fiber(c.fiber)
+      # Hand the scheduler a few passes so the hoppers get to run.
+      Tep::Scheduler.pause(0)
+      Tep::Scheduler.pause(0)
+      Tep::Scheduler.pause(0)
+      t.s
+    end
+  RB
+
+  def test_due_fibers_are_resumed_round_robin
+    res = get("/round_robin")
+    assert_equal "200", res.code
+    trail = res.body
+    assert_equal 6, trail.length, "trail=#{trail}"
+    # Each hopper runs once before any runs twice. The old picker
+    # resumed only the lowest slot among equally-due fibers per tick,
+    # which ran A to completion before B ever started ("AABBCC").
+    assert_equal %w[A B C], trail[0, 3].chars.sort, "trail=#{trail}"
+    assert_equal %w[A B C], trail[3, 3].chars.sort, "trail=#{trail}"
+  end
+end
