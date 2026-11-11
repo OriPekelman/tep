@@ -39,8 +39,8 @@ jobs:
             runs_on: ubuntu-latest
           - os: gx10-arm64
             runs_on: [self-hosted, gx10, ARM64]
-          - os: macos-14
-            runs_on: macos-14
+          - os: macos-latest
+            runs_on: macos-latest
     env:
       TEP_SKIP_SPINEL_FRESH: "1"   # we provide a fresh spinel below
     steps:
