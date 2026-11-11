@@ -53,6 +53,10 @@ jobs:
           cp spinel-src/build/spinel_rbs_extract spinel-dist/bin/
           cp -R spinel-src/lib      spinel-dist/lib
           cp -R spinel-src/packages spinel-dist/packages
+          # builtins/ (Ruby-source Enumerable/Comparable/...) is resolved
+          # beside the compiler or its parent since 2026.10.25; without it
+          # every compile dies with "the toolchain is incomplete".
+          cp -R spinel-src/builtins spinel-dist/builtins
       - name: Upload spinel toolchain
         uses: actions/upload-artifact@v7
         with:
