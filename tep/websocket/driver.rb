@@ -108,7 +108,7 @@ module Tep
       def self.send_frame(fd, opcode, payload)
         frame = Tep::WebSocket::Frame.new(true, opcode, payload)
         bytes = frame.encode_unmasked
-        Sock.sphttp_write_bytes(fd, bytes, bytes.length)
+        Sock.sphttp_write_bytes(fd, bytes, bytes.bytesize)
       end
 
       # Close payload: 2-byte big-endian code + UTF-8 reason. Per

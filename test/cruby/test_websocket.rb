@@ -5,14 +5,14 @@
 #   - Handshake header parsing (Upgrade / Connection / Version / Key)
 #   - Subprotocol negotiation parser
 #
-# Integration coverage (Driver + Connection over a real socket
-# round-trip) lives separately and isn't in this commit -- it needs
-# a Ruby-side WS client to wire up, which is its own dependency.
+# The UTF-8 send test also covers Driver + Connection over a raw socket.
 require_relative "helper"
+require "timeout"
 
 class TestWebSocket < TepTest
   app_source <<~'RB'
     require "sinatra"
+    set :scheduler, :scheduled
 
     # Encode a small text frame and dump it as a hex string so the
     # MRI test can check byte-by-byte. Server frames are unmasked
@@ -20,8 +20,8 @@ class TestWebSocket < TepTest
     def hex_of(s)
       out = ""
       i = 0
-      while i < s.length
-        b = s[i].ord & 0xff
+      while i < s.bytesize
+        b = s.getbyte(i)
         out = out + ((b / 16) < 10 ? (b / 16 + 48).chr : (b / 16 + 87).chr)
         out = out + ((b % 16) < 10 ? (b % 16 + 48).chr : (b % 16 + 87).chr)
         i += 1
@@ -37,6 +37,26 @@ class TestWebSocket < TepTest
     get '/frame/binary_short' do
       f = Tep::WebSocket::Frame.new(true, Tep::WebSocket::OPCODE_BINARY, "abc")
       hex_of(f.encode_unmasked)
+    end
+
+    get '/frame/utf8' do
+      f = Tep::WebSocket::Frame.new(true, Tep::WebSocket::OPCODE_TEXT, "These go to eleven 🎸")
+      hex_of(f.encode_unmasked)
+    end
+
+    get '/frame/utf8_length/:bytes' do
+      size = params["bytes"].to_i
+      payload = "é" * (size / 2)
+      payload = payload + "x" if payload.bytesize < size
+      f = Tep::WebSocket::Frame.new(true, Tep::WebSocket::OPCODE_TEXT, payload)
+      hex_of(f.encode_unmasked[0, 10])
+    end
+
+    websocket '/utf8' do |ws|
+      on_open do |evt|
+        ws.text("These go to eleven 🎸")
+        ws.text("next")
+      end
     end
 
     get '/frame/text_extended_16' do
@@ -99,6 +119,39 @@ class TestWebSocket < TepTest
     # 0x82 = FIN + opcode 2 (binary), 0x03 = unmasked 3-byte payload,
     # then "abc" = 61 62 63.
     assert_equal "8203" + "616263", res.body
+  end
+
+  def test_frame_utf8_counts_payload_bytes
+    payload = "These go to eleven 🎸"
+    expected = [0x81, payload.bytesize].pack("C*") + payload.b
+    assert_equal expected.unpack1("H*"), get("/frame/utf8").body
+  end
+
+  def test_frame_utf8_length_encoding_boundaries
+    [125, 126, 65535, 65536].each do |size|
+      header = if size <= 125
+        [0x81, size].pack("C*")
+      elsif size <= 65535
+        [0x81, 126, size].pack("CCn")
+      else
+        [0x81, 127, size].pack("CCQ>")
+      end
+      assert get("/frame/utf8_length/#{size}").body.start_with?(header.unpack1("H*")), "#{size}-byte payload"
+    end
+  end
+
+  def test_driver_writes_complete_utf8_frames
+    port = self.class.boot!
+    TCPSocket.open("127.0.0.1", port) do |socket|
+      socket.write("GET /utf8 HTTP/1.1\r\nHost: 127.0.0.1:#{port}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n")
+      Timeout.timeout(3) do
+        assert_includes socket.gets("\r\n\r\n"), "101 Switching Protocols"
+        ["These go to eleven 🎸", "next"].each do |payload|
+          assert_equal [0x81, payload.bytesize].pack("C*"), socket.read(2)
+          assert_equal payload.b, socket.read(payload.bytesize)
+        end
+      end
+    end
   end
 
   def test_frame_16bit_length_marker

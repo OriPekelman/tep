@@ -36,7 +36,7 @@ module Tep
         b0 = (@fin ? 0x80 : 0x00) | (@opcode & 0x0f)
         head = head + Frame.byte_to_chr(b0)
 
-        plen = @payload.length
+        plen = @payload.bytesize
         if plen <= 125
           head = head + Frame.byte_to_chr(plen)
         elsif plen <= 65535
