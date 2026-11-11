@@ -188,31 +188,47 @@ module Tep
         end
         keep_going = true
         while keep_going
-          blob = Tep::Server::Scheduled.read_request_blob(client, KEEPALIVE_TIMEOUT)
-          if blob.length == 0
-            break
-          end
-          req = Parser.parse(blob)
-          if req == nil
-            Tep::Server::Scheduled.send_simple(client, 400, "bad request")
-            break
-          end
-
-          req.consume_body_via_scheduler(client)
-
-          res = Response.new
-          Tep::APP.dispatch(req, res)
-
-          # Streaming responses use chunked Connection: close (same
-          # simplification as the prefork server) -- force the
-          # keep-alive loop to end after this response so the stream's
-          # terminator isn't followed by a stale read on the same fd.
-          keep_alive = req.keep_alive? && !res.halted_close? && !res.streaming
-          Tep::Server::Scheduled.write_response(client, req, res, keep_alive)
-          keep_going = keep_alive
+          keep_going = Tep::Server::Scheduled.serve_request(client)
         end
         Sock.sphttp_close(client)
         0
+      end
+
+      # One request on a keep-alive connection. Returns true to keep
+      # the connection open for the next one, false to close it.
+      #
+      # Deliberately its own frame: between requests the connection
+      # fiber parks in read_request_blob, and anything still referenced
+      # by handle_connection's locals at that point -- the previous
+      # blob / req / res when this lived inline in its loop -- stays a
+      # GC root for as long as the client stays idle. With many parked
+      # keep-alive connections that is one full request's worth of
+      # garbage pinned per connection, promoted to the old generation
+      # on every minor GC and only freed by a full one. Returning here
+      # drops those references before the fiber parks.
+      def self.serve_request(client)
+        blob = Tep::Server::Scheduled.read_request_blob(client, KEEPALIVE_TIMEOUT)
+        if blob.length == 0
+          return false
+        end
+        req = Parser.parse(blob)
+        if req == nil
+          Tep::Server::Scheduled.send_simple(client, 400, "bad request")
+          return false
+        end
+
+        req.consume_body_via_scheduler(client)
+
+        res = Response.new
+        Tep::APP.dispatch(req, res)
+
+        # Streaming responses use chunked Connection: close (same
+        # simplification as the prefork server) -- force the
+        # keep-alive loop to end after this response so the stream's
+        # terminator isn't followed by a stale read on the same fd.
+        keep_alive = req.keep_alive? && !res.halted_close? && !res.streaming
+        Tep::Server::Scheduled.write_response(client, req, res, keep_alive)
+        keep_alive
       end
 
       # Non-blocking request reader. Returns the accumulated blob

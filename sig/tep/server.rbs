@@ -47,6 +47,8 @@ module Tep
       def self.accept_loop: () -> void
       def self.handle_pending: () -> Integer
       def self.handle_connection: (Integer client) -> Integer
+      # One keep-alive request; true = keep the connection open.
+      def self.serve_request: (Integer client) -> bool
       def self.read_request_blob: (Integer fd, Integer timeout_seconds) -> String
       def self.write_response: (Integer client, Tep::Request req, Tep::Response res, bool keep_alive) -> Integer
       def self.send_simple: (Integer client, Integer status, String msg) -> Integer
