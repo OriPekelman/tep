@@ -43,13 +43,26 @@ module Tep
         # often want to send a welcome message.
         Connection.dispatch_open(@driver)
 
+        idle_deadline = Time.now.to_i + @idle_timeout_seconds
         while true
-          ready = Tep::Scheduler.io_wait(@fd, Tep::Scheduler::READ, @idle_timeout_seconds)
-          if ready == 0
-            # Timeout: close 1001 going-away.
+          if Sock.sphttp_shutdown_requested != 0
+            @driver.close(Tep::WebSocket::CLOSE_GOING_AWAY, "server shutdown")
+            Connection.dispatch_close(@driver, Tep::WebSocket::CLOSE_GOING_AWAY, "server shutdown")
+            return 0
+          end
+          remaining = idle_deadline - Time.now.to_i
+          if remaining <= 0
             @driver.close(Tep::WebSocket::CLOSE_GOING_AWAY, "idle timeout")
             return 0
           end
+          wait_seconds = remaining > 1 ? 1 : remaining
+          ready = Tep::Scheduler.io_wait(@fd, Tep::Scheduler::READ, wait_seconds)
+          if ready == 0
+            # Re-check shutdown and the idle deadline in bounded slices.
+            next
+          end
+          # A shutdown wakeup does not mean the socket has data to read.
+          next if Sock.sphttp_shutdown_requested != 0
 
           n = Sock.sphttp_recv_into_frame(@fd)
           if n <= 0
@@ -61,6 +74,7 @@ module Tep
             end
             return -1
           end
+          idle_deadline = Time.now.to_i + @idle_timeout_seconds
 
           # Parse + dispatch as many complete frames as possible
           # from this recv.

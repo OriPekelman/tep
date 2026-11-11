@@ -105,6 +105,18 @@ module Tep
         f = Fiber.new { Tep::Server::Scheduled.accept_loop(sfd) }
         Tep::Scheduler.spawn_fiber(f)
         while Tep::Scheduler.alive_count > 0
+          if Sock.sphttp_shutdown_requested != 0
+            # Expire I/O waits without inventing socket readiness. Otherwise
+            # an EAGAIN retry can keep re-parking forever during shutdown.
+            i = 0
+            while i < Tep::APP.sched_fibers.length
+              if Tep::APP.sched_fibers[i].f.alive? && Tep::APP.sched_io_fd[i] >= 0
+                Tep::APP.sched_io_ready[i] = 0
+                Tep::APP.sched_wake_at[i] = Time.now.to_i
+              end
+              i += 1
+            end
+          end
           Tep::Scheduler.tick(1000)
         end
         0
@@ -218,6 +230,9 @@ module Tep
         end
 
         req.consume_body_via_scheduler(client)
+        # A shutdown wake may stop an incomplete body read. Do not dispatch
+        # that partial request to application handlers.
+        return false if Sock.sphttp_shutdown_requested != 0
 
         res = Response.new
         Tep::APP.dispatch(req, res)
@@ -241,6 +256,7 @@ module Tep
         buf = ""
         deadline = Time.now.to_i + timeout_seconds
         while buf.length < MAX_REQUEST_BYTES
+          return "" if Sock.sphttp_shutdown_requested != 0
           remaining = deadline - Time.now.to_i
           if remaining <= 0
             return ""
