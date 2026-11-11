@@ -76,6 +76,8 @@ module Sock
   def self.sphttp_tls_accept_start: (Integer fd) -> Integer
   def self.sphttp_tls_handshake_step: (Integer fd) -> Integer
   def self.sphttp_io_status: () -> Integer
+  # One non-blocking write from `offset`; 0 = would block (see io_status).
+  def self.sphttp_write_some: (Integer fd, String s, Integer offset) -> Integer
   def self.sphttp_recv_some: (Integer fd, Integer max) -> String
   def self.sphttp_recv_all: (Integer fd, Integer max) -> String
 

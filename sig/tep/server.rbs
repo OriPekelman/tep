@@ -50,6 +50,10 @@ module Tep
       # One keep-alive request; true = keep the connection open.
       def self.serve_request: (Integer client) -> bool
       def self.read_request_blob: (Integer fd, Integer timeout_seconds) -> String
+      # Cooperative write: parks the fiber on io_wait while the socket
+      # would block. 0 on success, -1 on error / write-side stall.
+      def self.write_all: (Integer client, String data) -> Integer
+      # Returns -1 when the response could not be written in full.
       def self.write_response: (Integer client, Tep::Request req, Tep::Response res, bool keep_alive) -> Integer
       def self.send_simple: (Integer client, Integer status, String msg) -> Integer
     end

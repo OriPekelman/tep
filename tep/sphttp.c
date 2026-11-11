@@ -199,19 +199,47 @@ const char *sphttp_drain_body(int fd, int total_len) {
     return sphttp_body_buf;
 }
 
-int sphttp_write_str(int fd, const char *s) {
+/* Bounded wait for `fd` to become ready for `events`. The accepted
+ * fds under Tep::Server::Scheduled are non-blocking, so a write that
+ * outruns the socket buffer surfaces EAGAIN (or SSL_ERROR_WANT_*)
+ * mid-response. Returning -1 there dropped the rest of the response
+ * on the floor; the send loop below waits and retries instead. 0 =
+ * ready, -1 = timeout / poll error. The bound mirrors the server's
+ * keep-alive idle timeout so a client that stops reading can't pin
+ * the worker forever. */
+#define SPHTTP_WRITE_WAIT_MS 30000
+static int sphttp_wait_fd(int fd, short events) {
+    struct pollfd p = { fd, events, 0 };
+    for (;;) {
+        int r = poll(&p, 1, SPHTTP_WRITE_WAIT_MS);
+        if (r > 0) return 0;
+        if (r == 0 || errno != EINTR) return -1;
+    }
+}
+
+/* Write all `len` bytes of `p` to `fd` (TLS-transparent), waiting for
+ * readiness on EAGAIN / SSL_ERROR_WANT_*. 0 on success, -1 on error. */
+static int sphttp_send_all(int fd, const char *p, size_t len) {
     SSL *ssl = sphttp_ssl_for(fd);
-    size_t len = strlen(s);
     size_t off = 0;
     while (off < len) {
         if (ssl) {
-            int w = SSL_write(ssl, s + off, (int)(len - off));
-            if (w <= 0) return -1;
+            int w = SSL_write(ssl, p + off, (int)(len - off));
+            if (w <= 0) {
+                int e = SSL_get_error(ssl, w);
+                if (e != SSL_ERROR_WANT_READ && e != SSL_ERROR_WANT_WRITE) return -1;
+                if (sphttp_wait_fd(fd, e == SSL_ERROR_WANT_READ ? POLLIN : POLLOUT) < 0) return -1;
+                continue;
+            }
             off += (size_t)w;
         } else {
-            ssize_t n = send(fd, s + off, len - off, 0);
+            ssize_t n = send(fd, p + off, len - off, 0);
             if (n <= 0) {
                 if (errno == EINTR) continue;
+                if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                    if (sphttp_wait_fd(fd, POLLOUT) < 0) return -1;
+                    continue;
+                }
                 return -1;
             }
             off += (size_t)n;
@@ -220,29 +248,16 @@ int sphttp_write_str(int fd, const char *s) {
     return 0;
 }
 
+int sphttp_write_str(int fd, const char *s) {
+    return sphttp_send_all(fd, s, strlen(s));
+}
+
 /* Binary write -- explicit length, no strlen. Required for any
  * caller that needs to send bytes that may contain 0x00 (WebSocket
  * frames, raw protocol bodies). Returns 0 on success, -1 on send
  * failure. */
 int sphttp_write_bytes(int fd, const char *data, int n) {
-    SSL *ssl = sphttp_ssl_for(fd);
-    size_t total = (n < 0) ? 0 : (size_t)n;
-    size_t off = 0;
-    while (off < total) {
-        if (ssl) {
-            int w = SSL_write(ssl, data + off, (int)(total - off));
-            if (w <= 0) return -1;
-            off += (size_t)w;
-        } else {
-            ssize_t w = send(fd, data + off, total - off, 0);
-            if (w <= 0) {
-                if (errno == EINTR) continue;
-                return -1;
-            }
-            off += (size_t)w;
-        }
-    }
-    return 0;
+    return sphttp_send_all(fd, data, (n < 0) ? 0 : (size_t)n);
 }
 
 /* Binary recv accessor pair, mechanically identical to
@@ -639,6 +654,43 @@ const char *sphttp_recv_some(int fd, int maxlen) {
     sphttp_recv_buf[n] = '\0';
     sp_ffi_bin_len = (int)n;
     return sphttp_recv_buf;
+}
+
+/* One non-blocking write attempt of `s` from byte `offset`, for the
+ * cooperative server (Tep::Server::Scheduled.write_all). Returns the
+ * bytes written; 0 when the socket would block, with sphttp_io_status()
+ * naming the direction to park on (1 = read, 2 = write); -1 on a hard
+ * error -- including `offset` already at the end of the C string,
+ * which means the Ruby String carried an embedded NUL the :str FFI
+ * can't (see sphttp_write_bytes) and no progress is possible. The
+ * caller advances `offset` and parks on Tep::Scheduler.io_wait between
+ * attempts, so a slow reader stalls only its own fiber rather than the
+ * whole worker in sphttp_write_str's poll. */
+int sphttp_write_some(int fd, const char *s, int offset) {
+    size_t len = strlen(s);
+    if (offset < 0 || (size_t)offset >= len) return -1;
+    size_t remaining = len - (size_t)offset;
+    SSL *ssl = sphttp_ssl_for(fd);
+    if (ssl) {
+        /* The FFI may hand us a fresh copy of the same String on retry;
+         * OpenSSL insists on the identical buffer unless told otherwise. */
+        SSL_set_mode(ssl, SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER);
+        int n = SSL_write(ssl, s + offset, (int)remaining);
+        if (n > 0) { sphttp_io_last = 0; return n; }
+        sphttp_io_last = sphttp_ssl_want(ssl, n);
+        return (sphttp_io_last == 1 || sphttp_io_last == 2) ? 0 : -1;
+    }
+    ssize_t n;
+    do {
+        n = send(fd, s + offset, remaining, 0);
+    } while (n < 0 && errno == EINTR);
+    if (n > 0) { sphttp_io_last = 0; return (int)n; }
+    if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+        sphttp_io_last = 2;
+        return 0;
+    }
+    sphttp_io_last = -1;
+    return -1;
 }
 
 /* Read from `fd` until EOF (peer close) or `max_bytes`, whichever

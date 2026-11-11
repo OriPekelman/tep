@@ -34,6 +34,12 @@ class TestServerScheduled < TepTest
     get "/sched_slots" do
       Tep::APP.sched_fibers.length.to_s
     end
+
+    # Far larger than the loopback socket buffers, so writing it to a
+    # client that isn't reading hits EAGAIN on the non-blocking fd.
+    get "/big" do
+      "x" * 67108864
+    end
   RB
 
   def test_basic_get_through_scheduler
@@ -116,5 +122,29 @@ class TestServerScheduled < TepTest
     # accept fiber + the two overlapping connections + this request's.
     assert_operator slots, :<=, 8,
       "scheduler kept #{slots} slots after 60 churned connections"
+  end
+
+  def test_large_response_to_slow_reader_arrives_in_full
+    sock = Socket.new(:INET, :STREAM)
+    sock.setsockopt(:SOCKET, :RCVBUF, 65536)   # keep the kernel from absorbing it all
+    sock.connect(Socket.sockaddr_in(@port, "127.0.0.1"))
+    sock.write("GET /big HTTP/1.1\r\nHost: t\r\nConnection: close\r\n\r\n")
+    # Don't read for a while: the server fills the socket buffer and
+    # must park on write-readiness rather than drop the rest.
+    sleep 1.5
+    data = +""
+    deadline = Time.now + 20
+    while Time.now < deadline
+      next unless IO.select([sock], nil, nil, 1)
+      begin
+        data << sock.read_nonblock(1 << 20)
+      rescue EOFError
+        break
+      end
+    end
+    sock.close
+    head, body = data.split("\r\n\r\n", 2)
+    assert_equal "67108864", head[/Content-Length: (\d+)/i, 1]
+    assert_equal 67108864, body.bytesize
   end
 end

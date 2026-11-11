@@ -138,6 +138,7 @@ module Sock
   ffi_func :sphttp_tls_accept_start,   [:int],       :int
   ffi_func :sphttp_tls_handshake_step, [:int],       :int
   ffi_func :sphttp_io_status,          [],           :int
+  ffi_func :sphttp_write_some,    [:int, :str, :int], :int
   ffi_func :sphttp_recv_some,     [:int, :int],     :binstr
   ffi_func :sphttp_recv_all,      [:int, :int],     :binstr
 
