@@ -3,7 +3,7 @@
 # Surface:
 #   - Frame.new(fin, opcode, payload)             build for emit
 #   - frame.encode_unmasked -> String             server-side emit bytes
-#   - Frame.parse_from_buf(bytes_at, bytes_len)   parse a recv'd frame
+#   - Frame.parse_from_buf(start, avail, max_payload)   parse a recv'd frame
 #       returns a ParseResult (frame + bytes_consumed, OR an error code).
 #
 # Server-side emit: never masks (RFC 6455 §5.3 -- server MUST NOT
@@ -18,6 +18,9 @@
 #   - client frame not masked
 #   - control frame payload > 125
 #   - control frame fragmented
+#   - 64-bit length with the most significant bit set
+# and a 1009 close for a data frame whose advertised payload length
+# exceeds max_payload (decided from the length field alone).
 module Tep
   module WebSocket
     class Frame
@@ -71,7 +74,13 @@ module Tep
       #   .status == "ok"      -> .frame populated + .consumed bytes used
       #   .status == "need"    -> need more bytes (consumed == 0)
       #   .status == "close"   -> protocol violation; close with .close_code
-      def self.parse_from_buf(start, avail)
+      #
+      # `max_payload` caps the advertised payload length (#260). The
+      # refusal comes from the length field alone, before the mask-key
+      # and payload "need" returns: waiting for the payload to arrive
+      # would mean buffering exactly the bytes the cap exists to
+      # reject, once a caller carries partial frames across recvs.
+      def self.parse_from_buf(start, avail, max_payload)
         out = Tep::WebSocket::ParseResult.new
         if avail - start < 2
           out.outcome = "need"
@@ -132,7 +141,15 @@ module Tep
           plen = (h << 8) | l
           pos += 2
         else
-          # 64-bit length
+          # 64-bit length. RFC 6455 §5.2: the most significant bit
+          # MUST be 0. Checked on the first length byte, before the
+          # accumulation loop, so the final shift can't overflow a
+          # fixed int64 into a negative plen that slips under the cap.
+          if avail - pos >= 1 && bs[pos] >= 0x80
+            out.outcome = "close"
+            out.close_code = Tep::WebSocket::CLOSE_PROTOCOL_ERROR
+            return out
+          end
           if avail - pos < 8
             out.outcome = "need"
             return out
@@ -144,6 +161,12 @@ module Tep
             i += 1
           end
           pos += 8
+        end
+
+        if plen > max_payload
+          out.outcome = "close"
+          out.close_code = Tep::WebSocket::CLOSE_MESSAGE_TOO_BIG
+          return out
         end
 
         # 4-byte mask key.

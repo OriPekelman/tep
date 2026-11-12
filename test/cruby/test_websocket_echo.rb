@@ -6,55 +6,32 @@
 # Lives next to the unit-level test/test_websocket.rb (which covers
 # the codec + handshake math in isolation). This file covers the
 # Driver+Connection+Server integration path that those tests skipped.
-require "minitest/autorun"
+require_relative "helper"
 require "socket"
 require "securerandom"
 require "base64"
 require "digest/sha1"
 
-class TestWebSocketEcho < Minitest::Test
+class TestWebSocketEcho < TepTest
   GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11".freeze
-  ROOT = File.expand_path("..", __dir__)
-  BIN  = File.join(ROOT, "examples", "websocket_echo")
 
-  def setup
-    skip "examples/websocket_echo not built" unless File.executable?(BIN)
-    @port = 40000 + rand(10_000)
-    @pid = spawn(BIN, "-p", @port.to_s, "-q", out: "/dev/null", err: "/dev/null")
-    deadline = Time.now + 5
-    loop do
-      begin
-        s = TCPSocket.new("127.0.0.1", @port)
-        s.close
-        break
-      rescue Errno::ECONNREFUSED
-        raise "server failed to start" if Time.now > deadline
-        sleep 0.05
+  # Same app as examples/websocket_echo.rb. Built through the harness:
+  # the old setup looked for a prebuilt examples/websocket_echo under
+  # test/ (wrong root) and so skipped on every run.
+  app_source <<~'RB'
+    require "sinatra"
+    set :scheduler, :scheduled
+
+    websocket '/echo' do |ws|
+      on_open do |evt|
+        ws.text("welcome")
+      end
+
+      on_message do |evt|
+        ws.text("echo: " + evt.data)
       end
     end
-  end
-
-  def teardown
-    return unless @pid
-    # Bounded reap: TERM, wait up to 5s, then SIGKILL. A bare
-    # Process.wait can hang forever if the server ignores TERM
-    # (single-process here, so the pid signal suffices -- no pgroup).
-    Process.kill("TERM", @pid) rescue nil
-    deadline = Time.now + 5
-    reaped = false
-    until Time.now > deadline
-      got = (Process.waitpid(@pid, Process::WNOHANG) rescue :gone)
-      if got
-        reaped = true
-        break
-      end
-      sleep 0.02
-    end
-    unless reaped
-      Process.kill("KILL", @pid) rescue nil
-      Process.wait(@pid) rescue nil
-    end
-  end
+  RB
 
   def expected_accept(key)
     Base64.strict_encode64(Digest::SHA1.digest(key + GUID))
@@ -133,6 +110,76 @@ class TestWebSocketEcho < Minitest::Test
     echo = parse_unmasked_text_frame(buf2)
     assert_equal "echo: hello", echo
 
+    sock.close
+  end
+
+  # --- #260: frame-size cap + 64-bit length sanity -------------------
+
+  # Handshake, swallow the "welcome" frame, return the open socket.
+  def open_ws
+    sock = TCPSocket.new("127.0.0.1", @port)
+    send_handshake(sock, Base64.strict_encode64(SecureRandom.bytes(16)))
+    _head, leftover = read_until_double_crlf(sock)
+    buf = leftover.dup
+    deadline = Time.now + 2
+    while buf.bytesize < 9 && Time.now < deadline
+      buf << sock.readpartial(4096)
+    end
+    assert_equal "welcome", parse_unmasked_text_frame(buf)
+    sock
+  end
+
+  # Read one server CLOSE frame; return its status code.
+  def read_close_code(sock)
+    buf = String.new
+    deadline = Time.now + 3
+    while buf.bytesize < 4 && Time.now < deadline
+      break unless IO.select([sock], nil, nil, 0.2)
+      begin
+        buf << sock.readpartial(4096)
+      rescue EOFError
+        break
+      end
+    end
+    assert buf.bytesize >= 4, "expected a CLOSE frame, got #{buf.bytesize} bytes"
+    assert_equal 0x88, buf.getbyte(0), "expected FIN+close (0x88)"
+    (buf.getbyte(2) << 8) | buf.getbyte(3)
+  end
+
+  # Header only: FIN+text, masked, 64-bit length marker, the length,
+  # the mask key -- and no payload. The server must refuse from the
+  # length field alone.
+  def header_with_64bit_len(len_bytes)
+    [0x81, 0x80 | 127].pack("C*") + len_bytes + SecureRandom.bytes(4)
+  end
+
+  def test_oversized_frame_closes_with_1009_from_the_header_alone
+    sock = open_ws
+    # 32 MiB advertised, default cap is 16 MiB; no payload follows.
+    sock.write(header_with_64bit_len([32 * 1024 * 1024].pack("Q>")))
+    assert_equal 1009, read_close_code(sock)
+    sock.close
+  end
+
+  def test_64bit_length_with_msb_set_closes_with_1002
+    sock = open_ws
+    sock.write(header_with_64bit_len([0x80, 0, 0, 0, 0, 0, 0, 1].pack("C*")))
+    assert_equal 1002, read_close_code(sock)
+    sock.close
+  end
+
+  def test_frame_under_the_cap_still_echoes_after_16bit_length
+    sock = open_ws
+    payload = "x" * 300
+    mask = SecureRandom.bytes(4)
+    masked = payload.bytes.each_with_index.map { |b, i| b ^ mask.getbyte(i & 3) }.pack("C*")
+    sock.write([0x81, 0x80 | 126, 300 >> 8, 300 & 0xff].pack("C*") + mask + masked)
+    buf = String.new
+    deadline = Time.now + 2
+    while buf.bytesize < 4 + 306 && Time.now < deadline
+      buf << sock.readpartial(4096)
+    end
+    assert_equal "echo: " + payload, parse_unmasked_text_frame(buf)
     sock.close
   end
 end

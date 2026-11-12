@@ -25,7 +25,7 @@ module Tep
       def encode_unmasked: () -> String
 
       def self.byte_to_chr: (Integer n) -> String
-      def self.parse_from_buf: (Integer start, Integer avail) -> ParseResult
+      def self.parse_from_buf: (Integer start, Integer avail, Integer max_payload) -> ParseResult
       def self.reserved_opcode?: (Integer op) -> bool
       def self.control_opcode?: (Integer op) -> bool
     end
