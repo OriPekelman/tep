@@ -82,12 +82,16 @@ module Tep
           state.start = 0
           state.avail = n
           while true
-            r = Tep::WebSocket::Frame.parse_from_buf(state.start, state.avail)
+            r = Tep::WebSocket::Frame.parse_from_buf(state.start, state.avail, @driver.max_frame_size)
             if r.outcome == "need"
               break
             end
             if r.outcome == "close"
-              @driver.close(r.close_code, "protocol error")
+              if r.close_code == Tep::WebSocket::CLOSE_MESSAGE_TOO_BIG
+                @driver.close(r.close_code, "message too big")
+              else
+                @driver.close(r.close_code, "protocol error")
+              end
               return 0
             end
             Connection.dispatch_frame(@driver, r.frame)
