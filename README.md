@@ -22,8 +22,11 @@ SQLite, opt-in PostgreSQL, WebSockets, Broadcast + Presence + LiveView,
 an MCP tool catalog, TLS, a pooled HTTP client, and an OpenAI-compatible
 LLM client + server.
 
-> **Current release:** [v0.11.7](https://github.com/OriPekelman/tep/releases/tag/v0.11.7)
-> on [RubyGems](https://rubygems.org/gems/tep) — `gem install tep`.
+> **Current release:** [v0.12.0](https://github.com/OriPekelman/tep/releases/tag/v0.12.0),
+> built against Spinel `2026.10.25`. It is a spin package (the repo root
+> is the require root). The `lib/`-shaped 0.11.x line on
+> [RubyGems](https://rubygems.org/gems/tep) is what `spinel-compat vendor`
+> consumers use until it can vendor root-layout gems (spinelgems#24).
 > Pre-alpha; API still in motion.
 
 <details>
