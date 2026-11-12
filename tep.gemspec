@@ -81,7 +81,7 @@ Gem::Specification.new do |s|
   # SpinelKit surfaces tep still consumes (log/url/hex) after absorbing the
   # retired Json codec as Tep::Json (tep#217): the real dependency replaces
   # the hand-copy on the gem path; the spin path declares it in spin.toml.
-  s.add_dependency "spinel_kit", ">= 0.3.0"
+  s.add_dependency "spinel_kit", ">= 0.3.1"
 
   # `bin/tep` uses Prism (bundled with Ruby >= 3.4) at build-time to
   # parse the user's Sinatra-style source. It is NOT a runtime
