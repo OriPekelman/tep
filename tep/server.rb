@@ -2,20 +2,39 @@
 # the perf model is "fork N workers, each runs its own Server"
 # (-w workers) using SO_REUSEPORT so the kernel load-balances.
 module Tep
+  REASONS = {
+    200 => "OK",
+    201 => "Created",
+    202 => "Accepted",
+    204 => "No Content",
+    206 => "Partial Content",
+    301 => "Moved Permanently",
+    302 => "Found",
+    303 => "See Other",
+    304 => "Not Modified",
+    307 => "Temporary Redirect",
+    308 => "Permanent Redirect",
+    400 => "Bad Request",
+    401 => "Unauthorized",
+    403 => "Forbidden",
+    404 => "Not Found",
+    405 => "Method Not Allowed",
+    409 => "Conflict",
+    410 => "Gone",
+    413 => "Content Too Large",
+    415 => "Unsupported Media Type",
+    422 => "Unprocessable Content",
+    429 => "Too Many Requests",
+    500 => "Internal Server Error",
+    501 => "Not Implemented",
+    502 => "Bad Gateway",
+    503 => "Service Unavailable",
+    504 => "Gateway Timeout"
+  }.freeze
+
+  # An empty reason phrase is valid (RFC 9112 4); "OK" on a 4xx is not.
   def self.reason(status)
-    if status == 200; return "OK"; end
-    if status == 201; return "Created"; end
-    if status == 204; return "No Content"; end
-    if status == 206; return "Partial Content"; end
-    if status == 301; return "Moved Permanently"; end
-    if status == 302; return "Found"; end
-    if status == 304; return "Not Modified"; end
-    if status == 400; return "Bad Request"; end
-    if status == 401; return "Unauthorized"; end
-    if status == 403; return "Forbidden"; end
-    if status == 404; return "Not Found"; end
-    if status == 500; return "Internal Server Error"; end
-    "OK"
+    REASONS.fetch(status, "")
   end
 
   class Server
