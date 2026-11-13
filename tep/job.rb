@@ -25,11 +25,12 @@
 #     max_retries INTEGER,   -- retries allowed after the first attempt
 #     run_at      INTEGER,   -- not claimable before this epoch second
 #     started_at  INTEGER,   -- when the current attempt was claimed
-#     error       TEXT       -- last failure message
+#     error       TEXT,      -- last failure message
+#     progress    TEXT       -- last payload passed to `progress`
 #   )
 #
 # `init_schema` creates the table, and on a table made by an older
-# tep it adds the last five columns with ALTER TABLE.
+# tep it adds the last six columns with ALTER TABLE.
 #
 # The single-arg payload is intentional: structured data goes
 # through JSON (Tep::Json) which we already ship. Sidekiq's
@@ -54,6 +55,40 @@
 # A worker that dies mid-job leaves its row `running`. Reclaim those
 # with `Tep::Job.requeue_stale(db, older_than_seconds)`.
 #
+# Worker (#230)
+# -------------
+# In an app built with bin/tep, declare the worker and the framework
+# does the rest:
+#
+#     set :scheduler, :scheduled
+#     job_worker DB_PATH, poll: 1
+#
+# Each server worker then runs one fiber that claims jobs, dispatches
+# them to the right `Tep::Job` subclass, and records the outcome
+# (`mark_done`, or `retry_or_fail` if `perform` raised). bin/tep
+# generates the name -> class dispatcher from the `Tep::Job`
+# subclasses in the app, so there is no ladder to write. The pieces
+# are also callable directly:
+#
+#     Tep::Job.work_one(db)   # claim + run one job; 1 if one ran
+#     Tep::Job.drain(db)      # run until nothing is claimable
+#     Tep::Job.work(db, 1)    # loop until shutdown, polling each second
+#
+# `perform` runs on the worker's fiber. A job that waits on I/O through
+# tep (Tep::Http, Tep::Llm, Tep::Scheduler.pause) yields to other
+# connections; a job that computes or shells out for a long time blocks
+# that worker. For long runs, start a subprocess and have the job tail
+# its output, calling `progress` as it goes.
+#
+# Progress
+# --------
+# Inside `perform`, `progress(payload)` stores the payload in the
+# row's `progress` column and publishes it on the Tep::Broadcast topic
+# "job:<id>", so a WebSocket subscribed to that topic sees it live.
+# The worker publishes "done", "retry" or "failed" on
+# "job:<id>:status" when the attempt ends. `jid` is the row id
+# (sidekiq's name for it).
+#
 # API
 # ---
 # Define a job by subclassing Tep::Job and overriding `perform`:
@@ -69,9 +104,9 @@
 #
 #     Tep::Job.enqueue("HelloJob", "world", DB_PATH)
 #
-# Worker side: fetch one, dispatch, mark done. The dispatch is
-# user-written because spinel doesn't carry cls_id tags through
-# `PtrArray<Tep::Job>`, so the framework can't virtual-dispatch
+# Hand-written drain loop, for code not built through bin/tep (which
+# has no generated dispatcher): spinel doesn't carry cls_id tags
+# through `PtrArray<Tep::Job>`, so the framework can't virtual-dispatch
 # `handler.perform(arg)` to the right subclass on its own.
 #
 #     loop do
@@ -93,14 +128,6 @@
 #       end
 #     end
 #
-# The verbosity of the `if name == "..."` ladder is the price of
-# type safety in spinel. A future bin/tep pass could generate this
-# dispatcher from the set of `Tep::Job` subclasses at compile time
-# (mirroring the way routes are generated from `get '/x' do .. end`),
-# at which point this surface becomes a one-liner. For v0.5 the
-# manual ladder is fine -- a single tep app rarely has more than
-# a handful of distinct job classes.
-#
 # Comparison to sidekiq
 # ---------------------
 # Sidekiq's `MyJob.perform_async(x)` enqueues on a Redis list keyed
@@ -118,12 +145,101 @@ module Tep
       "" + arg
     end
 
+    # Set by the dispatcher before `perform`: the row id of the job
+    # being run (sidekiq's `jid`) and the queue file it came from.
+    attr_accessor :jid, :db_path
+
+    def initialize
+      @jid     = 0
+      @db_path = ""
+    end
+
+    # Report progress from inside `perform`. See Job.progress.
+    def progress(payload)
+      Job.progress(@db_path, @jid, payload)
+    end
+
+    # Run job `name` with `arg`. bin/tep replaces this with a ladder
+    # over the app's Tep::Job subclasses; the base form only knows
+    # that it knows nothing.
+    def self.dispatch(name, arg, row_id, db_path)
+      raise "Tep::Job: no dispatcher for " + name + " (build with bin/tep, or dispatch by hand)"
+      ""
+    end
+
+    # Store `payload` in the row's `progress` column and publish it on
+    # the Tep::Broadcast topic "job:<row_id>". Returns the number of
+    # local subscribers it reached.
+    def self.progress(db_path, row_id, payload)
+      db = Tep::SQLite.new
+      if db.open(db_path)
+        db.exec("PRAGMA busy_timeout = 2000")
+        db.prepare("UPDATE tep_jobs SET progress = ? WHERE id = ?")
+        db.bind_str(1, payload)
+        db.bind_int(2, row_id)
+        db.step
+        db.finalize
+        db.close
+      end
+      Tep::Broadcast.publish("job:" + row_id.to_s, payload)
+    end
+
+    # Claim one job, run it through `dispatch`, record the outcome.
+    # A `perform` that raises goes through `retry_or_fail` with the
+    # exception message. Returns 1 if a job ran, 0 if none was
+    # claimable.
+    def self.work_one(db_path)
+      claim = Job.fetch_next(db_path)
+      if claim.length == 0
+        return 0
+      end
+      parts  = claim.split("|", 3)
+      row_id = parts[0].to_i
+      name   = parts[1]
+      arg    = parts[2]
+      outcome = "done"
+      begin
+        result = Job.dispatch(name, arg, row_id, db_path)
+        Job.mark_done(db_path, row_id, result)
+      rescue => e
+        if Job.retry_or_fail(db_path, row_id, e.message) == 1
+          outcome = "retry"
+        else
+          outcome = "failed"
+        end
+      end
+      Tep::Broadcast.publish("job:" + row_id.to_s + ":status", outcome)
+      1
+    end
+
+    # Run jobs until nothing is claimable. Returns how many ran.
+    def self.drain(db_path)
+      n = 0
+      while Job.work_one(db_path) == 1
+        n += 1
+      end
+      n
+    end
+
+    # Worker loop: run jobs as they become claimable, pausing
+    # `poll_seconds` when the queue is idle, until the server is asked
+    # to shut down. Inside the scheduled server the pause yields the
+    # fiber; elsewhere it sleeps.
+    def self.work(db_path, poll_seconds)
+      while Sock.sphttp_shutdown_requested == 0
+        if Job.work_one(db_path) == 0
+          Tep::Scheduler.pause(poll_seconds)
+        end
+      end
+      0
+    end
+
     # Columns added after the first release of the table, in the
     # order `init_schema` migrates them.
     def self.added_columns
       ["attempts INTEGER DEFAULT 0", "max_retries INTEGER DEFAULT 0",
        "run_at INTEGER DEFAULT 0", "started_at INTEGER DEFAULT 0",
-       "error TEXT DEFAULT ''"]
+       "error TEXT DEFAULT ''", "progress TEXT DEFAULT ''"]
     end
 
     # Idempotent. Creates the queue table if missing, and adds the
@@ -139,7 +255,7 @@ module Tep
                 "created_at INTEGER, finished_at INTEGER, result TEXT, " +
                 "attempts INTEGER DEFAULT 0, max_retries INTEGER DEFAULT 0, " +
                 "run_at INTEGER DEFAULT 0, started_at INTEGER DEFAULT 0, " +
-                "error TEXT DEFAULT '')")
+                "error TEXT DEFAULT '', progress TEXT DEFAULT '')")
         cols = Job.added_columns
         i = 0
         while i < cols.length

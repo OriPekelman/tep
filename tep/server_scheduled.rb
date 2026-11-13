@@ -104,6 +104,7 @@ module Tep
       def self.run_worker(sfd)
         f = Fiber.new { Tep::Server::Scheduled.accept_loop(sfd) }
         Tep::Scheduler.spawn_fiber(f)
+        Tep.spawn_background
         while Tep::Scheduler.alive_count > 0
           if Sock.sphttp_shutdown_requested != 0
             # Expire I/O waits without inventing socket readiness. Otherwise

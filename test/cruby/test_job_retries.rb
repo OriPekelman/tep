@@ -153,7 +153,7 @@ class TestJobRetries < TepTest
 
   def test_init_schema_migrates_a_legacy_table_in_place
     cols, old, new_id = get("/legacy").body.split(";")
-    assert_equal "12", cols, "7 legacy columns + 5 added, added once"
+    assert_equal "13", cols, "7 legacy columns + 6 added, added once"
     assert_equal "1|Old|payload", old, "a pre-migration row is still claimable"
     assert_equal "2", new_id
   end
