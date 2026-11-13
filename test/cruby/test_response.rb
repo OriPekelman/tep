@@ -45,8 +45,16 @@ class TestResponse < TepTest
       redirect '/ok', 301
     end
 
+    get '/redirect-303' do
+      redirect '/ok', 303
+    end
+
     get '/halt-401' do
       halt 401, "denied"
+    end
+
+    get '/halt-422' do
+      halt 422, "invalid"
     end
 
     get '/halt-bare' do
@@ -122,6 +130,13 @@ class TestResponse < TepTest
   def test_halt_status_only
     res = get("/halt-bare")
     assert_equal "418", res.code
+    refute_equal "OK", res.message
+  end
+
+  def test_reason_phrases
+    assert_equal "See Other", get("/redirect-303").message
+    assert_equal "Unauthorized", get("/halt-401").message
+    assert_equal "Unprocessable Content", get("/halt-422").message
   end
 
   def test_content_length
