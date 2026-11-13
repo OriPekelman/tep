@@ -13,17 +13,30 @@ module Tep
     # Insert a queued row. Returns the new rowid.
     def self.enqueue: (String name, String arg, String db_path) -> Integer
 
-    # Pull the next pending row as a JSON-ish blob with keys "id",
-    # "job_name", "arg". Returns "" if the queue is empty.
+    # Sidekiq perform_in: claimable `seconds` from now.
+    def self.enqueue_in: (Integer seconds, String name, String arg, String db_path) -> Integer
+
+    # General form: first-attempt delay + retries after the first attempt.
+    def self.enqueue_opts: (String name, String arg, String db_path, Integer delay_seconds, Integer max_retries) -> Integer
+
+    def self.added_columns: () -> Array[String]
+
+    # Atomically claim the next due row. Returns "row_id|name|arg"
+    # (split on "|" with limit 3), or "" if nothing is claimable.
     def self.fetch_next: (String db_path) -> String
 
     # Mark a row done + persist the result string into the row's
     # `result` column. Returns 1 on success, 0 on db failure.
     def self.mark_done: (String db_path, Integer row_id, String result) -> Integer
 
-    # Mark a row failed. The error message isn't persisted by this
-    # method -- callers write it via their own SQLite calls if they
-    # need it.
+    # Requeue with backoff while retries remain, else mark failed;
+    # stores the message. Returns 1 if requeued, 0 if terminal.
+    def self.retry_or_fail: (String db_path, Integer row_id, String error) -> Integer
+
+    # Requeue (or fail) rows left `running` by a dead worker.
+    def self.requeue_stale: (String db_path, Integer older_than_seconds) -> Integer
+
+    # Mark a row failed unconditionally; does not touch `error`.
     def self.mark_failed: (String db_path, Integer row_id) -> Integer
   end
 end
