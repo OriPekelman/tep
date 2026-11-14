@@ -63,12 +63,8 @@ LOGGER = SpinelKit::Log.new
 LOGGER.set_level("info")
 LOGGER.to_stderr
 
-# Tep::Job's queue table init -- once per worker at module load,
-# avoids the "called every request" segfault we saw under
-# Tep::Server::Scheduled. (Probably an interaction between
-# Tep::Job's open/close cycle and the cooperative scheduler;
-# noted as a debug TODO in the Phase C commit.)
-Tep::Job.init_schema(ENV.fetch("CHAT_DB", "/tmp/tep_chatbot.db"))
+# Tep::Job's queue table: created (or migrated) once at load.
+Tep::Job.init_schema(DB_PATH)
 
 # -------------------------------------------------------------------
 # Phase E: compare-backends parsing + worker
@@ -428,9 +424,9 @@ Tep.before ChatbotFilter.new
 # -------------------------------------------------------------------
 # Tep::Job persists pending work in SQLite (queue table init'd via
 # Tep::Job.init_schema). The chatbot enqueues TitleJob each time a
-# conversation gets its first assistant reply; a background fiber
-# (one per prefork worker) polls every 5 s, dispatches to
-# TitleJob.perform, and marks done.
+# conversation gets its first assistant reply; the `job_worker`
+# fiber below (one per server worker) polls every 2 s, runs
+# TitleJob#perform, and records the outcome.
 #
 # perform(arg) gets the conversation_id (as a String -- Tep::Job's
 # arg surface). The body reads the first user+assistant turns,
@@ -490,33 +486,12 @@ class TitleJob < Tep::Job
   end
 end
 
-# Job dispatcher. Phase C ships INLINE dispatch (called from
-# LlmStreamer.pump right after the stream completes) rather than a
-# background-fiber poller. A naive `Fiber.new { poll_loop }` spawned
-# from a before-filter segfaulted under Tep::Server::Scheduled --
-# needs its own debug session (probably an interaction between the
-# scheduler tick + Tep::SQLite's single-cursor-per-process contract).
-# Inline dispatch keeps the Tep::Job queue table as an audit trail
-# without cross-fiber races. Phase E ("Tep::Parallel multi-backend
-# compare") is the better showcase for fork-based background work.
-class JobWorker
-  def self.process_one
-    json = Tep::Job.fetch_next(DB_PATH)
-    if json.length == 0
-      return 0
-    end
-    job_id = Tep::Json.get_int(json, "id")
-    name   = Tep::Json.get_str(json, "job_name")
-    arg    = Tep::Json.get_str(json, "arg")
-    if name == "TitleJob"
-      TitleJob.new.perform(arg)
-      Tep::Job.mark_done(DB_PATH, job_id, "")
-    else
-      Tep::Job.mark_failed(DB_PATH, job_id)
-    end
-    0
-  end
-end
+# One worker fiber per server worker claims queued jobs and runs them.
+# bin/tep generates the name -> class dispatch from the Tep::Job
+# subclasses above, so there is no drain loop or ladder here. TitleJob
+# waits on the LLM through Tep::Llm, which yields the fiber, so chat
+# requests keep being served while a title is being written.
+job_worker DB_PATH, poll: 2
 
 # -------------------------------------------------------------------
 # Routes
@@ -911,13 +886,11 @@ class LlmStreamer < Tep::Streamer
     if full_reply.length > 0
       append_message(@conv_id, "assistant", full_reply)
       # If this was the conversation's first assistant turn AND the
-      # conversation still lacks a title, enqueue a TitleJob and
-      # process one pending job inline. Phase C ships INLINE
-      # dispatch (vs. a background-poller fiber) until the
-      # Scheduled+JobWorker+SQLite segfault is debugged.
+      # conversation still lacks a title, enqueue a TitleJob; the
+      # job_worker fiber picks it up. One retry, in case the backend
+      # is briefly unavailable.
       if needs_title?(@conv_id) && assistant_msg_count(@conv_id) == 1
-        Tep::Job.enqueue("TitleJob", @conv_id.to_s, DB_PATH)
-        JobWorker.process_one
+        Tep::Job.enqueue_opts("TitleJob", @conv_id.to_s, DB_PATH, 0, 1)
       end
     end
     0
@@ -953,9 +926,9 @@ end
 #     {"conv_id": 42, "content": "hello"}
 #
 # Server persists the user message, calls Tep::Llm.chat_stream
-# directly against the driver (Driver#write is a Streamer-shape
-# alias for #text), then persists the assistant reply once
-# chat_stream returns. One frame per delta — same wire shape as
+# against `ws.stream` (a Tep::Stream that writes each chunk as a WS
+# TEXT frame), then persists the assistant reply once chat_stream
+# returns. One frame per delta — same wire shape as
 # the SSE route, just framed as WS TEXT chunks the JS receives
 # via onmessage. Multiple turns on the same socket; client just
 # keeps sending message frames.
@@ -974,12 +947,11 @@ websocket "/api/c/ws" do |ws|
       if SYSTEM_PROMPT.length > 0
         client.set_system_prompt(SYSTEM_PROMPT)
       end
-      full_reply = client.chat_stream(msgs, ws)
+      full_reply = client.chat_stream(msgs, ws.stream)
       if full_reply.length > 0
         append_message(conv_id, "assistant", full_reply)
         if needs_title?(conv_id) && assistant_msg_count(conv_id) == 1
-          Tep::Job.enqueue("TitleJob", conv_id.to_s, DB_PATH)
-          JobWorker.process_one
+          Tep::Job.enqueue_opts("TitleJob", conv_id.to_s, DB_PATH, 0, 1)
         end
       end
     end

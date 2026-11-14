@@ -40,6 +40,11 @@ module Tep
     end
 
     # Send-side driver. Owns the fd + the six event-handler slots.
+    # Tep::Stream whose write sends one TEXT frame. See Driver#stream.
+    class Stream < Tep::Stream
+      def write: (String s) -> Integer
+    end
+
     class Driver
       attr_accessor fd: Integer
       attr_accessor max_frame_size: Integer
@@ -65,6 +70,7 @@ module Tep
       def set_on_error: (Handler h) -> Handler
 
       def text: (String s) -> Integer
+      def stream: () -> Tep::WebSocket::Stream
       def binary: (String bytes) -> Integer
       def ping: (String payload) -> Integer
       def pong: (String payload) -> Integer
