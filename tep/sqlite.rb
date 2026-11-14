@@ -35,15 +35,13 @@
 #
 # Constraints
 # -----------
-#   - One in-flight cursor per process (the `prepare`/`step`/`finalize`
-#     trio shares a single C-side `sqlite3_stmt *`). Nesting one
-#     query inside another's loop will overwrite the parent cursor.
-#     The framework runs handlers serially per worker so this is
-#     fine for "one DB call per request".
+#   - One in-flight cursor per instance (the `prepare`/`step`/`finalize`
+#     trio shares the handle's `sqlite3_stmt *`). Nesting one query
+#     inside another's loop needs a second instance. Instances are
+#     independent: threads that each open their own can query at once,
+#     but one instance must not be shared between threads.
 #   - Columns are read as either str or int. Floats / blobs / NULL
 #     aren't first-class -- a NULL column returns "" (str) or 0 (int).
-#   - The C side caps a single col_str result at 64 KiB. Large blobs
-#     would truncate.
 #
 # All FFI plumbing lives at the top level (parallel to `Sock`) so
 # spinel's name resolver finds it from anywhere in the Tep tree.
@@ -53,10 +51,12 @@ module Sqlite
 
   ffi_func :tep_sqlite_open,              [:str],          :int
   ffi_func :tep_sqlite_close,             [:int],          :int
-  ffi_func :tep_sqlite_exec,              [:int, :str],    :int
+  # exec and step may wait out another connection's lock (busy_timeout),
+  # so in a threaded program they leave the GC world while they run.
+  ffi_func :tep_sqlite_exec,              [:int, :str],    :int, blocking: true
   ffi_func :tep_sqlite_prepare,           [:int, :str],    :int
   ffi_func :tep_sqlite_prepare_cached,    [:int, :str],    :int
-  ffi_func :tep_sqlite_bind_str,          [:int, :str],    :int
+  ffi_func :tep_sqlite_bind_str,          [:int, :int, :str],  :int
   # bind_int / col_int are 64-bit: the value arg + return use the FFI
   # `:long` (64-bit on LP64) routed through sqlite3_bind_int64 /
   # sqlite3_column_int64, so an integer column > 2^31 round-trips
@@ -64,13 +64,13 @@ module Sqlite
   # (issue #171). Spinel's mrb_int is pointer-width, so the Ruby side
   # holds the full range. `:long` still maps to the `int` Spinel token,
   # so callers see an Integer exactly as before.
-  ffi_func :tep_sqlite_bind_int,          [:int, :long],   :int
-  ffi_func :tep_sqlite_step,              [],              :int
-  ffi_func :tep_sqlite_col_str,           [:int],          :str
-  ffi_func :tep_sqlite_col_int,           [:int],          :long
-  ffi_func :tep_sqlite_col_count,         [],              :int
-  ffi_func :tep_sqlite_finalize,          [],              :int
-  ffi_func :tep_sqlite_reset,             [],              :int
+  ffi_func :tep_sqlite_bind_int,          [:int, :int, :long], :int
+  ffi_func :tep_sqlite_step,              [:int],          :int, blocking: true
+  ffi_func :tep_sqlite_col_str,           [:int, :int],    :str
+  ffi_func :tep_sqlite_col_int,           [:int, :int],    :long
+  ffi_func :tep_sqlite_col_count,         [:int],          :int
+  ffi_func :tep_sqlite_finalize,          [:int],          :int
+  ffi_func :tep_sqlite_reset,             [:int],          :int
   ffi_func :tep_sqlite_last_insert_rowid, [:int],          :int
 end
 
@@ -136,11 +136,11 @@ module Tep
     # Cached variant. Same surface as `prepare`, but the underlying
     # `sqlite3_stmt *` is memoised per-(db, sql); subsequent calls
     # with the same SQL string reuse the prepared statement, paying
-    # the parse cost only once per process. Pair with `finalize` as
+    # the parse cost only once per handle. Pair with `finalize` as
     # usual; on the cached path `finalize` becomes
     # `sqlite3_reset + sqlite3_clear_bindings` (the slot stays
     # alive). The cache is bounded (currently 64 distinct SQL
-    # strings per process); apps that exceed the bound fall through
+    # strings per handle); apps that exceed the bound fall through
     # to uncached prepare so correctness is preserved.
     #
     # Use for hot-path SQL where the string is known + fixed at
@@ -154,16 +154,16 @@ module Tep
       Sqlite.tep_sqlite_prepare_cached(@dbh, sql) == 0
     end
 
-    def bind_str(idx, value); Sqlite.tep_sqlite_bind_str(idx, value); end
-    def bind_int(idx, value); Sqlite.tep_sqlite_bind_int(idx, value); end
+    def bind_str(idx, value); Sqlite.tep_sqlite_bind_str(@dbh, idx, value); end
+    def bind_int(idx, value); Sqlite.tep_sqlite_bind_int(@dbh, idx, value); end
 
     # 1 -> row available, 0 -> done (no more rows), -1 -> error.
-    def step;       Sqlite.tep_sqlite_step;       end
-    def col_str(i); Sqlite.tep_sqlite_col_str(i); end
-    def col_int(i); Sqlite.tep_sqlite_col_int(i); end
-    def col_count;  Sqlite.tep_sqlite_col_count;  end
-    def finalize;   Sqlite.tep_sqlite_finalize;   end
-    def reset;      Sqlite.tep_sqlite_reset;      end
+    def step;       Sqlite.tep_sqlite_step(@dbh);       end
+    def col_str(i); Sqlite.tep_sqlite_col_str(@dbh, i); end
+    def col_int(i); Sqlite.tep_sqlite_col_int(@dbh, i); end
+    def col_count;  Sqlite.tep_sqlite_col_count(@dbh);  end
+    def finalize;   Sqlite.tep_sqlite_finalize(@dbh);   end
+    def reset;      Sqlite.tep_sqlite_reset(@dbh);      end
 
     def last_rowid
       if @dbh < 0
@@ -184,13 +184,13 @@ module Tep
         return ""
       end
       if p1.length > 0
-        Sqlite.tep_sqlite_bind_str(1, p1)
+        Sqlite.tep_sqlite_bind_str(@dbh, 1, p1)
       end
       result = ""
-      if Sqlite.tep_sqlite_step == 1
-        result = Sqlite.tep_sqlite_col_str(0)
+      if Sqlite.tep_sqlite_step(@dbh) == 1
+        result = Sqlite.tep_sqlite_col_str(@dbh, 0)
       end
-      Sqlite.tep_sqlite_finalize
+      Sqlite.tep_sqlite_finalize(@dbh)
       result
     end
 
@@ -202,13 +202,13 @@ module Tep
         return 0
       end
       if p1.length > 0
-        Sqlite.tep_sqlite_bind_str(1, p1)
+        Sqlite.tep_sqlite_bind_str(@dbh, 1, p1)
       end
       result = 0
-      if Sqlite.tep_sqlite_step == 1
-        result = Sqlite.tep_sqlite_col_int(0)
+      if Sqlite.tep_sqlite_step(@dbh) == 1
+        result = Sqlite.tep_sqlite_col_int(@dbh, 0)
       end
-      Sqlite.tep_sqlite_finalize
+      Sqlite.tep_sqlite_finalize(@dbh)
       result
     end
   end
