@@ -304,6 +304,15 @@ module Tep
     end
   end
 
+  # Hook the scheduled server calls once per worker, after its accept
+  # fiber is spawned, to start app background fibers. No-op in core:
+  # bin/tep redefines it when the app declares `job_worker` (last
+  # definition wins), which keeps Tep::Job -- and so SQLite -- out of
+  # apps that never use it.
+  def self.spawn_background
+    0
+  end
+
   # Called by the SERVER PARENT (workers>1) or the single process
   # (workers=1) at SIGTERM/SIGINT, AFTER the worker children have
   # exited. Children no longer emit run_end themselves -- #128 moved

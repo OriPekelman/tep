@@ -126,6 +126,7 @@ def translate(input_path, lax: ENV["TEP_LAX"] == "1")
   filters       = { "before" => [], "after" => [] }
   not_founds    = []
   startup_block = nil
+  job_worker    = nil
   config        = { public_dir: nil, mcp_server_name: nil, mcp_server_version: nil }
   warnings      = []
   anon_id       = 0
@@ -221,6 +222,7 @@ def translate(input_path, lax: ENV["TEP_LAX"] == "1")
     if call?(node) && node.receiver.nil?
       result = handle_top_call(node, routes, websockets, mcp_tools, mcp_resources, filters, not_founds, config, warnings, passthrough, input_path, inlined_seen)
       startup_block = result if result.is_a?(Hash) && result[:kind] == :startup
+      job_worker = result if result.is_a?(Hash) && result[:kind] == :job_worker
       return
     end
 
@@ -303,6 +305,51 @@ def translate(input_path, lax: ENV["TEP_LAX"] == "1")
   unless passthrough.empty?
     out << "# --- top-level passthrough from #{File.basename(input_path)} ---"
     passthrough.each { |s| out << s }
+    out << ""
+  end
+
+  # Tep::Job dispatcher (#230). Spinel can't const_get a class from a
+  # name, so emit the name -> subclass ladder from every `class X <
+  # Tep::Job` in the app (passthrough text, so inlined require_relative
+  # files count). It reopens Tep::Job after the classes exist; the last
+  # definition of `dispatch` wins over the raising one in tep/job.rb.
+  job_classes = passthrough.join("\n")
+                           .scan(/^[ \t]*class[ \t]+([A-Z]\w*(?:::[A-Z]\w*)*)[ \t]*<[ \t]*(?:::)?Tep::Job\b/)
+                           .flatten.uniq
+  unless job_classes.empty?
+    out << "# --- Tep::Job dispatcher (generated) ---"
+    out << "module Tep"
+    out << "  class Job"
+    out << "    def self.dispatch(name, arg, row_id, db_path)"
+    job_classes.each do |jc|
+      out << "      if name == #{jc.inspect}"
+      out << "        __job = #{jc}.new"
+      out << "        __job.jid = row_id"
+      out << "        __job.db_path = db_path"
+      out << "        return __job.perform(arg)"
+      out << "      end"
+    end
+    out << "      raise \"Tep::Job: unknown job \" + name"
+    out << "      \"\""
+    out << "    end"
+    out << "  end"
+    out << "end"
+    out << ""
+  end
+
+  # `job_worker DB, poll: N` -- one worker fiber per server worker,
+  # started through the Tep.spawn_background hook the scheduled server
+  # calls after its accept fiber is up.
+  if job_worker
+    warnings << "job_worker -- no `class X < Tep::Job` found in the app; nothing to dispatch to" if job_classes.empty?
+    out << "# --- job_worker (generated) ---"
+    out << "module Tep"
+    out << "  def self.spawn_background"
+    out << "    __jw = Fiber.new { Tep::Job.work(#{job_worker[:db_src]}, #{job_worker[:poll_src]}) }"
+    out << "    Tep::Scheduler.spawn_fiber(__jw)"
+    out << "    0"
+    out << "  end"
+    out << "end"
     out << ""
   end
 
@@ -1303,6 +1350,34 @@ def handle_top_call(node, routes, websockets, mcp_tools, mcp_resources, filters,
     block = node.block
     return warnings << "skipped on_start -- needs a `do ... end` block" unless block.is_a?(Prism::BlockNode)
     return { kind: :startup, src: block_source(block) }
+  end
+
+  # `job_worker DB_PATH` / `job_worker DB_PATH, poll: 2` (#230): run a
+  # Tep::Job worker fiber in each server worker. Needs the scheduled
+  # server -- the blocking server has no scheduler to run it.
+  if name == "job_worker"
+    jargs = node.arguments&.arguments || []
+    db_node = jargs[0]
+    if db_node.nil? || db_node.is_a?(Prism::KeywordHashNode)
+      return warnings << "skipped job_worker -- needs the queue's SQLite path as its first argument"
+    end
+    poll_src = "1"
+    kw = jargs[1]
+    if kw.is_a?(Prism::KeywordHashNode)
+      kw.elements.each do |el|
+        if el.is_a?(Prism::AssocNode) && el.key.is_a?(Prism::SymbolNode) && el.key.unescaped == "poll"
+          poll_src = el.value.location.slice
+        else
+          warnings << "job_worker: ignored unrecognized option `#{el.location.slice}` (only poll: is supported)"
+        end
+      end
+    elsif kw
+      return warnings << "skipped job_worker -- second argument must be `poll: <seconds>`"
+    end
+    if config[:scheduler] != :scheduled
+      warnings << "job_worker -- needs `set :scheduler, :scheduled` before it; the blocking server cannot run a worker fiber"
+    end
+    return { kind: :job_worker, db_src: db_node.location.slice, poll_src: poll_src }
   end
 
   if name == "on_stop"
