@@ -75,7 +75,7 @@ closed):
 | `Tep::Jwt` | API bearer-token auth on `/api/v1/chat/completions` |
 | `Tep::Streamer` | SSE streaming of LLM chunks (the `/api/c/:id/stream` fallback route) |
 | `Tep::WebSocket` | live chat over WS (the default `/api/c/ws` route); `Driver#write` is a Streamer-shape alias so `Tep::Llm.chat_stream` drives the socket directly |
-| `Tep::Job` | background conversation-title summarisation |
+| `Tep::Job` | background conversation-title summarisation, run by a `job_worker` fiber |
 | `Tep::Parallel` | multi-backend compare endpoint (sequential dispatch today; the genuine fork fan-out is blocked on [matz/spinel#575](https://github.com/matz/spinel/issues/575)) |
 | `SpinelKit::Log` | per-request trace to stderr |
 

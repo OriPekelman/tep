@@ -23,6 +23,15 @@
 # decide on the lowering shape.
 module Tep
   module WebSocket
+    # Tep::Stream over a WebSocket: each `write` is one TEXT frame
+    # instead of one HTTP chunk. Returned by Driver#stream.
+    class Stream < Tep::Stream
+      def write(s)
+        Tep::WebSocket::Driver.send_frame(@fd, Tep::WebSocket::OPCODE_TEXT, s)
+        0
+      end
+    end
+
     class Driver
       attr_accessor :fd, :max_frame_size, :subprotocol
       # Callback slots. Each holds a subclass of Tep::WebSocket::Handler
@@ -72,12 +81,19 @@ module Tep
         Driver.send_frame(@fd, Tep::WebSocket::OPCODE_TEXT, s)
       end
 
-      # Streamer-shape alias for `text` so a Driver can stand in
-      # anywhere `Tep::Streamer`-style code calls `out.write(s)`.
-      # Used by Tep::Llm.chat_stream to write LLM deltas as WS
-      # frames (one frame per SSE-shaped chunk).
+      # Kept for callers that only need `write`. A Driver is NOT a
+      # Tep::Stream, so it can't be passed where one is declared
+      # (Tep::Llm#chat_stream's `out_stream`); use `stream` for that.
       def write(s)
         Driver.send_frame(@fd, Tep::WebSocket::OPCODE_TEXT, s)
+      end
+
+      # A Tep::Stream whose `write` sends one TEXT frame on this
+      # socket. Pass it wherever streamer-shaped code takes a
+      # Tep::Stream, e.g. `client.chat_stream(msgs, ws.stream)` to
+      # forward LLM deltas as WebSocket frames.
+      def stream
+        Tep::WebSocket::Stream.new(@fd)
       end
 
       # Send a binary frame.
