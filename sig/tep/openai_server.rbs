@@ -22,6 +22,11 @@ module Tep
         def validate_embeddings_request: (String model, Array[Integer] token_ids) -> String
         # Streaming /v1/completions: write each token via sink.emit_token.
         def generate_stream_from_tokens: (String model, Array[Integer] token_ids, Tep::Llm::OpenAI::Sampling sampling, Tep::Llm::OpenAI::StreamSink sink) -> Integer
+        # Text-prompt variants for `"prompt": "text"` (tep#276). The
+        # bases delegate to the token-id hooks with an empty id array.
+        def generate_from_text: (String model, String text, Tep::Llm::OpenAI::Sampling sampling) -> Tep::Llm::OpenAI::Completion
+        def generate_stream_from_text: (String model, String text, Tep::Llm::OpenAI::Sampling sampling, Tep::Llm::OpenAI::StreamSink sink) -> Integer
+        def validate_text_request: (String model, String text, Tep::Llm::OpenAI::Sampling sampling) -> String
         # When false, /v1/chat/completions returns 501.
         def supports_chat?: () -> bool
         # Message-level generation; receives the raw req to apply its own
@@ -102,12 +107,18 @@ module Tep
       end
 
       # Per-token write surface for streaming /v1/chat/completions. The
-      # backend calls emit_role_prelude once, then emit_token per delta,
-      # then emit_finish; each writes one OpenAI chat-streaming frame.
+      # backend calls emit_token per delta; the role prelude (sent with
+      # the first frame) and emit_finish are the streamer's job. Each
+      # writes one OpenAI chat-streaming frame.
       class ChatStreamSink
         attr_accessor out: Tep::Stream
         attr_accessor model: String
         attr_accessor completion_count: Integer
+        # Backend-set (tep#276): frame/event id, final finish_reason,
+        # prompt size for the inference event.
+        attr_accessor id: String
+        attr_accessor finish_reason: String
+        attr_accessor prompt_tokens: Integer
         def initialize: () -> void
         def emit_role_prelude: (String role) -> Integer
         def emit_token: (String piece) -> Integer
@@ -121,6 +132,8 @@ module Tep
         attr_accessor token_ids: Array[Integer]
         attr_accessor sampling: Tep::Llm::OpenAI::Sampling
         attr_accessor prompt_tokens: Integer
+        attr_accessor prompt_text: String
+        attr_accessor text_prompt: bool
         attr_accessor t0: Integer
         attr_accessor request_id: String
         attr_accessor principal_id: String

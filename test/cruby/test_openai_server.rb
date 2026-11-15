@@ -777,3 +777,174 @@ class TestOpenAIServerErrors < TepTest
     assert_equal [0.5, 0.25], body["data"][0]["embedding"]
   end
 end
+
+# String prompts on /v1/completions (tep#276): `"prompt": "text"` goes
+# to the backend's *_from_text hooks; a token-id array still goes to
+# the *_from_tokens hooks.
+class TestOpenAIServerTextPrompt < TepTest
+  app_source <<~RB
+    require 'sinatra'
+
+    class TextBackend < Tep::Llm::OpenAI::Backend
+      def list_models
+        ["text-1"]
+      end
+      def generate_from_tokens(model, token_ids, sampling)
+        c = Tep::Llm::OpenAI::Completion.new
+        c.text = "ids:" + token_ids.length.to_s
+        c.prompt_tokens = token_ids.length
+        c
+      end
+      def generate_from_text(model, text, sampling)
+        c = Tep::Llm::OpenAI::Completion.new
+        c.text = "text:" + text
+        c.prompt_tokens = text.bytesize
+        c
+      end
+      def generate_stream_from_text(model, text, sampling, sink)
+        sink.emit_token("text:")
+        sink.emit_token(text)
+        0
+      end
+      def validate_text_request(model, text, sampling)
+        if text == "bad"
+          return "prompt rejected"
+        end
+        ""
+      end
+    end
+
+    Tep::Llm::OpenAI::Server.use(TextBackend.new)
+    Tep::Llm::OpenAI::Server.serve!
+  RB
+
+  def test_string_prompt_reaches_generate_from_text
+    res = post("/v1/completions", '{"model":"text-1","prompt":"héllo \"q\""}')
+    assert_equal "200", res.code
+    body = JSON.parse(res.body)
+    assert_equal "text:héllo \"q\"", body["choices"][0]["text"]
+    assert_equal 10, body["usage"]["prompt_tokens"]
+  end
+
+  def test_token_array_prompt_unchanged
+    res = post("/v1/completions", '{"model":"text-1","prompt":[1,2,3]}')
+    assert_equal "ids:3", JSON.parse(res.body)["choices"][0]["text"]
+  end
+
+  def test_string_prompt_streaming
+    res = post("/v1/completions", '{"model":"text-1","prompt":"abc","stream":true}')
+    assert_equal "200", res.code
+    lines = res.body.scan(/^data: (.+)$/).flatten
+    assert_equal "[DONE]", lines.last
+    pieces = lines[0..-2].map { |l| JSON.parse(l)["choices"][0]["text"] }
+    assert_equal ["text:", "abc"], pieces
+  end
+
+  def test_string_prompt_validation
+    res = post("/v1/completions", '{"model":"text-1","prompt":"bad"}')
+    assert_equal "400", res.code
+    assert_equal "prompt rejected", JSON.parse(res.body)["error"]["message"]
+  end
+end
+
+# A backend that only implements the token-id hooks: a string prompt
+# falls back to them with an empty id array (the pre-#276 behaviour).
+class TestOpenAIServerTextPromptFallback < TepTest
+  app_source <<~RB
+    require 'sinatra'
+
+    class IdsOnlyBackend < Tep::Llm::OpenAI::Backend
+      def list_models
+        ["ids-1"]
+      end
+      def generate_from_tokens(model, token_ids, sampling)
+        c = Tep::Llm::OpenAI::Completion.new
+        c.text = "ids:" + token_ids.length.to_s
+        c
+      end
+    end
+
+    Tep::Llm::OpenAI::Server.use(IdsOnlyBackend.new)
+    Tep::Llm::OpenAI::Server.serve!
+  RB
+
+  def test_string_prompt_falls_back_to_token_hook
+    res = post("/v1/completions", '{"model":"ids-1","prompt":"hello"}')
+    assert_equal "200", res.code
+    assert_equal "ids:0", JSON.parse(res.body)["choices"][0]["text"]
+  end
+end
+
+# Chat envelope takes finish_reason + id from the backend (tep#276),
+# non-streaming (Completion) and streaming (ChatStreamSink).
+class TestOpenAIServerChatBackendFields < TepTest
+  EVENTS_PATH = "/tmp/tep_test_openai_chatfields.jsonl"
+
+  app_source <<~RB
+    require 'sinatra'
+
+    class LengthBackend < Tep::Llm::OpenAI::Backend
+      def list_models
+        ["chat-len"]
+      end
+      def supports_chat?
+        true
+      end
+      def chat_completion(req)
+        c = Tep::Llm::OpenAI::Completion.new
+        c.text          = "cut"
+        c.finish_reason = "length"
+        c.id            = "chatcmpl-42"
+        c
+      end
+      def chat_completion_stream(req, sink)
+        sink.id            = "chatcmpl-43"
+        sink.prompt_tokens = 7
+        sink.emit_token("cu")
+        sink.emit_token("t")
+        sink.finish_reason = "length"
+        0
+      end
+    end
+
+    Tep::Llm::OpenAI::Server.use(LengthBackend.new)
+    Tep::Llm::OpenAI::Server.serve!("#{EVENTS_PATH}")
+  RB
+
+  @@events_path_cleaned = false
+  def setup
+    unless @@events_path_cleaned
+      File.delete(EVENTS_PATH) if File.exist?(EVENTS_PATH)
+      @@events_path_cleaned = true
+    end
+    super
+  end
+
+  REQ = '{"model":"chat-len","messages":[{"role":"user","content":"hi"}]'
+
+  def test_envelope_uses_backend_finish_reason_and_id
+    res = post("/v1/chat/completions", REQ + "}")
+    assert_equal "200", res.code
+    body = JSON.parse(res.body)
+    assert_equal "chatcmpl-42", body["id"]
+    assert_equal "length", body["choices"][0]["finish_reason"]
+  end
+
+  def test_stream_uses_sink_id_finish_reason_and_prompt_tokens
+    res = post("/v1/chat/completions", REQ + ',"stream":true}')
+    assert_equal "200", res.code
+    lines = res.body.scan(/^data: (.+)$/).flatten
+    assert_equal "[DONE]", lines.last
+    frames = lines[0..-2].map { |l| JSON.parse(l) }
+    assert_equal 4, frames.length
+    assert_equal ["chatcmpl-43"], frames.map { |f| f["id"] }.uniq
+    assert_equal "assistant", frames[0]["choices"][0]["delta"]["role"]
+    assert_equal "length", frames[3]["choices"][0]["finish_reason"]
+
+    inf = File.readlines(EVENTS_PATH).map { |l| JSON.parse(l) }
+              .select { |e| e["kind"] == "eval" && e["name"] == "request" }
+    assert_equal 1, inf.length
+    assert_equal "chatcmpl-43", inf[0]["extra"]["request_id"]
+    assert_equal 7, inf[0]["extra"]["prompt_tokens"]
+  end
+end
