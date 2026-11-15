@@ -154,7 +154,10 @@ int sphttp_read_request(int fd) {
             break;
         }
         if (n < 0) {
-            if (!ssl && errno == EINTR) continue;
+            /* A term signal must end an idle keep-alive wait (#277);
+             * other signals retry. A recv timeout (EAGAIN) also lands
+             * here and drops the connection. */
+            if (!ssl && errno == EINTR && !sp_net_shutdown_requested()) continue;
             return -1;
         }
         sphttp_req_len += (int)n;
@@ -189,7 +192,8 @@ const char *sphttp_drain_body(int fd, int total_len) {
         ssize_t r = ssl ? (ssize_t)SSL_read(ssl, sphttp_body_buf + got, n - got)
                         : recv(fd, sphttp_body_buf + got, n - got, 0);
         if (r <= 0) {
-            if (!ssl && errno == EINTR) continue;
+            /* r == 0 is EOF: errno is stale there, never retry on it. */
+            if (r < 0 && !ssl && errno == EINTR && !sp_net_shutdown_requested()) continue;
             break;
         }
         got += (int)r;
