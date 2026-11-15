@@ -111,7 +111,7 @@ module Tep
       if @api_key.length > 0
         head = head + "Authorization: Bearer " + @api_key + "\r\n"
       end
-      head = head + "Content-Length: " + body.length.to_s + "\r\n" +
+      head = head + "Content-Length: " + body.bytesize.to_s + "\r\n" +
                     "Connection: close\r\n\r\n" + body
       if Sock.sphttp_write_str(fd, head) < 0
         Sock.sphttp_close(fd)

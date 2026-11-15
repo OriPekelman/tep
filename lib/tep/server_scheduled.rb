@@ -356,9 +356,13 @@ module Tep
           Sock.sphttp_write_str(client, head)
           Sock.sphttp_sendfile(client, res.file_path)
         else
-          head = head + "Content-Length: " + res.body.length.to_s + "\r\n\r\n"
+          # bytesize, not length: `length` counts characters, so a
+          # multibyte (UTF-8) body would announce fewer bytes than it
+          # sends. A keep-alive client then reads the surplus as the
+          # start of the next response and drops the connection.
+          head = head + "Content-Length: " + res.body.bytesize.to_s + "\r\n\r\n"
           Sock.sphttp_write_str(client, head)
-          if res.body.length > 0
+          if res.body.bytesize > 0
             Sock.sphttp_write_str(client, res.body)
           end
         end
@@ -368,7 +372,7 @@ module Tep
       def self.send_simple(client, status, msg)
         reason = Tep.reason(status)
         head = "HTTP/1.0 " + status.to_s + " " + reason + "\r\n" +
-               "Content-Length: " + msg.length.to_s + "\r\n" +
+               "Content-Length: " + msg.bytesize.to_s + "\r\n" +
                "Connection: close\r\n\r\n" + msg
         Sock.sphttp_write_str(client, head)
         0
