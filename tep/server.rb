@@ -38,6 +38,13 @@ module Tep
   end
 
   class Server
+    # Seconds a blocking worker waits on a quiet connection: for the
+    # next keep-alive request, the rest of a request, or a TLS
+    # ClientHello. A worker serves one connection at a time, so an
+    # idle client holds it for at most this long (#277). Shorter than
+    # Scheduled's 30s because there a parked connection costs nothing.
+    KEEPALIVE_TIMEOUT = 5
+
     attr_accessor :app
 
     def initialize(app)
@@ -131,21 +138,21 @@ module Tep
           end
           next
         end
+        # Bound every blocking read on this connection. Without it a
+        # client that connects and goes quiet -- an idle keep-alive
+        # browser tab, a port probe, a slowloris, a plain-HTTP client
+        # on a TLS port -- wedges this worker until it disconnects
+        # (#277). Set once per connection; it covers the TLS handshake,
+        # the request read and the body drain.
+        Sock.sphttp_set_recv_timeout(client, KEEPALIVE_TIMEOUT * 1000)
         # Inbound TLS: complete the server-side handshake on the freshly
-        # accepted fd before reading the request. Bound the handshake
-        # with a recv timeout first -- otherwise a connection that opens
-        # but never sends a ClientHello (a port probe, a slowloris, a
-        # plain-HTTP client) blocks SSL_accept and wedges this worker.
-        # Clear the timeout after a successful handshake so normal
-        # (incl. keep-alive) request reads aren't bounded. On failure
-        # drop the connection.
+        # accepted fd before reading the request. On failure drop the
+        # connection.
         if Tep::APP.tls_cert.length > 0
-          Sock.sphttp_set_recv_timeout(client, 5000)
           if Sock.sphttp_accept_tls(client) < 0
             Sock.sphttp_close(client)
             next
           end
-          Sock.sphttp_set_recv_timeout(client, 0)
         end
         handle_connection(client)
       end
@@ -173,6 +180,11 @@ module Tep
         end
 
         req.consume_body(client)
+        # A term signal cuts the body drain short; don't hand the
+        # route a truncated body or wait for another request.
+        if Sock.sphttp_shutdown_requested != 0
+          break
+        end
 
         res = Response.new
         @app.dispatch(req, res)
