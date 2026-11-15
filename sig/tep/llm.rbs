@@ -6,12 +6,19 @@ module Tep
     attr_accessor model: String
     attr_accessor api_key: String
     attr_accessor system_prompt: String
+    attr_accessor tools: String
+    attr_accessor tool_choice: String
 
     def initialize: (String base_url) -> void
 
     def set_model: (String name) -> String
     def set_api_key: (String key) -> String
     def set_system_prompt: (String s) -> String
+    # Tool use (tep#229): `tools` is the OpenAI-shaped JSON array, sent
+    # verbatim; tool_choice is "auto" / "none" / "required" or a raw
+    # JSON object.
+    def set_tools: (String json) -> String
+    def set_tool_choice: (String choice) -> String
 
     # POST <base_url>/v1/chat/completions. Returns a Response with
     # `.content` (the assistant reply) and `.stop_reason`. On
@@ -27,6 +34,11 @@ module Tep
     # so the caller can persist it.
     def chat_stream: (Array[Tep::Llm::Message] messages, Tep::Stream out_stream) -> String
 
+    # chat_stream returning the full Response (content, tool_calls,
+    # stop_reason). Writes `data: [DONE]` only when there are no tool
+    # calls.
+    def chat_stream_response: (Array[Tep::Llm::Message] messages, Tep::Stream out_stream) -> Tep::Llm::Response
+
     # Internal: hand-rolled JSON for the request body (nested-array
     # shape that SpinelKit::Json's flat encoders don't cover).
     def self.build_request_body: (String model, String system_prompt, Array[Tep::Llm::Message] messages) -> String
@@ -40,29 +52,51 @@ module Tep
 
     # Internal: SSE / chunked-transfer reader -- see lib/tep/llm.rb.
     def self.read_sse_response: (Integer fd, Tep::Stream out_stream) -> String
+    def self.read_sse_into: (Integer fd, Tep::Stream out_stream, Tep::Llm::StreamState st) -> Integer
+    def self.splice_tools: (String body, String tools, String tool_choice) -> String
+    def self.merge_tool_calls: (String json, Integer from, Array[Tep::Llm::ToolCall] calls) -> Integer
+    def self.obj_value_pos: (String json, Integer obj_start, Integer obj_end, String key) -> Integer
     def self.consume_sse_events: (Tep::Stream out_stream, Tep::Llm::StreamState state) -> Integer
     def self.dechunk_consume: (String s) -> String
     def self.dechunk_leftover: (String s) -> String
     def self.dechunk_pass: (String s) -> String
     def self.drain_sse_buf: (String body_buf, Tep::Stream out_stream, String acc) -> String
 
+    # One function call requested by the model; `arguments` is JSON text.
+    class ToolCall
+      attr_accessor id: String
+      attr_accessor name: String
+      attr_accessor arguments: String
+      def initialize: (String id, String name, String arguments) -> void
+    end
+
     class Message
       attr_accessor role: String
       attr_accessor content: String
+      attr_accessor tool_calls: Array[Tep::Llm::ToolCall]
+      attr_accessor tool_call_id: String
       def initialize: (String role, String content) -> void
+      # A role "tool" message answering the call `tool_call_id`.
+      def self.tool: (String tool_call_id, String content) -> Tep::Llm::Message
     end
 
     class Response
       attr_accessor content: String
       attr_accessor role: String
       attr_accessor stop_reason: String
+      attr_accessor tool_calls: Array[Tep::Llm::ToolCall]
       def initialize: () -> void
+      # The assistant Message (with tool_calls) to append before the
+      # tool results.
+      def to_message: () -> Tep::Llm::Message
     end
 
     class StreamState
       attr_accessor acc: String
       attr_accessor leftover: String
       attr_accessor done: bool
+      attr_accessor tool_calls: Array[Tep::Llm::ToolCall]
+      attr_accessor stop_reason: String
       def initialize: () -> void
     end
   end
