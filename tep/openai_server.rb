@@ -57,6 +57,31 @@ module Tep
           ""
         end
 
+        # TEXT-prompt variants (tep#276): /v1/completions with
+        # `"prompt": "some text"` -- the standard OpenAI shape -- lands
+        # here instead of the token-id hooks, so a backend with a
+        # tokenizer can encode the string itself. The bases delegate to
+        # the token-id hooks with an empty id array, which is what such
+        # a request did before these hooks existed; backends that only
+        # take ids stay byte-identical.
+        def generate_from_text(model, text, sampling)
+          ids = [0]
+          ids.delete_at(0)
+          generate_from_tokens(model, ids, sampling)
+        end
+
+        def generate_stream_from_text(model, text, sampling, sink)
+          ids = [0]
+          ids.delete_at(0)
+          generate_stream_from_tokens(model, ids, sampling, sink)
+        end
+
+        def validate_text_request(model, text, sampling)
+          ids = [0]
+          ids.delete_at(0)
+          validate_request(model, ids, sampling)
+        end
+
         # Same, for /v1/embeddings -- shape checks beyond the
         # handler's built-in empty-input 400 (tep#249).
         def validate_embeddings_request(model, token_ids)
@@ -375,11 +400,16 @@ module Tep
       class CompletionsStreamer < Tep::Streamer
         attr_accessor :model, :token_ids, :sampling
         attr_accessor :prompt_tokens, :t0, :request_id, :principal_id
+        attr_accessor :prompt_text, :text_prompt
 
         def initialize
           @model         = ""
           @token_ids     = [0]
           @token_ids.delete_at(0)
+          # String prompt (tep#276): text_prompt selects the *_from_text
+          # backend hook; prompt_text carries the string.
+          @prompt_text   = ""
+          @text_prompt   = false
           @sampling      = Tep::Llm::OpenAI::Sampling.new
           @prompt_tokens = 0
           @t0            = 0
@@ -391,8 +421,13 @@ module Tep
           sink = Tep::Llm::OpenAI::StreamSink.new
           sink.out   = out
           sink.model = @model
-          Tep::APP.openai_backend.generate_stream_from_tokens(
-            @model, @token_ids, @sampling, sink)
+          if @text_prompt
+            Tep::APP.openai_backend.generate_stream_from_text(
+              @model, @prompt_text, @sampling, sink)
+          else
+            Tep::APP.openai_backend.generate_stream_from_tokens(
+              @model, @token_ids, @sampling, sink)
+          end
           # Terminating sentinel + inference event. wall_us is
           # second-resolution for the same reason as the non-streaming
           # path (spinel Time.now exposes epoch-int only); LLM is
@@ -426,17 +461,35 @@ module Tep
       # the backend's responsibility.
       class ChatStreamSink
         attr_accessor :out, :model, :completion_count
+        # Set by the backend during chat_completion_stream (tep#276):
+        #   id            -- the `id` of every frame + the inference
+        #                    event's request_id. Set it before the first
+        #                    emit_token (the role prelude is sent lazily,
+        #                    so it carries the id too).
+        #   finish_reason -- the final frame's finish_reason ("stop"
+        #                    default; "length" when max_tokens ended it).
+        #   prompt_tokens -- the real prompt size for the inference
+        #                    event (the streamer cannot know it).
+        attr_accessor :id, :finish_reason, :prompt_tokens
 
         def initialize
           @model            = ""
           @completion_count = 0
+          @id               = "chatcmpl-tep"
+          @finish_reason    = "stop"
+          @prompt_tokens    = 0
+          @prelude_sent     = false
         end
 
         # First frame: role-only delta, no content. Per OpenAI's
         # wire shape, sent once before content frames.
         def emit_role_prelude(role)
+          if @prelude_sent
+            return 0
+          end
+          @prelude_sent = true
           frame = "{" +
-            Tep::Json.encode_pair_str("id", "chatcmpl-tep") + "," +
+            Tep::Json.encode_pair_str("id", @id) + "," +
             Tep::Json.encode_pair_str("object", "chat.completion.chunk") + "," +
             Tep::Json.encode_pair_int("created", Time.now.to_i) + "," +
             Tep::Json.encode_pair_str("model", @model) + "," +
@@ -454,9 +507,10 @@ module Tep
 
         # Content delta. One per generated token.
         def emit_token(piece)
+          emit_role_prelude("assistant")
           @completion_count = @completion_count + 1
           frame = "{" +
-            Tep::Json.encode_pair_str("id", "chatcmpl-tep") + "," +
+            Tep::Json.encode_pair_str("id", @id) + "," +
             Tep::Json.encode_pair_str("object", "chat.completion.chunk") + "," +
             Tep::Json.encode_pair_int("created", Time.now.to_i) + "," +
             Tep::Json.encode_pair_str("model", @model) + "," +
@@ -475,8 +529,9 @@ module Tep
         # Final frame: empty delta + populated finish_reason. The
         # streamer writes data:[DONE] after this.
         def emit_finish(reason)
+          emit_role_prelude("assistant")
           frame = "{" +
-            Tep::Json.encode_pair_str("id", "chatcmpl-tep") + "," +
+            Tep::Json.encode_pair_str("id", @id) + "," +
             Tep::Json.encode_pair_str("object", "chat.completion.chunk") + "," +
             Tep::Json.encode_pair_int("created", Time.now.to_i) + "," +
             Tep::Json.encode_pair_str("model", @model) + "," +
@@ -513,17 +568,24 @@ module Tep
           sink = Tep::Llm::OpenAI::ChatStreamSink.new
           sink.out   = out
           sink.model = @model
-          sink.emit_role_prelude("assistant")
+          # The role prelude goes out lazily with the first frame, so a
+          # backend can set sink.id first. id / finish_reason /
+          # prompt_tokens come from the sink (tep#276); their defaults
+          # reproduce the old constants.
           Tep::APP.openai_backend.chat_completion_stream(@req_ref, sink)
-          sink.emit_finish("stop")
+          sink.emit_finish(sink.finish_reason)
           out.write("data: [DONE]\n\n")
           wall_us = (Time.now.to_i - @t0) * 1_000_000
           extra = "{" +
-            Tep::Json.encode_pair_str("request_id", @request_id) + "," +
+            Tep::Json.encode_pair_str("request_id", sink.id) + "," +
             Tep::Json.encode_pair_str("principal_id", @principal_id) +
           "}"
+          ptoks = @prompt_tokens
+          if sink.prompt_tokens > 0
+            ptoks = sink.prompt_tokens
+          end
           Tep::APP.openai_events.inference(
-            @model, @prompt_tokens, sink.completion_count, wall_us, extra)
+            @model, ptoks, sink.completion_count, wall_us, extra)
           0
         end
       end
@@ -566,6 +628,16 @@ module Tep
           body      = req.raw_body
           model     = Tep::Json.get_str(body, "model")
           token_ids = Tep::Json.get_int_array(body, "prompt")
+          # `prompt` is either a token-id array (tep's primary shape)
+          # or a string (the standard OpenAI shape, tep#276). A string
+          # goes to the backend's *_from_text hooks.
+          prompt_text = ""
+          text_prompt = false
+          ppos = Tep::Json.find_value_start(body, "prompt")
+          if ppos >= 0 && body[ppos] == "\""
+            text_prompt = true
+            prompt_text = Tep::Json.parse_str_value(body, ppos)
+          end
           sampling  = Tep::Llm::OpenAI::Sampling.new
           sampling.max_tokens = Tep::Json.get_int(body, "max_tokens")
           # Floats from the JSON body; defaults stay at 1.0 if the
@@ -581,7 +653,12 @@ module Tep
           # Pre-flight validation (tep#249): a non-empty message 400s
           # before any generation -- and before SSE headers on the
           # streaming path below.
-          verr = Tep::APP.openai_backend.validate_request(model, token_ids, sampling)
+          verr = ""
+          if text_prompt
+            verr = Tep::APP.openai_backend.validate_text_request(model, prompt_text, sampling)
+          else
+            verr = Tep::APP.openai_backend.validate_request(model, token_ids, sampling)
+          end
           if verr.length > 0
             res.set_status(400)
             res.headers["Content-Type"] = "application/json"
@@ -607,6 +684,8 @@ module Tep
             streamer = Tep::Llm::OpenAI::CompletionsStreamer.new
             streamer.model         = model
             streamer.token_ids     = token_ids
+            streamer.prompt_text   = prompt_text
+            streamer.text_prompt   = text_prompt
             streamer.sampling      = sampling
             streamer.prompt_tokens = token_ids.length
             streamer.t0            = Time.now.to_i
@@ -626,7 +705,12 @@ module Tep
           # placeholder shape so consumers see populated wall_us.
           t0 = Time.now.to_i
 
-          comp = Tep::APP.openai_backend.generate_from_tokens(model, token_ids, sampling)
+          comp = Tep::Llm::OpenAI::Completion.new
+          if text_prompt
+            comp = Tep::APP.openai_backend.generate_from_text(model, prompt_text, sampling)
+          else
+            comp = Tep::APP.openai_backend.generate_from_tokens(model, token_ids, sampling)
+          end
 
           # Result-carried error (tep#249): error_json goes out
           # verbatim. No inference event for a failed request.
@@ -734,8 +818,15 @@ module Tep
             return comp.error_json
           end
           total = comp.prompt_tokens + comp.completion_tokens
+          # id + finish_reason come from the Completion, as on the
+          # completions path (tep#276). A Completion left at its default
+          # id ("cmpl-tep") keeps the chat default.
+          chat_id = comp.id
+          if chat_id == "cmpl-tep"
+            chat_id = "chatcmpl-tep"
+          end
           "{" +
-            Tep::Json.encode_pair_str("id", "chatcmpl-tep") + "," +
+            Tep::Json.encode_pair_str("id", chat_id) + "," +
             Tep::Json.encode_pair_str("object", "chat.completion") + "," +
             Tep::Json.encode_pair_int("created", Time.now.to_i) + "," +
             Tep::Json.encode_pair_str("model", model) + "," +
@@ -745,7 +836,7 @@ module Tep
                 Tep::Json.encode_pair_str("role", "assistant") + "," +
                 Tep::Json.encode_pair_str("content", comp.text) +
               "}," +
-              Tep::Json.encode_pair_str("finish_reason", "stop") +
+              Tep::Json.encode_pair_str("finish_reason", comp.finish_reason) +
             "}]," +
             "\"usage\":{" +
               Tep::Json.encode_pair_int("prompt_tokens", comp.prompt_tokens) + "," +
