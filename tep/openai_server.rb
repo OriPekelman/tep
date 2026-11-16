@@ -294,19 +294,85 @@ module Tep
         Tep::Json.parse_str_value(body, pos)
       end
 
-      # Sampling parameters handed to the backend. v1 carries
-      # max_tokens + temperature + top_p (the three OpenAI completion
-      # knobs every client sets). Floats parsed via Tep::Json.get_float.
-      # Defaults match OpenAI's API defaults so a backend that ignores
-      # sampling gets pass-through behavior.
+      # Sampling parameters handed to the backend: max_tokens,
+      # temperature, top_p, stop and logprobs. Defaults match OpenAI's
+      # API defaults so a backend that ignores sampling gets
+      # pass-through behavior. tep only carries these; honouring them
+      # (stopping on a stop sequence, computing logprobs) is the
+      # backend's job.
+      #
+      #   stop     -- the request's stop sequences. `"stop":"x"` and
+      #               `"stop":["x","y"]` both arrive as an Array of
+      #               String; empty when absent or null.
+      #   logprobs -- -1 when absent. /v1/completions sends an integer
+      #               (how many alternatives per token); the chat shape
+      #               sends `true`, which arrives as 0.
       class Sampling
         attr_accessor :max_tokens, :temperature, :top_p
+        attr_accessor :stop, :logprobs
 
         def initialize
           @max_tokens  = 0
           @temperature = 1.0
           @top_p       = 1.0
+          # Typed-empty Array[String] (seed + delete_at, as elsewhere).
+          @stop        = [""]
+          @stop.delete_at(0)
+          @logprobs    = -1
         end
+      end
+
+      # Build a Sampling from an OpenAI request body. The completions
+      # handler uses it; a chat backend can call it on req.raw_body
+      # for the same fields.
+      def self.parse_sampling(body)
+        sampling = Tep::Llm::OpenAI::Sampling.new
+        sampling.max_tokens = Tep::Json.get_int(body, "max_tokens")
+        # Floats from the JSON body; defaults stay at 1.0 if the
+        # key is absent (Tep::Json.get_float returns 0.0 for
+        # missing, but we only overwrite when present).
+        if Tep::Json.has_key?(body, "temperature")
+          sampling.temperature = Tep::Json.get_float(body, "temperature")
+        end
+        if Tep::Json.has_key?(body, "top_p")
+          sampling.top_p = Tep::Json.get_float(body, "top_p")
+        end
+
+        pos = Tep::Json.find_value_start(body, "stop")
+        if pos >= 0
+          if body[pos] == "\""
+            sampling.stop.push(Tep::Json.parse_str_value(body, pos))
+          elsif body[pos] == "["
+            arr_end = Tep::Json.skip_container(body, pos)
+            pos += 1
+            while pos < arr_end
+              pos = Tep::Json.skip_ws(body, pos)
+              if pos >= arr_end
+                break
+              end
+              c = body[pos]
+              if c == "\""
+                sampling.stop.push(Tep::Json.parse_str_value(body, pos))
+                pos = Tep::Json.skip_value(body, pos)
+              elsif c == "," || c == "]"
+                pos += 1
+              else
+                pos = Tep::Json.skip_value(body, pos)
+              end
+            end
+          end
+        end
+
+        lpos = Tep::Json.find_value_start(body, "logprobs")
+        if lpos >= 0
+          lc = body[lpos]
+          if lc >= "0" && lc <= "9"
+            sampling.logprobs = Tep::Json.parse_int_value(body, lpos)
+          elsif lc == "t"
+            sampling.logprobs = 0
+          end
+        end
+        sampling
       end
 
       # A backend's generation result: the decoded text + token usage.
@@ -638,17 +704,7 @@ module Tep
             text_prompt = true
             prompt_text = Tep::Json.parse_str_value(body, ppos)
           end
-          sampling  = Tep::Llm::OpenAI::Sampling.new
-          sampling.max_tokens = Tep::Json.get_int(body, "max_tokens")
-          # Floats from the JSON body; defaults stay at 1.0 if the
-          # key is absent (Tep::Json.get_float returns 0.0 for
-          # missing, but we only overwrite when present).
-          if Tep::Json.has_key?(body, "temperature")
-            sampling.temperature = Tep::Json.get_float(body, "temperature")
-          end
-          if Tep::Json.has_key?(body, "top_p")
-            sampling.top_p = Tep::Json.get_float(body, "top_p")
-          end
+          sampling  = Tep::Llm::OpenAI.parse_sampling(body)
 
           # Pre-flight validation (tep#249): a non-empty message 400s
           # before any generation -- and before SSE headers on the

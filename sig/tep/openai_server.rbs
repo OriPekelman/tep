@@ -66,13 +66,20 @@ module Tep
       def self.find_obj_key_str: (String body, Integer obj_start, Integer obj_end, String key) -> String
 
       # Sampling parameters parsed from the request (max_tokens int;
-      # temperature / top_p Float).
+      # temperature / top_p Float; stop sequences; logprobs, -1 when
+      # absent).
       class Sampling
         attr_accessor max_tokens: Integer
         attr_accessor temperature: Float
         attr_accessor top_p: Float
+        attr_accessor stop: Array[String]
+        attr_accessor logprobs: Integer
         def initialize: () -> void
       end
+
+      # Build a Sampling from an OpenAI request body (also usable by a
+      # chat backend on req.raw_body).
+      def self.parse_sampling: (String body) -> Tep::Llm::OpenAI::Sampling
 
       # A backend's generation result: decoded text + token usage.
       class Completion

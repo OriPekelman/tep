@@ -948,3 +948,93 @@ class TestOpenAIServerChatBackendFields < TepTest
     assert_equal 7, inf[0]["extra"]["prompt_tokens"]
   end
 end
+
+# Sampling carries `stop` and `logprobs` (tep#276 item 4), on the
+# completions path (string + token prompts, streaming) and, through
+# parse_sampling, for a chat backend.
+class TestOpenAIServerStopLogprobs < TepTest
+  app_source <<~RB
+    require 'sinatra'
+
+    class SamplingBackend < Tep::Llm::OpenAI::Backend
+      def list_models
+        ["s-1"]
+      end
+      def describe(sampling)
+        "n=" + sampling.stop.length.to_s + " stop=" + sampling.stop.join("|") +
+          " lp=" + sampling.logprobs.to_s + " mt=" + sampling.max_tokens.to_s
+      end
+      def generate_from_tokens(model, token_ids, sampling)
+        c = Tep::Llm::OpenAI::Completion.new
+        c.text = describe(sampling)
+        c
+      end
+      def generate_from_text(model, text, sampling)
+        c = Tep::Llm::OpenAI::Completion.new
+        c.text = "text " + describe(sampling)
+        c
+      end
+      def generate_stream_from_tokens(model, token_ids, sampling, sink)
+        sink.emit_token(describe(sampling))
+        0
+      end
+      def supports_chat?
+        true
+      end
+      def chat_completion(req)
+        c = Tep::Llm::OpenAI::Completion.new
+        c.text = "chat " + describe(Tep::Llm::OpenAI.parse_sampling(req.raw_body))
+        c
+      end
+    end
+
+    Tep::Llm::OpenAI::Server.use(SamplingBackend.new)
+    Tep::Llm::OpenAI::Server.serve!
+  RB
+
+  def text_for(json)
+    res = post("/v1/completions", json)
+    assert_equal "200", res.code
+    JSON.parse(res.body)["choices"][0]["text"]
+  end
+
+  def test_defaults_when_absent
+    assert_equal "n=0 stop= lp=-1 mt=0", text_for('{"model":"s-1","prompt":[1]}')
+  end
+
+  def test_stop_string
+    assert_equal "n=1 stop=\n\n lp=-1 mt=0",
+                 text_for('{"model":"s-1","prompt":[1],"stop":"\n\n"}'.gsub("\n", "\\n"))
+  end
+
+  def test_stop_array_and_logprobs_int
+    assert_equal "n=3 stop=END|é, \"q\"|] lp=5 mt=7",
+                 text_for('{"model":"s-1","prompt":[1],"stop":["END", "é, \"q\"", "]"],"logprobs":5,"max_tokens":7}')
+  end
+
+  def test_null_stop_and_null_logprobs
+    assert_equal "n=0 stop= lp=-1 mt=0",
+                 text_for('{"model":"s-1","prompt":[1],"stop":null,"logprobs":null}')
+  end
+
+  def test_logprobs_zero_is_not_absent
+    assert_equal "n=0 stop= lp=0 mt=0", text_for('{"model":"s-1","prompt":[1],"logprobs":0}')
+  end
+
+  def test_string_prompt_gets_them_too
+    assert_equal "text n=1 stop=. lp=2 mt=0",
+                 text_for('{"model":"s-1","prompt":"hi","stop":["."],"logprobs":2}')
+  end
+
+  def test_streaming_gets_them_too
+    res = post("/v1/completions", '{"model":"s-1","prompt":[1],"stop":["a","b"],"logprobs":1,"stream":true}')
+    lines = res.body.scan(/^data: (.+)$/).flatten
+    assert_equal "n=2 stop=a|b lp=1 mt=0", JSON.parse(lines[0])["choices"][0]["text"]
+  end
+
+  def test_chat_backend_can_parse_sampling
+    res = post("/v1/chat/completions",
+               '{"model":"s-1","messages":[{"role":"user","content":"hi"}],"stop":"X","logprobs":true,"max_tokens":3}')
+    assert_equal "chat n=1 stop=X lp=0 mt=3", JSON.parse(res.body)["choices"][0]["message"]["content"]
+  end
+end
