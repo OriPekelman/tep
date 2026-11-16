@@ -2200,13 +2200,26 @@ def resolve_ext_o(entry, entries, env_var)
     fatal("ext '#{entry["name"]}' needs #{missing} — install its -dev headers")
   end
 
+  # The cached object is keyed by what it was built from: the source
+  # bytes and the compile flags. The directory used to be the checkout's
+  # basename alone with an mtime check, so two trees with the same name
+  # (a dev checkout and an app's vendored copy are both `tep`) shared a
+  # slot, and whichever compiled last won as long as its object was newer
+  # than the other tree's source. The result linked cleanly and returned
+  # wrong data at run time.
+  require "digest"
+  key = Digest::SHA256.hexdigest(File.binread(src) + "\0" + cflags.join("\0"))[0, 16]
   cache = File.join(ENV["HOME"] || Dir.tmpdir, ".cache", "tep", "ext", File.basename(REPO_ROOT))
   FileUtils.mkdir_p(cache)
-  out = File.join(cache, File.basename(prebuilt))
-  return out if File.exist?(out) && File.mtime(out) >= File.mtime(src)
+  out = File.join(cache, File.basename(prebuilt, ".o") + "-" + key + ".o")
+  return out if File.exist?(out)
 
   warn "[tep] building ext '#{entry["name"]}' on demand (#{entry["source"]})"
-  if system(ENV.fetch("CC", "cc"), *cflags, "-c", src, "-o", out) && File.exist?(out)
+  # Compile to a private name and rename, so a concurrent build never
+  # links a half-written object.
+  tmp = out + ".#{Process.pid}.tmp"
+  if system(ENV.fetch("CC", "cc"), *cflags, "-c", src, "-o", tmp) && File.exist?(tmp)
+    File.rename(tmp, out)
     out
   elsif entry["optional"]
     warn "[tep] optional ext '#{entry["name"]}' failed to build — disabling"
