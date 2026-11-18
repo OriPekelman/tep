@@ -663,17 +663,11 @@ const char *sphttp_recv_some(int fd, int maxlen) {
 /* One non-blocking write attempt of `s` from byte `offset`, for the
  * cooperative server (Tep::Server::Scheduled.write_all). Returns the
  * bytes written; 0 when the socket would block, with sphttp_io_status()
- * naming the direction to park on (1 = read, 2 = write); -1 on a hard
- * error -- including `offset` already at the end of the C string,
- * which means the Ruby String carried an embedded NUL the :str FFI
- * can't (see sphttp_write_bytes) and no progress is possible. The
- * caller advances `offset` and parks on Tep::Scheduler.io_wait between
- * attempts, so a slow reader stalls only its own fiber rather than the
- * whole worker in sphttp_write_str's poll. */
-int sphttp_write_some(int fd, const char *s, int offset) {
-    size_t len = strlen(s);
-    if (offset < 0 || (size_t)offset >= len) return -1;
-    size_t remaining = len - (size_t)offset;
+ * naming the direction to park on (1 = read, 2 = write); -1 on error.
+ * Ruby passes the byte length explicitly because the body can contain NULs. */
+int sphttp_write_bytes_some(int fd, const char *s, int offset, int total) {
+    if (offset < 0 || offset >= total) return -1;
+    size_t remaining = (size_t)(total - offset);
     SSL *ssl = sphttp_ssl_for(fd);
     if (ssl) {
         /* The FFI may hand us a fresh copy of the same String on retry;
@@ -695,6 +689,37 @@ int sphttp_write_some(int fd, const char *s, int offset) {
     }
     sphttp_io_last = -1;
     return -1;
+}
+
+/* Preserve the text-only helper for existing callers. */
+int sphttp_write_some(int fd, const char *s, int offset) {
+    return sphttp_write_bytes_some(fd, s, offset, (int)strlen(s));
+}
+
+/* Keep the same file open across scheduler yields and atomic path replacement. */
+int sphttp_file_open(const char *path, int offset) {
+    if (offset < 0) return -1;
+    int fd = open(path, O_RDONLY);
+    if (fd < 0) return -1;
+    if (lseek(fd, (off_t)offset, SEEK_SET) < 0) {
+        close(fd);
+        return -1;
+    }
+    return fd;
+}
+
+/* Return one bounded binary slice. The caller closes fd with sphttp_close. */
+static char sphttp_file_chunk_buf[16384];
+const char *sphttp_file_read_chunk(int fd, int maxlen) {
+    sp_ffi_bin_len = 0;
+    if (maxlen <= 0) return sphttp_file_chunk_buf;
+    if (maxlen > (int)sizeof(sphttp_file_chunk_buf)) maxlen = sizeof(sphttp_file_chunk_buf);
+    ssize_t n;
+    do {
+        n = read(fd, sphttp_file_chunk_buf, (size_t)maxlen);
+    } while (n < 0 && errno == EINTR);
+    if (n > 0) sp_ffi_bin_len = (int)n;
+    return sphttp_file_chunk_buf;
 }
 
 /* Read from `fd` until EOF (peer close) or `max_bytes`, whichever

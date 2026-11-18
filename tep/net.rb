@@ -139,6 +139,9 @@ module Sock
   ffi_func :sphttp_tls_handshake_step, [:int],       :int
   ffi_func :sphttp_io_status,          [],           :int
   ffi_func :sphttp_write_some,    [:int, :str, :int], :int
+  ffi_func :sphttp_write_bytes_some, [:int, :str, :int, :int], :int
+  ffi_func :sphttp_file_open, [:str, :int], :int
+  ffi_func :sphttp_file_read_chunk, [:int, :int], :binstr
   ffi_func :sphttp_recv_some,     [:int, :int],     :binstr
   ffi_func :sphttp_recv_all,      [:int, :int],     :binstr
 
@@ -156,7 +159,7 @@ module Crypto
   ffi_func :sp_crypto_hmac_sha256_hex,      [:str, :str],       :str
   ffi_func :sp_crypto_hmac_sha256_b64url,   [:str, :str],       :str
   ffi_func :sp_crypto_b64url_encode,        [:str],             :str
-  ffi_func :sp_crypto_b64url_decode,        [:str],             :str
+  ffi_func :sp_crypto_b64url_decode,        [:str],             :binstr
   ffi_func :sp_crypto_pbkdf2_sha256_b64url, [:str, :str, :int], :str
   ffi_func :sp_crypto_random_b64url,        [:int],             :str
   # SHA-1 + WebSocket accept-key compute. SHA-1 is shipped only

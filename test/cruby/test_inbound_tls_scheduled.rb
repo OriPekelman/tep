@@ -11,6 +11,9 @@ require "timeout"
 class TestInboundTlsScheduled < TepTest
   CERT = "/tmp/tep_tls_sched_test_#{Process.pid}.crt"
   KEY  = "/tmp/tep_tls_sched_test_#{Process.pid}.key"
+  BINARY = "/tmp/tep_tls_sched_test_#{Process.pid}.bin"
+  BINARY_BYTES = (0..255).to_a.pack("C*") * 1024
+  Minitest.after_run { FileUtils.rm_f(BINARY) }
 
   app_source <<~RB
     require 'sinatra'
@@ -20,6 +23,11 @@ class TestInboundTlsScheduled < TepTest
 
     get '/hello' do
       "tls-sched-ok"
+    end
+
+    get '/binary_file' do
+      res.send_file("#{BINARY}")
+      ""
     end
 
     post '/echo' do
@@ -45,6 +53,7 @@ class TestInboundTlsScheduled < TepTest
 
   def setup
     self.class.gen_cert    # must exist before the spawned binary boots
+    File.binwrite(BINARY, BINARY_BYTES) unless File.exist?(BINARY)
     super
   end
 
@@ -65,6 +74,27 @@ class TestInboundTlsScheduled < TepTest
       ssl.close rescue nil
       sock.close rescue nil
       out
+    end
+  end
+
+  def test_binary_file_and_range_over_tls
+    [nil, "bytes=257-65792"].each do |range|
+      response = Timeout.timeout(10) do
+        ssl, socket = tls_socket
+        begin
+          headers = range ? "Range: #{range}\r\n" : ""
+          ssl.write("GET /binary_file HTTP/1.1\r\nHost: localhost\r\n#{headers}Connection: close\r\n\r\n")
+          ssl.read.to_s
+        ensure
+          ssl.close
+          socket.close
+        end
+      end
+      header, body = response.split("\r\n\r\n", 2)
+      expected = range ? BINARY_BYTES.byteslice(257, 65536) : BINARY_BYTES
+      assert_match(range ? /HTTP\/1.1 206/ : /HTTP\/1.1 200/, header)
+      assert_equal expected.bytesize.to_s, header[/Content-Length: (\d+)/i, 1]
+      assert_equal expected, body.b
     end
   end
 
