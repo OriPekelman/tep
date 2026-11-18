@@ -147,9 +147,16 @@ module Tep
             next
           end
           Sock.sphttp_set_nonblock(client)
-          conn = Fiber.new { Tep::Server::Scheduled.handle_connection(client) }
-          Tep::Scheduler.spawn_fiber(conn)
+          Tep::Server::Scheduled.spawn_connection(client)
         end
+      end
+
+      # A fresh method frame owns each captured fd. Reusing the accept-loop
+      # local lets a later accept change the fd before its fiber starts.
+      def self.spawn_connection(client)
+        conn = Fiber.new { Tep::Server::Scheduled.handle_connection(client) }
+        Tep::Scheduler.spawn_fiber(conn)
+        0
       end
 
       # Non-blocking server-side TLS handshake on an accepted fd.
@@ -300,7 +307,7 @@ module Tep
         offset = 0
         total = data.bytesize
         while offset < total
-          written = Sock.sphttp_write_some(client, data, offset)
+          written = Sock.sphttp_write_bytes_some(client, data, offset, total)
           if written < 0
             return -1
           end
@@ -317,6 +324,26 @@ module Tep
           end
         end
         0
+      end
+
+      # Hold one file descriptor while the connection parks between chunks.
+      def self.write_file(client, path, offset, length)
+        source = Sock.sphttp_file_open(path, offset)
+        return -1 if source < 0
+
+        remaining = length
+        result = 0
+        while remaining > 0
+          chunk = Sock.sphttp_file_read_chunk(source, remaining)
+          bytes = chunk.bytesize
+          if bytes == 0 || Tep::Server::Scheduled.write_all(client, chunk) < 0
+            result = -1
+            break
+          end
+          remaining -= bytes
+        end
+        Sock.sphttp_close(source)
+        result
       end
 
       # Body-shape mirror of Tep::Server#write_response. Lifted into
@@ -423,20 +450,13 @@ module Tep
         else
           head = head + "Connection: close\r\n"
         end
-        if res.file_path.length > 0 && res.file_offset >= 0
-          head = head + "Content-Length: " + res.file_length.to_s + "\r\n\r\n"
-          Sock.sphttp_write_str(client, head)
-          if !res.head_only
-            Sock.sphttp_sendfile_range(client, res.file_path, res.file_offset, res.file_length)
-          end
-        elsif res.file_path.length > 0
-          fs = Sock.sphttp_filesize(res.file_path)
-          head = head + "Content-Length: " + fs.to_s + "\r\n\r\n"
-          if Tep::Server::Scheduled.write_all(client, head) < 0
+        if res.file_path.length > 0
+          offset = res.file_offset >= 0 ? res.file_offset : 0
+          length = res.file_offset >= 0 ? res.file_length : Sock.sphttp_filesize(res.file_path)
+          head = head + "Content-Length: " + length.to_s + "\r\n\r\n"
+          return -1 if Tep::Server::Scheduled.write_all(client, head) < 0
+          if !res.head_only && Tep::Server::Scheduled.write_file(client, res.file_path, offset, length) < 0
             return -1
-          end
-          if !res.head_only
-            Sock.sphttp_sendfile(client, res.file_path)
           end
         else
           # bytesize, not length: `length` counts characters, so a
