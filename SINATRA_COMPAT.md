@@ -293,18 +293,16 @@ API surface:
 
 Constraints:
 
-  - **One in-flight cursor per process.** `prepare` / `step` /
-    `finalize` share a single `sqlite3_stmt *`. Tep runs handlers
-    serially per worker so this is fine for "one DB call per
-    request"; nested queries (open one cursor, run another query
-    inside its `while step == 1` loop) would clobber the parent
-    cursor.
+  - **One in-flight cursor per `Tep::SQLite` instance.** `prepare` /
+    `step` / `finalize` share the instance's `sqlite3_stmt *`, so a
+    nested query (open one cursor, run another query inside its
+    `while step == 1` loop) needs a second instance. Instances are
+    independent: threads that each open their own can query at
+    once, but one instance must not be shared between threads.
   - **Up to 16 open DB handles per process** (a static slot table).
     Increase `TEP_SQLITE_MAX_HANDLES` in `tep_sqlite.c` if needed.
   - **String / int columns only.** Floats and blobs aren't first-
     class. NULL is indistinguishable from empty-string.
-  - **64 KiB cap on a single col_str result.** Bump
-    `TEP_SQLITE_COL_BUFSIZE` for larger row fields.
 
 ## JSON subset
 
