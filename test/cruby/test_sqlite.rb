@@ -89,10 +89,54 @@ class TestSqlite < TepTest
       db.close
       "n=" + n.to_s
     end
+
+    # Each handle has its own cursor, so two can be iterated together.
+    get '/two_handles' do
+      a = Tep::SQLite.new
+      a.open("#{TMP_DB}")
+      b = Tep::SQLite.new
+      b.open("#{TMP_DB}")
+      a.prepare("SELECT id FROM notes ORDER BY id LIMIT 3")
+      b.prepare("SELECT body FROM notes ORDER BY id LIMIT 3")
+      out = ""
+      while a.step == 1 && b.step == 1
+        out = out + a.col_int(0).to_s + "=" + b.col_str(0) + ";"
+      end
+      a.finalize
+      b.finalize
+      a.close
+      b.close
+      out
+    end
+
+    # Text columns come back whole, however long.
+    get '/long_text' do
+      db = Tep::SQLite.new
+      db.open("#{TMP_DB}")
+      db.exec("CREATE TABLE IF NOT EXISTS docs (body TEXT)")
+      db.exec("DELETE FROM docs")
+      db.prepare("INSERT INTO docs (body) VALUES (?)")
+      db.bind_str(1, "x" * 200000)
+      db.step
+      db.finalize
+      body = db.first_str("SELECT body FROM docs", "")
+      db.close
+      "length=" + body.length.to_s
+    end
+
   RB
 
   Minitest.after_run do
     File.unlink(TMP_DB) if File.exist?(TMP_DB)
+  end
+
+  def test_two_handles_keep_separate_cursors
+    res = get("/two_handles")
+    assert_equal "1=first note;2=second note;3=third note;", res.body.strip
+  end
+
+  def test_long_text_is_not_truncated
+    assert_equal "length=200000", get("/long_text").body.strip
   end
 
   def test_first_str_with_param
