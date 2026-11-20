@@ -255,7 +255,7 @@ module Tep
   _tep_seed_sess.get("a")
   _tep_seed_sess.has?("a")
   _tep_seed_res.start_stream(Streamer.new)
-  _tep_seed_stream = Stream.new(0)
+  _tep_seed_stream = Stream.new(-1)
   _tep_seed_res.streamer.pump(_tep_seed_stream)
   _tep_seed_stream.write("")   # pin the parameter type to :str
   Tep.h("")                    # pin Tep.h(s)'s param to :str
@@ -265,7 +265,7 @@ module Tep
   Tep::Multipart.parse("", "")
   Tep::Multipart.extract_boundary("")
   Tep::Multipart.extract_field_name("")
-  _tep_seed_res.start_websocket("", Tep::WebSocket::Driver.new(0))
+  _tep_seed_res.start_websocket("", Tep::WebSocket::Driver.new(-1))
 
   # AuthOAuth2 type-seeding. Every public cmeth needs at least one
   # top-level call so spinel locks the param C types in compile
@@ -782,7 +782,7 @@ module Tep
   _tep_seed_llm_state.acc      = ""
   _tep_seed_llm_state.leftover = ""
   _tep_seed_llm_state.done     = false
-  _tep_seed_llm_stream = Tep::Stream.new(0)
+  _tep_seed_llm_stream = Tep::Stream.new(-1)
   Tep::Llm.consume_sse_events(_tep_seed_llm_stream, _tep_seed_llm_state)
   Tep::Llm.dechunk_consume("")
   Tep::Llm.dechunk_leftover("")
@@ -822,7 +822,7 @@ module Tep
   _tep_seed_ws_event.code   = 0
   _tep_seed_ws_event.reason = ""
   _tep_seed_ws_handler.handle_event(_tep_seed_ws_event)
-  _tep_seed_ws_drv = Tep::WebSocket::Driver.new(0)
+  _tep_seed_ws_drv = Tep::WebSocket::Driver.new(-1)
   _tep_seed_ws_drv.set_max_frame_size(0)
   _tep_seed_ws_drv.set_subprotocol("")
   _tep_seed_ws_drv.set_on_open(_tep_seed_ws_handler)
