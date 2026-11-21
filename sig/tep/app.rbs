@@ -45,7 +45,7 @@ module Tep
     # default; sessions become per-request scratch only).
     def set_session_secret: (String s) -> String
 
-    def add_route: (String verb, String pattern, Tep::Handler handler) -> Array[Tep::Route]
+    def add_route: (String verb, String pattern, Tep::Handler handler) -> Integer
     def set_static_root: (String root) -> String
     def set_before: (Tep::Filter f) -> Tep::Filter
     def set_after: (Tep::Filter f) -> Tep::Filter
