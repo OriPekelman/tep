@@ -259,6 +259,15 @@ class TestLlmTools < Minitest::Test
     assert_equal 'content=[]|n=1|c1|add|{"a":1,"b":2}|tool_calls', get("/parse_null_content").body
   end
 
+  # The tool-call arrays must be used only in ways Spinel's unboxed
+  # object array supports; otherwise every build -- of any app -- warns
+  # that the sig's Array[ToolCall] was not applied.
+  def test_build_keeps_tool_call_arrays_unboxed
+    out = `#{TepHarness::TEP_BIN} build #{File.join(@tmp, "app.rb")} -o #{File.join(@tmp, "app2")} 2>&1`
+    assert $?.success?, out
+    refute_match(/@tool_calls: .*stays a boxed array/, out)
+  end
+
   def test_plain_reply_has_no_tool_calls
     assert_equal "hi|n=0", get("/parse_no_tools").body
   end
