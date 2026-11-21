@@ -54,7 +54,7 @@ module Tep
     def self.read_sse_response: (Integer fd, Tep::Stream out_stream) -> String
     def self.read_sse_into: (Integer fd, Tep::Stream out_stream, Tep::Llm::StreamState st) -> Integer
     def self.splice_tools: (String body, String tools, String tool_choice) -> String
-    def self.merge_tool_calls: (String json, Integer from, Array[Tep::Llm::ToolCall] calls) -> Integer
+    def self.merge_tool_calls: (String json, Integer from, Tep::Llm::StreamState st) -> Integer
     def self.obj_value_pos: (String json, Integer obj_start, Integer obj_end, String key) -> Integer
     def self.consume_sse_events: (Tep::Stream out_stream, Tep::Llm::StreamState state) -> Integer
     def self.dechunk_consume: (String s) -> String
@@ -73,29 +73,35 @@ module Tep
     class Message
       attr_accessor role: String
       attr_accessor content: String
-      attr_accessor tool_calls: Array[Tep::Llm::ToolCall]
+      attr_reader tool_calls: Array[Tep::Llm::ToolCall]
+      def add_tool_call: (Tep::Llm::ToolCall call) -> Integer
       attr_accessor tool_call_id: String
       def initialize: (String role, String content) -> void
       # A role "tool" message answering the call `tool_call_id`.
       def self.tool: (String tool_call_id, String content) -> Tep::Llm::Message
+      # One entry of the request's `messages` array.
+      def request_json: () -> String
     end
 
     class Response
       attr_accessor content: String
       attr_accessor role: String
       attr_accessor stop_reason: String
-      attr_accessor tool_calls: Array[Tep::Llm::ToolCall]
+      attr_reader tool_calls: Array[Tep::Llm::ToolCall]
+      def add_tool_call: (Tep::Llm::ToolCall call) -> Integer
       def initialize: () -> void
       # The assistant Message (with tool_calls) to append before the
       # tool results.
       def to_message: () -> Tep::Llm::Message
+      def take_tool_calls: (Tep::Llm::StreamState st) -> Integer
     end
 
     class StreamState
       attr_accessor acc: String
       attr_accessor leftover: String
       attr_accessor done: bool
-      attr_accessor tool_calls: Array[Tep::Llm::ToolCall]
+      attr_reader tool_calls: Array[Tep::Llm::ToolCall]
+      def add_tool_call: (Tep::Llm::ToolCall call) -> Integer
       attr_accessor stop_reason: String
       def initialize: () -> void
     end

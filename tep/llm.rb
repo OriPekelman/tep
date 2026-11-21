@@ -180,7 +180,7 @@ module Tep
       out.content     = st.acc
       out.role        = "assistant"
       out.stop_reason = st.stop_reason
-      out.tool_calls  = st.tool_calls
+      out.take_tool_calls(st)
       if st.tool_calls.length == 0
         out_stream.write("data: [DONE]\n\n")
       end
@@ -203,34 +203,7 @@ module Tep
         if !first
           out = out + ","
         end
-        msg = messages[i]
-        out = out + "{\"role\":" + Tep::Json.quote(msg.role)
-        if msg.tool_calls.length > 0 && msg.content.length == 0
-          # An assistant turn that only calls tools has null content.
-          out = out + ",\"content\":null"
-        else
-          out = out + ",\"content\":" + Tep::Json.quote(msg.content)
-        end
-        if msg.tool_calls.length > 0
-          out = out + ",\"tool_calls\":["
-          ti = 0
-          while ti < msg.tool_calls.length
-            tc = msg.tool_calls[ti]
-            if ti > 0
-              out = out + ","
-            end
-            out = out + "{\"id\":" + Tep::Json.quote(tc.id) +
-                        ",\"type\":\"function\",\"function\":{\"name\":" +
-                        Tep::Json.quote(tc.name) + ",\"arguments\":" +
-                        Tep::Json.quote(tc.arguments) + "}}"
-            ti += 1
-          end
-          out = out + "]"
-        end
-        if msg.tool_call_id.length > 0
-          out = out + ",\"tool_call_id\":" + Tep::Json.quote(msg.tool_call_id)
-        end
-        out = out + "}"
+        out = out + messages[i].request_json
         first = false
         i += 1
       end
@@ -257,14 +230,18 @@ module Tep
     end
 
     # Merge the `"tool_calls":[...]` array found at or after `from`
-    # into `calls`. Serves both shapes:
+    # into `st.tool_calls`. Serves both shapes:
     #   non-streaming  message.tool_calls: complete entries, in order;
     #   streaming      delta.tool_calls: fragments keyed by "index" --
     #                  the first carries id + function.name, the rest
     #                  append to function.arguments.
     # `arguments` is normally a JSON-encoded string; a backend that
     # sends an object instead has its raw JSON text taken.
-    def self.merge_tool_calls(json, from, calls)
+    #
+    # Takes the StreamState, not its array: a tool-call array is only
+    # touched through its owner (reader + add_tool_call) so Spinel can
+    # keep it as an unboxed object array.
+    def self.merge_tool_calls(json, from, st)
       k_at = Tep.str_find(json, "\"tool_calls\"", from)
       if k_at < 0
         return 0
@@ -289,10 +266,10 @@ module Tep
           if i_at >= 0
             idx = Tep::Json.parse_int_value(json, i_at)
           end
-          while calls.length <= idx
-            calls.push(Tep::Llm::ToolCall.new("", "", ""))
+          while st.tool_calls.length <= idx
+            st.add_tool_call(Tep::Llm::ToolCall.new("", "", ""))
           end
-          call = calls[idx]
+          call = st.tool_calls[idx]
           id_at = Llm.obj_value_pos(json, pos, obj_end, "id")
           if id_at >= 0 && json[id_at] == "\""
             call.id = Tep::Json.parse_str_value(json, id_at)
@@ -369,7 +346,9 @@ module Tep
       out.content     = Llm.extract_str_field(json, "content", m_at)
       out.role        = Llm.extract_str_field(json, "role", m_at)
       out.stop_reason = Llm.extract_str_field(json, "finish_reason", m_at)
-      Llm.merge_tool_calls(json, m_at, out.tool_calls)
+      st = Tep::Llm::StreamState.new
+      Llm.merge_tool_calls(json, m_at, st)
+      out.take_tool_calls(st)
       out
     end
 
@@ -536,7 +515,7 @@ module Tep
           end
           # Tool-call fragments accumulate by index; they are not
           # forwarded to out_stream.
-          Llm.merge_tool_calls(payload, 0, state.tool_calls)
+          Llm.merge_tool_calls(payload, 0, state)
           # finish_reason on the last frame ends the stream.
           fr = Llm.extract_str_field(payload, "finish_reason", 0)
           if fr.length > 0
@@ -634,7 +613,8 @@ module Tep
     # loop iterations. See chat_stream + read_sse_response for use.
     class StreamState
       attr_accessor :acc, :leftover, :done
-      attr_accessor :tool_calls, :stop_reason
+      attr_accessor :stop_reason
+      attr_reader :tool_calls
 
       def initialize
         @acc         = ""
@@ -644,6 +624,11 @@ module Tep
         # Typed-empty Array[ToolCall] (seed + delete_at, as elsewhere).
         @tool_calls  = [Tep::Llm::ToolCall.new("", "", "")]
         @tool_calls.delete_at(0)
+      end
+
+      def add_tool_call(call)
+        @tool_calls.push(call)
+        0
       end
     end
 
@@ -664,7 +649,8 @@ module Tep
       # tool_calls: set on an assistant turn that called tools (see
       # Response#to_message). tool_call_id: set on a role "tool"
       # message, naming the call it answers (see Message.tool).
-      attr_accessor :tool_calls, :tool_call_id
+      attr_accessor :tool_call_id
+      attr_reader :tool_calls
 
       def initialize(role, content)
         @role = role
@@ -672,6 +658,46 @@ module Tep
         @tool_call_id = ""
         @tool_calls = [Tep::Llm::ToolCall.new("", "", "")]
         @tool_calls.delete_at(0)
+      end
+
+      def add_tool_call(call)
+        @tool_calls.push(call)
+        0
+      end
+
+      # This message as one entry of the request's `messages` array.
+      # Lives here, on the instance, so @tool_calls is only read by
+      # its own class: a `msg.tool_calls` read on an element of the
+      # messages array is a dynamic-receiver read to Spinel, which
+      # keeps every @tool_calls array in the program boxed.
+      def request_json
+        out = "{\"role\":" + Tep::Json.quote(@role)
+        if @tool_calls.length > 0 && @content.length == 0
+          # An assistant turn that only calls tools has null content.
+          out = out + ",\"content\":null"
+        else
+          out = out + ",\"content\":" + Tep::Json.quote(@content)
+        end
+        if @tool_calls.length > 0
+          out = out + ",\"tool_calls\":["
+          ti = 0
+          while ti < @tool_calls.length
+            tc = @tool_calls[ti]
+            if ti > 0
+              out = out + ","
+            end
+            out = out + "{\"id\":" + Tep::Json.quote(tc.id) +
+                        ",\"type\":\"function\",\"function\":{\"name\":" +
+                        Tep::Json.quote(tc.name) + ",\"arguments\":" +
+                        Tep::Json.quote(tc.arguments) + "}}"
+            ti += 1
+          end
+          out = out + "]"
+        end
+        if @tool_call_id.length > 0
+          out = out + ",\"tool_call_id\":" + Tep::Json.quote(@tool_call_id)
+        end
+        out + "}"
       end
 
       # The result of one tool call, to send back to the model.
@@ -686,7 +712,7 @@ module Tep
       attr_accessor :content, :role, :stop_reason
       # Function calls the model asked for; empty when it answered in
       # text. stop_reason is "tool_calls" when non-empty.
-      attr_accessor :tool_calls
+      attr_reader :tool_calls
 
       def initialize
         @content     = ""
@@ -700,8 +726,27 @@ module Tep
       # conversation before the tool results.
       def to_message
         m = Tep::Llm::Message.new("assistant", @content)
-        m.tool_calls = @tool_calls
+        i = 0
+        while i < @tool_calls.length
+          m.add_tool_call(@tool_calls[i])
+          i += 1
+        end
         m
+      end
+
+      def add_tool_call(call)
+        @tool_calls.push(call)
+        0
+      end
+
+      # Append the calls a parse or stream assembled in `st`.
+      def take_tool_calls(st)
+        i = 0
+        while i < st.tool_calls.length
+          @tool_calls.push(st.tool_calls[i])
+          i += 1
+        end
+        0
       end
     end
   end
