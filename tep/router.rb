@@ -92,8 +92,11 @@ module Tep
       @routes = [Route.new("", "", Handler.new)]   # type-seed sentinel
     end
 
+    # Returns the route count, not the array: handing @routes out as
+    # a return value keeps Spinel from unboxing it.
     def add(verb, pattern, handler)
       @routes.push(Route.new(verb, pattern, handler))
+      @routes.length - 1
     end
 
     def match(req)

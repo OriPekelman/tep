@@ -19,7 +19,7 @@ module Tep
     attr_accessor routes: Array[Tep::Route]
 
     def initialize: () -> void
-    def add: (String verb, String pattern, Tep::Handler handler) -> Array[Tep::Route]
+    def add: (String verb, String pattern, Tep::Handler handler) -> Integer
     def match: (Tep::Request req) -> Tep::Route?
     def match_after: (Tep::Request req, Integer start_idx) -> Tep::Route?
     def index_of: (Tep::Route route) -> Integer
