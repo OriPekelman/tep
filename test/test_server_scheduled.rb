@@ -30,6 +30,10 @@ class TestServerScheduled < TepTest
     post "/echo_body" do
       request.body
     end
+
+    get "/sched_slots" do
+      Tep::APP.sched_fibers.length.to_s
+    end
   RB
 
   def test_basic_get_through_scheduler
@@ -90,5 +94,27 @@ class TestServerScheduled < TepTest
       assert_equal "200", r2.code
       assert_equal "pong", r2.body
     end
+  end
+
+  def test_connection_churn_does_not_grow_scheduler_slots
+    # Overlapping connections: open the next one before closing the
+    # previous, so a live connection fiber always sits at the tail of
+    # the scheduler's slot arrays. Tail-only reclaim can't free the
+    # dead slots behind it; without slot reuse every closed connection
+    # leaves one behind (plus its fiber stack) for the worker's life.
+    prev = nil
+    60.times do
+      h = Net::HTTP.new("127.0.0.1", @port)
+      h.read_timeout = 3
+      h.start
+      assert_equal "pong", h.get("/ping").body
+      prev.finish if prev
+      prev = h
+    end
+    slots = get("/sched_slots").body.to_i
+    prev.finish
+    # accept fiber + the two overlapping connections + this request's.
+    assert_operator slots, :<=, 8,
+      "scheduler kept #{slots} slots after 60 churned connections"
   end
 end

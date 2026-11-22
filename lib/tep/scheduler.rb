@@ -45,19 +45,51 @@ module Tep
     READ  = 1
     WRITE = 2
 
+    # Register `f` with the scheduler. Reuses the first dead slot if
+    # there is one, else appends. Reuse matters under connection churn:
+    # tick() only reclaims dead slots at the TAIL, and a fiber-per-
+    # connection server always has a live fiber there (the accept
+    # fiber, or the newest connection), so without reuse every closed
+    # connection leaves a dead slot -- and its mmap'd fiber stack --
+    # behind forever, and every poll_round walks all of them. Live
+    # slots never move, so indices captured across Fiber.yield (pg.rb's
+    # PG::Pool @waiter_idxs) stay valid.
     def self.spawn_fiber(f)
-      Tep::APP.sched_fibers.push(Tep::FiberSlot.new(f))
-      Tep::APP.sched_wake_at.push(-1)
-      Tep::APP.sched_io_fd.push(-1)
-      Tep::APP.sched_io_mode.push(0)
-      Tep::APP.sched_io_ready.push(0)
+      idx = Scheduler.free_slot
+      if idx < 0
+        Tep::APP.sched_fibers.push(Tep::FiberSlot.new(f))
+        Tep::APP.sched_wake_at.push(-1)
+        Tep::APP.sched_io_fd.push(-1)
+        Tep::APP.sched_io_mode.push(0)
+        Tep::APP.sched_io_ready.push(0)
+      else
+        Tep::APP.sched_fibers[idx] = Tep::FiberSlot.new(f)
+        Tep::APP.sched_wake_at[idx] = -1
+        Tep::APP.sched_io_fd[idx] = -1
+        Tep::APP.sched_io_mode[idx] = 0
+        Tep::APP.sched_io_ready[idx] = 0
+      end
       f
+    end
+
+    # Index of the first slot whose fiber has finished, or -1.
+    def self.free_slot
+      i = 0
+      n = Tep::APP.sched_fibers.length
+      while i < n
+        if !Tep::APP.sched_fibers[i].f.alive?
+          return i
+        end
+        i += 1
+      end
+      -1
     end
 
     # One scheduler pass. If any fibers are parked on I/O, build a
     # poll set, run poll(2) for up to `poll_timeout_ms`, and mark
-    # ready ones. Then resume the soonest-due fiber whose wake_at
-    # is <= now. Returns true if it resumed something.
+    # ready ones. Then resume EVERY fiber whose wake_at is <= now, in
+    # slot order (see resume_ready). Returns true if it resumed
+    # something.
     #
     # If a fiber is already time-due (wake_at <= now -- e.g. a newly
     # spawned fiber with wake_at=-1, or a fiber that just called
@@ -69,15 +101,22 @@ module Tep
     # each "hand off to the freshly-spawned fiber" step costs a full
     # poll-timeout's worth of latency.
     def self.tick(poll_timeout_ms)
-      # Reclaim trailing dead slots. Without this, the parallel
-      # arrays grow once per accepted connection and never shrink --
-      # a slow leak and per-tick iteration tax in a long-running
-      # Scheduled server. Tail-only (stop at first alive) is
-      # deliberate: it keeps every surviving slot's index stable,
-      # so external captures of sched_current held across Fiber.yield
-      # (e.g. pg.rb's PG::Pool @waiter_idxs) stay valid. Middle
-      # dead slots aren't reclaimed until the tail catches up; for
-      # FIFO request lifecycles that's the common case.
+      Scheduler.reclaim_tail
+      ms = poll_timeout_ms
+      if Scheduler.any_time_ready
+        ms = 0
+      end
+      Scheduler.poll_round(ms)
+      Scheduler.resume_ready > 0
+    end
+
+    # Reclaim trailing dead slots so the parallel arrays shrink back
+    # when the youngest fibers finish. Tail-only (stop at first alive)
+    # is deliberate: it keeps every surviving slot's index stable, so
+    # external captures of sched_current held across Fiber.yield (e.g.
+    # pg.rb's PG::Pool @waiter_idxs) stay valid. Dead slots in the
+    # middle are recycled by spawn_fiber instead.
+    def self.reclaim_tail
       i = Tep::APP.sched_fibers.length - 1
       while i >= 0 && !Tep::APP.sched_fibers[i].f.alive?
         Tep::APP.sched_fibers.delete_at(i)
@@ -87,33 +126,41 @@ module Tep
         Tep::APP.sched_io_ready.delete_at(i)
         i -= 1
       end
+      0
+    end
 
-      ms = poll_timeout_ms
-      if Scheduler.any_time_ready
-        ms = 0
-      end
-      Scheduler.poll_round(ms)
-
-      now  = Time.now.to_i
-      best = -1
+    # Resume every due fiber (wake_at <= now -- which poll_round just
+    # set on the I/O-ready ones) once, in slot order. Returns how many
+    # were resumed.
+    #
+    # One resume per due fiber per pass is what keeps the scheduler
+    # fair. The earlier shape resumed only the single lowest-wake_at
+    # fiber per tick, and wake_at has whole-second resolution: every
+    # fiber readied within the same second tied, the lowest slot won
+    # the tie, and a keep-alive client that pipelines its next request
+    # straight away is readied again before anyone else runs -- so a
+    # few low-slot connections monopolised the worker and the rest
+    # stalled until the clock ticked over (max latency pinned at
+    # exactly 1s under load, p50 well under 1ms).
+    #
+    # `n` is captured before the loop: a resumed fiber may spawn (slot
+    # reuse or append); appended ones run next pass.
+    def self.resume_ready
+      now = Time.now.to_i
+      resumed = 0
       i = 0
       n = Tep::APP.sched_fibers.length
       while i < n
         if Tep::APP.sched_fibers[i].f.alive? && Tep::APP.sched_wake_at[i] <= now
-          if best < 0 || Tep::APP.sched_wake_at[i] < Tep::APP.sched_wake_at[best]
-            best = i
-          end
+          Tep::APP.sched_current = i
+          Tep::APP.sched_wake_at[i] = -1
+          Tep::APP.sched_fibers[i].f.resume
+          Tep::APP.sched_current = -1
+          resumed += 1
         end
         i += 1
       end
-      if best < 0
-        return false
-      end
-      Tep::APP.sched_current = best
-      Tep::APP.sched_wake_at[best] = -1
-      Tep::APP.sched_fibers[best].f.resume
-      Tep::APP.sched_current = -1
-      true
+      resumed
     end
 
     # Build poll set from parked-on-I/O fibers, call poll(2), and
@@ -164,8 +211,14 @@ module Tep
     # Pure non-blocking; no poll() wait between passes.
     def self.run_until_empty
       n = 0
-      while Scheduler.tick(0)
-        n += 1
+      while true
+        Scheduler.reclaim_tail
+        Scheduler.poll_round(0)
+        r = Scheduler.resume_ready
+        if r == 0
+          return n
+        end
+        n += r
       end
       n
     end
