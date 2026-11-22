@@ -46,6 +46,7 @@ module Tep
       def self.run_worker: () -> Integer
       def self.accept_loop: () -> void
       def self.handle_pending: () -> Integer
+      def self.spawn_connection: (Integer client) -> Integer
       def self.handle_connection: (Integer client) -> Integer
       # One keep-alive request; true = keep the connection open.
       def self.serve_request: (Integer client) -> bool

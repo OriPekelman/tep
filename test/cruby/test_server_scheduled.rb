@@ -102,6 +102,30 @@ class TestServerScheduled < TepTest
     end
   end
 
+  def test_burst_of_new_connections_each_get_their_own_fiber
+    # Connections that arrive together are accepted on consecutive
+    # scheduler passes, each before the previous one's fiber has run.
+    # The fiber must own the fd it was spawned for: when it read the
+    # accept loop's variable instead, two fibers served the newest
+    # connection and the earlier one was never answered.
+    #
+    # The pause lets the harness's port probe (itself a connection)
+    # be accepted and finished first; arriving with the burst it takes
+    # the lost slot and every real request is still answered.
+    sleep 0.3
+    socks = Array.new(16) { TCPSocket.new("127.0.0.1", @port) }
+    sleep 0.3
+    socks.each_with_index do |s, i|
+      s.write("GET /echo/c#{i} HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n")
+    end
+    got = socks.map do |s|
+      s.wait_readable(5) ? s.read.to_s.split("\r\n\r\n", 2)[1] : nil
+    end
+    assert_equal (0...16).map { |i| "c#{i}" }, got
+  ensure
+    socks.each(&:close) if socks
+  end
+
   def test_connection_churn_does_not_grow_scheduler_slots
     # Overlapping connections: open the next one before closing the
     # previous, so a live connection fiber always sits at the tail of
