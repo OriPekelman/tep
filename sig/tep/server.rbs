@@ -46,6 +46,7 @@ module Tep
       def self.run_worker: () -> Integer
       def self.accept_loop: () -> void
       def self.handle_pending: () -> Integer
+      def self.spawn_connection: (Integer client) -> Integer
       def self.handle_connection: (Integer client) -> Integer
       def self.read_request_blob: (Integer fd, Integer timeout_seconds) -> String
       def self.write_response: (Integer client, Tep::Request req, Tep::Response res, bool keep_alive) -> Integer

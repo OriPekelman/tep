@@ -134,9 +134,21 @@ module Tep
             next
           end
           Sock.sphttp_set_nonblock(client)
-          conn = Fiber.new { Tep::Server::Scheduled.handle_connection(client) }
-          Tep::Scheduler.spawn_fiber(conn)
+          Tep::Server::Scheduled.spawn_connection(client)
         end
+      end
+
+      # One fiber per accepted connection. A method of its own so the
+      # block closes over THIS call's `client`. Built inline in
+      # accept_loop it captured the loop's variable, which the next
+      # accept overwrites -- and the scheduler resumes the accept fiber
+      # (slot 0) before a fiber appended on the previous pass has
+      # started. Two fibers then served the newer fd and the older
+      # connection was never read.
+      def self.spawn_connection(client)
+        conn = Fiber.new { Tep::Server::Scheduled.handle_connection(client) }
+        Tep::Scheduler.spawn_fiber(conn)
+        0
       end
 
       # Non-blocking server-side TLS handshake on an accepted fd.
